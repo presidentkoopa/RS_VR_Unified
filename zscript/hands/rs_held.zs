@@ -1,0 +1,507 @@
+// HELD STATE -- who is holding what, and nothing else.
+//
+// This is deliberately the smallest thing in the package and everything else
+// leans on it: hardpoints, gestures, throwing and melee all need to ask "is this
+// in a hand, and whose" and all of them need the same answer.
+//
+// WHY IT IS A TABLE AND NOT A FIELD ON THE OBJECT.
+//
+// The previous shape was `heldByHand` -- one int, living on the thing being
+// held. It cannot represent two hands on one object, so the second hand simply
+// overwrote the first hand's number. Nothing failed, nothing printed: the object
+// was silently STOLEN out of the other hand, and the hand it left kept behaving
+// as though it were still full. A single int also cannot say which hand is
+// leading, so a two-handed hold had no way to decide whose palm the object sits
+// in.
+//
+// So the authority is here, in one place, as two slots -- and the object carries
+// no state at all. That also sidesteps the fact that a barrel is a stock Doom
+// class with nowhere to put a field.
+//
+// Reading it is a two-element scan. That is free, and it is worth far more than
+// the pointer chase it replaces.
+
+class RS_Held : EventHandler
+{
+	const HAND_MAIN = 0;
+	const HAND_OFF  = 1;
+
+	// A hand's part in a hold. PRIMARY owns the object's position and owns the
+	// backup of the flags we changed; SUPPORT is the second hand on the same
+	// object. Which is which is decided by who got there first, and it survives
+	// the primary letting go -- see Release.
+	const ROLE_NONE    = 0;
+	const ROLE_PRIMARY = 1;
+	const ROLE_SUPPORT = 2;
+
+	// What a Take actually did. Callers want this: taking something free, taking
+	// it out of your other hand and putting a second hand onto it are three
+	// different events and should not sound or buzz the same.
+	const TAKE_REFUSED = 0;
+	const TAKE_TOOK    = 1;
+	const TAKE_JOINED  = 2;
+	const TAKE_PASSED  = 3;
+
+	// ---- the state -------------------------------------------------------
+	// Indexed by hand. hActor[h] == hActor[1-h] IS the two-handed case; there is
+	// no separate flag for it, because a flag and the pointers could disagree.
+	private Actor hActor[2];
+	private int   hRole[2];
+	private int   hSubject[2];
+	// The hand SHAPE, carried separately from the subject. The subject is what
+	// the engine's arbiter is told; the pose is what the fingers do. See the
+	// note on RS_GrabRule for why collapsing the two breaks a barrel.
+	private int   hPose[2];
+
+	// The flags we changed on the object, so they can be put back exactly.
+	// Stored in the PRIMARY hand's slot and moved when the primary changes.
+	// Saved once per object, never per hand: a second hand joining must not
+	// re-save flags this system has already modified, or releasing leaves the
+	// object permanently weightless and permanently unpickable.
+	// hOwnsFlags says which slot is holding the backup, instead of leaving it to
+	// be inferred from the role. The inference is currently sound -- a lone
+	// holder is always PRIMARY, because Release promotes the survivor -- but it
+	// is an invariant spread across three methods, and if any of them ever stops
+	// maintaining it the symptom is an object handed back with the wrong flags:
+	// permanently weightless, permanently unpickable, and nothing in the log.
+	// Cheaper to state it than to keep proving it.
+	private bool hOwnsFlags[2];
+	private bool hSavedSpecial[2];
+	private bool hSavedNoGravity[2];
+
+	// The last value THIS system wrote to GripClaimMain/Off, kept apart from the
+	// slot above because the slot is gone by the time the claim needs clearing.
+	// The convention on GripClaim* is "clear only a value that is yours", and
+	// after a release hSubject is already None -- so comparing against it says
+	// the claim was never ours and the hand stays flagged as holding something
+	// for the rest of the level, with stabilize permanently stood down.
+	private int hClaimed[2];
+
+	// ---- access ----------------------------------------------------------
+
+	static RS_Held Get()
+	{
+		return RS_Held(EventHandler.Find("RS_Held"));
+	}
+
+	Actor HeldBy(int hand) const
+	{
+		if (hand != HAND_MAIN && hand != HAND_OFF) return null;
+		return hActor[hand];
+	}
+
+	bool HandIsFull(int hand) const
+	{
+		return HeldBy(hand) != null;
+	}
+
+	bool IsHeld(Actor a) const
+	{
+		return a != null && (hActor[0] == a || hActor[1] == a);
+	}
+
+	// Bit 0 = main hand, bit 1 = off hand. 3 means both.
+	int HandsOn(Actor a) const
+	{
+		if (!a) return 0;
+		int m = 0;
+		if (hActor[0] == a) m |= 1;
+		if (hActor[1] == a) m |= 2;
+		return m;
+	}
+
+	bool TwoHanded(Actor a) const
+	{
+		return HandsOn(a) == 3;
+	}
+
+	// -1 when nobody holds it.
+	int PrimaryHand(Actor a) const
+	{
+		if (!a) return -1;
+		for (int h = 0; h < 2; h++)
+			if (hActor[h] == a && hRole[h] == ROLE_PRIMARY) return h;
+		return -1;
+	}
+
+	int SubjectIn(int hand) const
+	{
+		if (hand != HAND_MAIN && hand != HAND_OFF) return GRIPSUBJ_None;
+		return hSubject[hand];
+	}
+
+	// -1 when this hand is holding nothing, which is also "let the controllers
+	// decide", so a caller can pass it straight through.
+	int PoseIn(int hand) const
+	{
+		if (hand != HAND_MAIN && hand != HAND_OFF) return -1;
+		return hActor[hand] ? hPose[hand] : -1;
+	}
+
+	// ---- policy ----------------------------------------------------------
+
+	private static double Num(String n, PlayerInfo p, double d)
+	{
+		let c = CVar.GetCVar(n, p);
+		return c ? c.GetFloat() : d;
+	}
+	private static bool Flag(String n, PlayerInfo p, bool d)
+	{
+		let c = CVar.GetCVar(n, p);
+		return c ? c.GetBool() : d;
+	}
+
+	// ---- taking and letting go -------------------------------------------
+
+	// The one call that changes anything. Returns a TAKE_* telling the caller
+	// what it got, which is never "nothing happened" by accident: a refusal is
+	// TAKE_REFUSED and says so.
+	// twohand comes from the grabbability table (RS_GrabRule), not from a size
+	// guess made here. It was a size guess for exactly one commit: a medikit and
+	// a barrel have nearly the same collision cylinder in Doom, so the cylinder
+	// cannot answer this and the table has to.
+	int Take(int hand, Actor a, int subject, int pose, bool twohand, PlayerInfo p)
+	{
+		if (!a) return TAKE_REFUSED;
+		if (hand != HAND_MAIN && hand != HAND_OFF) return TAKE_REFUSED;
+		// A full hand must let go first. Swapping in place is a real gesture but
+		// it is a DECISION, and the decision belongs to whoever called this.
+		if (hActor[hand]) return TAKE_REFUSED;
+
+		int other = 1 - hand;
+
+		// THE SECOND-GRAB CASE, which is the whole reason this class exists.
+		if (hActor[other] == a)
+		{
+			if (Flag("rs_hold_twohand", p, true) && twohand)
+			{
+				// Join as support. The other hand keeps position and keeps the
+				// flag backup -- it was primary and still is.
+				hActor[hand]   = a;
+				hRole[hand]    = ROLE_SUPPORT;
+				hSubject[hand] = subject;
+				hPose[hand]    = pose;
+				return TAKE_JOINED;
+			}
+			if (Flag("rs_hold_pass", p, true))
+			{
+				// Hand to hand. The flags move with the object, not with the
+				// hand: MoveFlagsTo copies the backup across before the old slot
+				// is wiped, so the object is never left owning nothing.
+				MoveFlagsTo(hand, other);
+				hActor[hand]   = a;
+				hRole[hand]    = ROLE_PRIMARY;
+				hSubject[hand] = subject;
+				hPose[hand]    = pose;
+				ClearSlot(other);
+				return TAKE_PASSED;
+			}
+			return TAKE_REFUSED;
+		}
+
+		// Free object.
+		hActor[hand]   = a;
+		hRole[hand]    = ROLE_PRIMARY;
+		hSubject[hand] = subject;
+		hPose[hand]    = pose;
+		SaveFlags(hand, a);
+		return TAKE_TOOK;
+	}
+
+	// LET GO, AND MAYBE THROW.
+	//
+	// Pass a player and the object leaves at the peak speed of your last ~180ms
+	// of hand movement; pass none and it is a plain drop. Both are the same act
+	// -- opening your hand -- and the difference is entirely in how fast the
+	// hand was going, which is exactly how it works with a real object.
+	//
+	// The velocity is applied AFTER the flags are restored, because restoring
+	// zeroes Vel: the object has to be an ordinary actor again before it can be
+	// given the velocity that makes it fly.
+	void Release(int hand, PlayerPawn pmo = null, PlayerInfo p = null)
+	{
+		if (hand != HAND_MAIN && hand != HAND_OFF) return;
+		Actor a = hActor[hand];
+		if (!a) return;
+
+		int other = 1 - hand;
+		bool otherStillHas = (hActor[other] == a);
+
+		if (otherStillHas)
+		{
+			// Promote the remaining hand. It inherits the flag backup, because
+			// the object is still held and its flags must stay ours until the
+			// LAST hand comes off it.
+			if (hRole[hand] == ROLE_PRIMARY)
+			{
+				MoveFlagsTo(other, hand);
+				hRole[other] = ROLE_PRIMARY;
+			}
+			ClearSlot(hand);
+			return;
+		}
+
+		RestoreFlags(hand, a);
+		ClearSlot(hand);
+
+		// LAST, and only for the hand that actually let go of it. A two-handed
+		// object released by one hand is still held by the other, and that path
+		// returned above -- you cannot throw something you are still holding.
+		if (pmo && p)
+		{
+			Vector3 v = RS_Throw.VelocityFor(hand, pmo, p);
+			if (v.Length() > 0)
+			{
+				// Vel only. RestoreFlags put NOGRAVITY back one line above, and
+				// ClearSlot has already zeroed the backup -- reading it here
+				// would be reading state this method just wiped.
+				a.Vel = v;
+				let sw = RS_Swing.Get();
+				if (sw) sw.Forget(hand);
+				if (Flag("rs_hold_debug", p, true))
+					Console.Printf("[RSTHROW] hand %d threw %s at %.1f m/s",
+						hand, a.GetClassName(),
+						RS_Swing.UnitsPerTicToMetresPerSec(v.Length()));
+			}
+		}
+	}
+
+	void ReleaseAll()
+	{
+		Release(HAND_MAIN);
+		Release(HAND_OFF);
+	}
+
+	private void ClearSlot(int hand)
+	{
+		hActor[hand]   = null;
+		hRole[hand]    = ROLE_NONE;
+		hSubject[hand] = GRIPSUBJ_None;
+		hPose[hand]    = -1;
+		hOwnsFlags[hand]      = false;
+		hSavedSpecial[hand]   = false;
+		hSavedNoGravity[hand] = false;
+	}
+
+	private void SaveFlags(int hand, Actor a)
+	{
+		hOwnsFlags[hand]      = true;
+		hSavedSpecial[hand]   = a.bSPECIAL;
+		hSavedNoGravity[hand] = a.bNOGRAVITY;
+
+		// SPECIAL cleared is the one that is not optional. An item in your hand
+		// is an item permanently inside your own collision cylinder, so Doom's
+		// touch check fires every single tic and the thing you just picked up
+		// vanishes into inventory on the frame you grab it -- which is the exact
+		// behaviour holding is meant to replace.
+		a.bSPECIAL   = false;
+		a.bNOGRAVITY = true;
+		a.Vel = (0, 0, 0);
+	}
+
+	private void MoveFlagsTo(int to, int from)
+	{
+		if (!hOwnsFlags[from]) return;      // nothing to hand over
+		hOwnsFlags[to]        = true;
+		hSavedSpecial[to]     = hSavedSpecial[from];
+		hSavedNoGravity[to]   = hSavedNoGravity[from];
+		hOwnsFlags[from]      = false;
+	}
+
+	private void RestoreFlags(int hand, Actor a)
+	{
+		// Refusing to guess. A slot that never took the backup has nothing to put
+		// back, and writing its zeroed defaults onto the object would strip
+		// SPECIAL off a pickup that arrived with it -- the exact silent
+		// unpickable-forever failure the ownership flag is here to prevent.
+		if (!hOwnsFlags[hand]) return;
+		a.bSPECIAL   = hSavedSpecial[hand];
+		a.bNOGRAVITY = hSavedNoGravity[hand];
+		a.Vel = (0, 0, 0);
+	}
+
+	// ---- carrying --------------------------------------------------------
+
+	// TRYMOVE AND NOT SETORIGIN, and this is the single line that makes 35Hz the
+	// right rate rather than a compromise. TryMove is Doom's own movement: it
+	// runs the blockmap, the line checks and the step logic, so a carried object
+	// STOPS AT WALLS and rides up stairs. SetOrigin would post it straight
+	// through geometry, and getting that back was the entire goal of the
+	// abandoned "wire the solver to the renderer" work.
+	//
+	// Z first, then XY. TryMove tests the position at the actor's CURRENT height,
+	// so moving XY before Z tests a height the object is about to leave.
+	private void CarryOne(PlayerPawn pmo, PlayerInfo p, int hand, Actor a)
+	{
+		Vector3 palm = RS_Reach.Centre(pmo, p, hand);
+
+		// A Doom actor's origin is the FLOOR of its volume, not its centre, so an
+		// object placed at the palm hangs with its middle a half-height above it.
+		palm.z -= a.Height * 0.5;
+
+		// SetZ DOES NOT COLLIDE -- it is a write, not a move. TryMove below
+		// guards the horizontal, so a hand pushed at a wall leaves the object
+		// against it, but raising your hand under a low ceiling would post the
+		// object straight into the ceiling with nothing to stop it. Clamped
+		// against the floor and ceiling the object is standing under, which is
+		// this tic's XY: near enough, and it re-clamps every tic as it travels.
+		double lo = a.floorz;
+		double hi = a.ceilingz - a.Height;
+		if (hi < lo) hi = lo;
+		palm.z = clamp(palm.z, lo, hi);
+
+		a.Vel = (0, 0, 0);
+		a.SetZ(palm.z);
+		a.TryMove((palm.x, palm.y), 1);
+
+		// Orientation is deliberately NOT set here. Every grabbable thing in the
+		// world today is a sprite, and a sprite always turns to face you -- so
+		// there is no orientation to see, and anything written now would be
+		// tuned against something that cannot show whether it is right. It goes
+		// in with the voxel swap, where the object first has a visible facing.
+	}
+
+	// LET GO OF WHAT WE CANNOT ACTUALLY CARRY.
+	//
+	// TryMove refuses when the object cannot fit, so a hand pushed into a wall
+	// leaves the object behind while the hand keeps going. Without a break the
+	// object stays "held" from the far side of the geometry and gets dragged
+	// through the level the moment a gap appears. The distance is the same
+	// number in the menu, so a break that fires too eagerly is tunable rather
+	// than a rebuild.
+	private bool ShouldBreak(PlayerPawn pmo, PlayerInfo p, int hand, Actor a)
+	{
+		double brk = Num("rs_hold_break", p, 40.0);
+		if (brk <= 0) return false;
+		Vector3 palm = RS_Reach.Centre(pmo, p, hand);
+		Vector3 mid  = (a.Pos.x, a.Pos.y, a.Pos.z + a.Height * 0.5);
+		return (mid - palm).Length() > brk;
+	}
+
+	// ---- the tic ---------------------------------------------------------
+
+	override void WorldTick()
+	{
+		let p = players[consoleplayer];
+		if (!p || !p.mo) { return; }
+		let pmo = p.mo;
+
+		// An actor pointer nulls itself when the actor is destroyed, so a crushed
+		// or consumed object empties its slot on its own. The role and the flag
+		// backup do not, and a stale role is what decides the NEXT hold, so
+		// reconcile before anything reads the table.
+		for (int h = 0; h < 2; h++)
+			if (!hActor[h] && hRole[h] != ROLE_NONE) ClearSlot(h);
+
+		// Dead hands hold nothing.
+		if (pmo.Health <= 0) { ReleaseAll(); return; }
+
+		// Switching grabbing off mid-hold has to LET GO, not stop carrying.
+		// The input handler is gated on the same cvar, so a hold left standing
+		// here would have nothing left able to release it -- and the switch is a
+		// menu entry, which is the one place a player can reach from inside a
+		// headset. Stranding an object behind the off position of its own toggle
+		// is not a state anything can get out of.
+		if (!Flag("rs_grab", p, true)) { ReleaseAll(); return; }
+
+		// CARRY FIRST, THEN TEST THE BREAK, in two passes and not one.
+		//
+		// The break asks whether the carry actually landed, so it has to run
+		// after the carry or it is measuring last tic. Testing first also breaks
+		// a hold the instant it is made: on the tic you grab something it is
+		// still lying where it was, up to its own radius from your palm, and it
+		// has not been moved yet.
+		//
+		// Two passes rather than one loop because with two hands on one object
+		// only the primary moves it, and the primary is whichever hand got there
+		// first -- so in a single loop the support hand's break test can run
+		// before the primary has moved anything.
+		for (int h = 0; h < 2; h++)
+		{
+			// Only the PRIMARY hand moves it. Two hands both writing a position
+			// every tic is two solvers fighting, and the object ends up sitting
+			// at whichever one ran last.
+			if (hActor[h] && hRole[h] == ROLE_PRIMARY)
+				CarryOne(pmo, p, h, hActor[h]);
+		}
+
+		for (int h = 0; h < 2; h++)
+		{
+			Actor a = hActor[h];
+			if (!a) continue;
+
+			// For a SUPPORT hand this measures the gap between your two hands,
+			// because the object sits at the primary palm -- so pulling your
+			// hands apart takes the second one off it, which is what pulling
+			// your hands apart means.
+			if (ShouldBreak(pmo, p, h, a))
+			{
+				if (Flag("rs_hold_debug", p, true))
+					Console.Printf("[RSHELD] hand %d lost %s -- too far from the palm",
+						h, a.GetClassName());
+				Release(h);
+				continue;
+			}
+
+			// Tell the engine's grip arbiter this hand is closed on a thing.
+			// That is what turns the context into GRIPCTX_Object, which stands
+			// two-hand stabilize down -- without it, holding something in each
+			// hand and bringing them together reads as bracing a weapon.
+			//
+			// The convention (actor.zs) is SET while holding, and clear only a
+			// value that is ours. Release does the clearing.
+			if (h == HAND_MAIN) pmo.GripClaimMain = hSubject[h];
+			else                pmo.GripClaimOff  = hSubject[h];
+			hClaimed[h] = hSubject[h];
+
+			// And tell the hand model what shape to be, when the world hands are
+			// the ones on screen. One tic behind, because the pose handler is
+			// registered ahead of this one -- invisible on a finger blend.
+			let hd = RS_HandWorldHandler.Get(h);
+			if (hd) hd.HoldPose(hPose[h]);
+		}
+
+		// Clear the claim for an empty hand, but only if the value standing there
+		// is one we put there. More than one mod writes these.
+		for (int h = 0; h < 2; h++)
+		{
+			if (hActor[h]) continue;
+			if (hClaimed[h] == GRIPSUBJ_None) continue;
+			int cur = (h == HAND_MAIN) ? pmo.GripClaimMain : pmo.GripClaimOff;
+			if (cur == hClaimed[h])
+			{
+				if (h == HAND_MAIN) pmo.GripClaimMain = GRIPSUBJ_None;
+				else                pmo.GripClaimOff  = GRIPSUBJ_None;
+			}
+			hClaimed[h] = GRIPSUBJ_None;
+
+			let hd = RS_HandWorldHandler.Get(h);
+			if (hd && hd.poseHold >= 0) hd.HoldPose(-1);
+		}
+	}
+
+	// RELEASE, not clear, and the difference is the whole bug class this file
+	// exists to avoid.
+	//
+	// A level change makes a fresh handler with empty slots, so this does
+	// nothing there. The case that matters is a SAVEGAME taken while holding
+	// something: the handler serialises, and so does the object -- with the
+	// flags this system changed, SPECIAL off and NOGRAVITY on, saved as if they
+	// were its own. Wiping the slots on load throws away the only record of what
+	// those flags used to be, and the item is left floating and unpickable for
+	// the rest of the game with nothing to explain why. Releasing puts them
+	// back first.
+	//
+	// The object drops at your feet rather than staying in your hand. Carrying a
+	// hold across a save is the persistence item, and it needs the pouch and the
+	// holsters solved with it.
+	override void WorldLoaded(WorldEvent e)
+	{
+		ReleaseAll();
+	}
+
+	override void WorldUnloaded(WorldEvent e)
+	{
+		ReleaseAll();
+	}
+}

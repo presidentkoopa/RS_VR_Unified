@@ -1,0 +1,454 @@
+// WHAT A HAND IS ALLOWED TO TAKE HOLD OF, AS DATA.
+//
+// The rule this replaces was two lines inside the reach code: a pickup in the
+// world, yes; everything else, no. Which means a barrel is not grabbable, a
+// corpse is not grabbable, and a health bonus -- a +1, an abstract quantity
+// wearing a sprite -- is exactly as grabbable as a medikit.
+//
+// The distinction is not derivable. Nothing on an actor says "this is a thing
+// with a shape you could close a hand around" as opposed to "this is a number
+// that happens to be on the floor". Doom gives a medikit and a health bonus the
+// same flags and very nearly the same collision cylinder -- which is also why
+// the two-hand question cannot be answered from an actor's size. It has to be
+// stated, and the place to state it is a table.
+//
+// A TABLE AND NOT A CHAIN OF IFS, because this is the part that gets tuned for a
+// year. Every mod brings things that should or should not be grabbable, and the
+// answer must be one line added in one place -- not a new branch buried in the
+// middle of the code that decides which object your hand is nearest.
+//
+// Rules are ordered and the FIRST MATCH WINS, so specific sits above general: a
+// rule for HealthBonus has to be able to overrule the rule for Inventory.
+
+class RS_GrabRule : Object
+{
+	Class<Actor> cls;
+	bool   allow;
+	int    subject;    // what to CLAIM to the engine's grip arbiter
+	int    pose;       // what SHAPE the hand makes -- a different question
+	bool   twohand;    // can a second hand join, or does it take it away
+	Name   category;   // which menu switch governs this rule, 'None' for always
+	String why;        // named, so the log says WHICH rule decided
+
+	// SUBJECT AND POSE ARE SEPARATE, and that is not redundancy.
+	//
+	// The subject is arbitration: the engine reads it to decide this hand is
+	// spent on an object and must not also count as bracing a weapon. The pose
+	// is appearance. Different questions, and the engine's own header argues for
+	// keeping them apart.
+	//
+	// It matters concretely. GRIPSUBJ_Forend and GRIPSUBJ_Foregrip are the two
+	// subjects the engine reads as SUPPORTING the other hand's weapon -- claim
+	// either for a barrel and the arbiter concludes you are bracing a gun you
+	// are not holding. But POSE_HOLD_FOREND, the fat-cylinder hand shape, is
+	// exactly right for a barrel. Keeping them apart is what lets a barrel look
+	// right without lying to the arbiter.
+}
+
+class RS_GrabPolicy : EventHandler
+{
+	private Array<RS_GrabRule> rules;
+
+	static RS_GrabPolicy Get()
+	{
+		return RS_GrabPolicy(EventHandler.Find("RS_GrabPolicy"));
+	}
+
+	// INHERITANCE-AWARE, which is the whole reason this is not a name compare.
+	//
+	// A rule written for Ammo has to cover every shell box in every mod that
+	// ever derived from it. And the `is` operator cannot help: it takes a class
+	// written out at compile time, which is precisely what a data table cannot
+	// do. So walk the chain, the way stock Ammo.GetParentClass already does.
+	static bool Inherits(Actor a, Class<Actor> want)
+	{
+		if (!a || !want) return false;
+		// Class<Object> and not Class<Actor>: GetParentClass returns the parent
+		// as Class<Object>, and assigning that back into a Class<Actor> is a
+		// narrowing conversion the compiler refuses. Stock Ammo.GetParentAmmo
+		// walks the chain in Class<Object> for exactly this reason. The target
+		// is widened to match rather than the walk being narrowed.
+		Class<Object> c = a.GetClass();
+		Class<Object> w = want;
+		while (c)
+		{
+			if (c == w) return true;
+			c = c.GetParentClass();
+		}
+		return false;
+	}
+
+	private void Rule(Name clsName, bool allow, int subject, int pose,
+		bool twohand, Name category, String why)
+	{
+		// A CLASS THAT DOES NOT EXIST IS NOT AN ERROR. This table names Doom
+		// classes and it loads under Heretic and Hexen too, where half of them
+		// are absent. A missing class means a rule that can never match, which
+		// is the correct outcome -- and skipping it quietly is the only way the
+		// table can name classes from mods that may or may not be loaded.
+		Class<Actor> c = clsName;
+		if (!c) return;
+
+		RS_GrabRule r = RS_GrabRule(new("RS_GrabRule"));
+		r.cls      = c;
+		r.allow    = allow;
+		r.subject  = subject;
+		r.pose     = pose;
+		r.twohand  = twohand;
+		r.category = category;
+		r.why      = why;
+		rules.Push(r);
+	}
+
+	private void Deny(Name clsName, String why)
+	{
+		Rule(clsName, false, GRIPSUBJ_None, -1, false, 'None', why);
+	}
+
+	// ---- THE TABLE -------------------------------------------------------
+
+	// GUARDED ON THE TABLE BEING EMPTY, not on a "have I built this" flag.
+	//
+	// A flag and the thing it describes are two pieces of state that can
+	// disagree, and a savegame is where they do it: this handler's fields are
+	// serialised, so a restored `built = true` sitting over an array that did
+	// not come back leaves the table permanently empty and every object in the
+	// world permanently ungrabbable, with nothing logged. Asking the array
+	// whether it is populated cannot get out of step with the array.
+	private void Build()
+	{
+		if (rules.Size() > 0) return;
+
+		// -- DENIED, and specific, so these sit above the general allows -----
+
+		// The "+1" pickups. A health bonus is not a small medikit, it is a
+		// number with a sprite: there is no object there to close a hand round,
+		// and picking one up by hand and having it NOT heal you would read as
+		// broken. Walk over them.
+		Deny('HealthBonus', "a +1 is a number, not an object");
+		Deny('ArmorBonus',  "a +1 is a number, not an object");
+
+		// Powerup spheres and artefacts hover, spin and glow. They are not
+		// props, and a hand closing on one raises the question of what happens
+		// when you let go of a soulsphere, which has no good answer.
+		Deny('Soulsphere', "not a prop");
+		Deny('Megasphere', "not a prop");
+		Deny('InvulnerabilitySphere', "not a prop");
+		Deny('Blursphere', "not a prop");
+		Deny('Infrared',   "not a prop");
+		Deny('RadSuit',    "worn, not carried");
+		Deny('Allmap',     "not a prop");
+		Deny('Berserk',    "not a prop");
+
+		// -- ALLOWED, specific ----------------------------------------------
+
+		// The barrel. Big, round, and the single most satisfying thing in Doom
+		// to pick up and put somewhere else. Two hands, because it is the size
+		// of a thing you would need two hands for -- and FOREND is the shape a
+		// hand makes round a fat cylinder.
+		Rule('ExplosiveBarrel', true, GRIPSUBJ_Magazine,
+			RS_HandWorldBase.POSE_HOLD_FOREND, true, 'Barrels', "a barrel");
+
+		// -- ALLOWED, general -------------------------------------------------
+
+		// Ammunition. Boxes, clips, shells, cells: objects, one hand each.
+		Rule('Ammo', true, GRIPSUBJ_Magazine,
+			RS_HandWorldBase.POSE_HOLD_MAG, false, 'None', "ammunition");
+
+		// Weapons on the floor. Held by the grip, one hand, and deliberately NOT
+		// two-handable here: a weapon in two hands is the stabilize and support
+		// system's business, not this one's. Defaults OFF -- picking a shotgun
+		// up by hand instead of walking over it is a whole interaction and it
+		// wants deciding on purpose.
+		Rule('Weapon', true, GRIPSUBJ_Grip,
+			RS_HandWorldBase.POSE_POINT, false, 'Weapons', "a weapon on the floor");
+
+		// Health and armour, the real ones -- the bonuses were denied above.
+		Rule('Health', true, GRIPSUBJ_Magazine,
+			RS_HandWorldBase.POSE_HOLD_MAG, false, 'None', "a health item");
+		Rule('Armor', true, GRIPSUBJ_Magazine,
+			RS_HandWorldBase.POSE_HOLD_MAG, false, 'None', "armour");
+
+		// Keys. Small, and a key held in your hand and offered to a lock is one
+		// of the few genuinely new things hands make possible.
+		Rule('Key', true, GRIPSUBJ_Round,
+			RS_HandWorldBase.POSE_HOLD_ROUND, false, 'None', "a key");
+
+		// The catch-all for anything else a mod leaves in the world. LAST, so
+		// every rule above overrules it.
+		Rule('Inventory', true, GRIPSUBJ_Magazine,
+			RS_HandWorldBase.POSE_HOLD_MAG, false, 'None', "a pickup in the world");
+	}
+
+	override void OnRegister()
+	{
+		Build();
+	}
+
+	// ---- WALKING OVER THINGS ---------------------------------------------
+	//
+	// Doom picks an item up the instant your collision cylinder touches it, and
+	// in VR your cylinder arrives a long time before your hand does. So every
+	// pickup in the room is gone before you can reach for one, and the grab you
+	// were about to make never gets a chance to happen.
+	//
+	// Suppressing it is one flag: SPECIAL off and P_TouchSpecialThing never
+	// fires. What makes it more than one line is that the flag has to be put
+	// back -- when the switch is turned off again, and only on the things this
+	// system turned it off on.
+	//
+	// ENFORCED RATHER THAN REMEMBERED. Nothing records which items were
+	// suppressed; the sweep just sets every grabbable floor item to the state
+	// the switch currently asks for. A record of what we changed is a second
+	// copy of the truth, and it goes stale the first time something spawns,
+	// dies or gets picked up while the record is not looking.
+
+	private bool lastNoWalk;
+
+	private void ApplyOne(Actor a, PlayerPawn pmo, PlayerInfo p, bool noWalk)
+	{
+		if (!a) return;
+
+		// A held item is left alone. Turning the switch off while something is
+		// in your hand would otherwise hand SPECIAL back to an object sitting
+		// inside your own collision cylinder, and it would vanish into your
+		// inventory out of your closed fist.
+		let held = RS_Held.Get();
+		if (held && held.IsHeld(a)) return;
+
+		let inv = Inventory(a);
+		if (!inv || inv.Owner) return;
+		if (!Decide(a, pmo, p)) return;
+
+		a.bSPECIAL = !noWalk;
+	}
+
+	private void Sweep(PlayerPawn pmo, PlayerInfo p, bool noWalk)
+	{
+		ThinkerIterator it = ThinkerIterator.Create("Inventory");
+		Actor a;
+		while (a = Actor(it.Next()))
+			ApplyOne(a, pmo, p, noWalk);
+	}
+
+	override void WorldThingSpawned(WorldEvent e)
+	{
+		let p = players[consoleplayer];
+		if (!p || !p.mo) return;
+		bool noWalk = Flag("rs_grab_nowalkover", p, true);
+		if (!noWalk) return;
+		ApplyOne(e.Thing, p.mo, p, noWalk);
+	}
+
+	override void WorldLoaded(WorldEvent e)
+	{
+		let p = players[consoleplayer];
+		if (!p || !p.mo) return;
+		lastNoWalk = Flag("rs_grab_nowalkover", p, true);
+		Sweep(p.mo, p, lastNoWalk);
+	}
+
+	override void WorldTick()
+	{
+		let p = players[consoleplayer];
+		if (!p || !p.mo) return;
+
+		// One bool compare per tic. The sweep only runs on the tic the switch
+		// actually moves -- there is no menu callback for a cvar, and polling a
+		// bool is cheaper than the ThinkerIterator it guards.
+		bool noWalk = Flag("rs_grab_nowalkover", p, true);
+		if (noWalk == lastNoWalk) return;
+		lastNoWalk = noWalk;
+		Sweep(p.mo, p, noWalk);
+		Console.Printf("[RSGRAB] walking over pickups is now %s",
+			noWalk ? "OFF -- reach for them" : "ON -- vanilla pickup");
+	}
+
+	// ---- the question ----------------------------------------------------
+
+	private static bool Flag(String n, PlayerInfo p, bool d)
+	{
+		let c = CVar.GetCVar(n, p);
+		return c ? c.GetBool() : d;
+	}
+
+	private static bool CategoryOn(Name cat, PlayerInfo p)
+	{
+		if (cat == 'Barrels') return Flag("rs_grab_barrels", p, true);
+		if (cat == 'Weapons') return Flag("rs_grab_weapons", p, false);
+		if (cat == 'Corpses') return Flag("rs_grab_corpses", p, true);
+		return true;
+	}
+
+	// WHAT TAKING HOLD OF THIS ACTUALLY DOES.
+	//
+	// Called by every path that puts something in a hand -- a near grab and a
+	// catch out of the air alike -- BEFORE the held-state machine is told about
+	// it. Returns true when the object was consumed and must not be held.
+	//
+	// The weapon rule, in full:
+	//   own 0 or 1, hand empty  -> equipped and ready to fire
+	//   own 2                   -> vanishes, and lands as its own ammo
+	//   hand not empty          -> held as an object, equipped by nothing
+	//
+	// Two is the dual-wield ceiling, so a third of the same gun is only worth
+	// what is in it. That case needs no code: Weapon.TryPickup on a weapon you
+	// already own gives you its ammo and takes the world copy away, which is
+	// precisely the behaviour wanted, so it is simply allowed to happen.
+	//
+	// Everything that is NOT a weapon is held, deliberately. Health and armour
+	// are consumed at your face and nowhere else -- if catching a medikit used
+	// it, catching would be indistinguishable from the walk-over that was
+	// switched off on purpose.
+	bool OnTake(int hand, Actor a, RS_GrabRule rule, PlayerPawn pmo, PlayerInfo p)
+	{
+		if (!a || !rule || !pmo) return false;
+
+		// AMMO RESOLVES ON CATCH. Nobody brings a shell box to their mouth.
+		// Health and armour want the face gesture because using them is a
+		// decision; ammo is not a decision, it is a quantity, and miming
+		// drinking a box of shells to acquire it is worse than not asking.
+		//
+		// rs_use_ammo_pouch flips that, and is INERT TODAY: the pouch it would
+		// route to died with RS_UnifiedVR. The switch exists so the decision is
+		// recorded and the menu entry is already in place when a pouch lands --
+		// not because it does anything yet. With it on and no pouch, ammo is
+		// simply held, which is a worse experience and is why it defaults off.
+		if (Inherits(a, 'Ammo') && !Flag("rs_use_ammo_pouch", p, false))
+		{
+			let inv = Inventory(a);
+			if (inv && !inv.Owner)
+			{
+				bool got = inv.CallTryPickup(pmo);
+				if (Flag("rs_hold_debug", p, true))
+					Console.Printf("[RSTAKE] %s -- %s", a.GetClassName(),
+						got ? "ammo taken on catch" : "refused, holding it");
+				return got;
+			}
+		}
+
+		// HEALTH AND ARMOUR APPLY ON CATCH, BY DOOM'S OWN RULES.
+		//
+		// CallTryPickup IS the decision, not a wrapper round one: stock Health
+		// refuses at full, stock Armor refuses when it would not improve what
+		// you already wear, and every mod's own rule runs untouched. Asking it
+		// is the whole test -- "do I need this" has one correct answer per item
+		// and it was never ours to invent.
+		//
+		// Refused means you keep holding it. Full health and a medikit in your
+		// hand is the right outcome: it is still a medikit, and it will still be
+		// one when you are hurt.
+		if (Inherits(a, 'Health') || Inherits(a, 'Armor'))
+		{
+			let hinv = Inventory(a);
+			if (hinv && !hinv.Owner)
+			{
+				bool used = hinv.CallTryPickup(pmo);
+				if (Flag("rs_hold_debug", p, true))
+					Console.Printf("[RSTAKE] %s -- %s", a.GetClassName(),
+						used ? "used on catch" : "not needed, holding it");
+				return used;
+			}
+		}
+
+		if (rule.category != 'Weapons') return false;
+
+		let w = Weapon(a);
+		if (!w) return false;
+
+		int owned = pmo.CountInv(a.GetClassName());
+		let held = RS_Held.Get();
+		bool handFree = !held || !held.HandIsFull(hand);
+
+		if (owned >= 2)
+		{
+			// Stock pickup. It gives the ammo and removes the world copy.
+			bool took = w.CallTryPickup(pmo);
+			if (Flag("rs_hold_debug", p, true))
+				Console.Printf("[RSTAKE] %s -- already carrying two, %s",
+					a.GetClassName(), took ? "took its ammo" : "refused");
+			return took;
+		}
+
+		if (!handFree) return false;    // hold it; arming is a separate decision
+
+		bool took = w.CallTryPickup(pmo);
+		if (took && pmo.player)
+		{
+			// PendingWeapon rather than ReadyWeapon: the switch has to go
+			// through BringUpWeapon or the raise animation never runs and the
+			// gun appears already up, which reads as a glitch.
+			pmo.player.PendingWeapon = w;
+		}
+		if (Flag("rs_hold_debug", p, true))
+			Console.Printf("[RSTAKE] %s -- %s", a.GetClassName(),
+				took ? "equipped" : "refused, holding it instead");
+		return took;
+	}
+
+	// Null means no.
+	//
+	// The RULE comes back rather than a bool, so the caller gets the subject,
+	// the pose and the two-hand answer out of the same decision. Three separate
+	// lookups are three answers that can disagree about one object.
+	RS_GrabRule Decide(Actor a, PlayerPawn pmo, PlayerInfo p)
+	{
+		if (!a || a == pmo || !p) return null;
+
+		// Never, whatever the table says. Not policy -- these are the difference
+		// between an object and a thing that is not there.
+		if (a.bNOINTERACTION) return null;
+		if (a.bMISSILE)       return null;      // in flight, not on the floor
+		if (a.player)         return null;      // another player
+		if (a.Radius <= 0 || a.Height <= 0) return null;
+
+		// LIVING THINGS ARE NOT PROPS. A live imp is doing something, and taking
+		// it out of the world by closing a hand round it is not an interaction,
+		// it is a way of deleting monsters. A corpse is a prop, and one worth
+		// having. Handled here rather than in the table because it turns on
+		// STATE, not class -- the same imp is both, a second apart.
+		if (a.bISMONSTER)
+		{
+			if (a.Health > 0) return null;
+			if (!CategoryOn('Corpses', p)) return null;
+
+			RS_GrabRule r = RS_GrabRule(new("RS_GrabRule"));
+			r.cls      = a.GetClass();
+			r.allow    = true;
+			r.subject  = GRIPSUBJ_Magazine;
+			r.pose     = RS_HandWorldBase.POSE_HOLD_FOREND;
+			r.twohand  = true;                   // it is a body
+			r.category = 'Corpses';
+			r.why      = "a corpse";
+			return r;
+		}
+
+		Build();
+		for (int i = 0; i < rules.Size(); i++)
+		{
+			let r = rules[i];
+			if (!Inherits(a, r.cls)) continue;
+			if (!r.allow) return null;
+			if (!CategoryOn(r.category, p)) return null;
+
+			// OWNERSHIP, not SPECIAL, decides whether an Inventory item is on
+			// the floor.
+			//
+			// SPECIAL used to be the test, and it cannot be one any more: this
+			// file now clears SPECIAL deliberately, to stop you hoovering things
+			// up by walking over them. Under the old test that suppression would
+			// have made every pickup in the level ungrabbable at the same moment
+			// it made them unwalkable -- the feature would have removed the
+			// items from the game entirely.
+			//
+			// An Inventory with no Owner is lying in the world. One with an
+			// Owner is in somebody's pockets and is not a thing in the room at
+			// all. That is the real question, and it does not care what SPECIAL
+			// happens to be.
+			let inv = Inventory(a);
+			if (inv && inv.Owner) return null;
+			return r;
+		}
+		return null;
+	}
+}

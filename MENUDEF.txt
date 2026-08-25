@@ -1,0 +1,863 @@
+// ============================================================
+// from RS_Hands  (MENUDEF.txt)
+// ============================================================
+// Adds an RS Hands entry to the normal Options menu. AddOptionMenu appends to
+// the engine's existing menu rather than replacing it, so this coexists with
+// whatever else is loaded.
+AddOptionMenu "OptionsMenu"
+{
+	Submenu "RS Hands", "RS_HandsOptions"
+}
+
+OptionMenu "RS_HandsOptions"
+{
+	Title "RS Hands"
+
+	StaticText ""
+	Option "Show Hands (psprite)",  "rs_hands",      "OnOff"
+	// These and "World hands" below are ALTERNATIVES, not layers. Both on
+	// draws two hands per controller in the same place.
+	Option "Hands as fists",  "rs_hands_fists", "OnOff"
+	Slider "Pose blend tics",  "rs_hands_blend", 0, 12, 0.5, 1
+	Slider "Hand Scale",  "rs_hand_scale", 0.1, 3.0, 0.05, 2
+
+	StaticText " "
+	Submenu "Main Hand Placement", "RS_HandsMainPlacement"
+	Submenu "Off Hand Placement",  "RS_HandsOffPlacement"
+
+	StaticText " "
+	StaticText "How a hand sits on the weapon it is", gold
+	StaticText "gripping. By ROLE, not by weapon -- a", gold
+	StaticText "grip is a grip on every gun.", gold
+
+	StaticText " "
+	StaticText "The two hands are one mesh mirrored, so a", gold
+	StaticText "shared value moves them opposite ways.", gold
+	StaticText "Each hand has its own set.", gold
+
+	StaticText " "
+	StaticText "Diagnostics", gold
+	Option "Trace pose choice",   "rs_hands_debug",     "OnOff"
+	Option "Trace renderer path", "vr_pose_debug",      "OnOff"
+	Option "Force pose",          "rs_hands_forcepose", "RS_HandsPoseList"
+	Slider "Browse source anim",  "rs_hands_srcframe", -1, 1277, 1, 0
+
+	StaticText " "
+	StaticText ""
+	StaticText "WORLD-ACTOR HANDS -- the real architecture", 1
+	// The psprite hands above are drawn relative to your eye and can never grab,
+	// collide, or hold a world object. These ride the controllers through
+	// MDL_FOLLOWMAINHAND/OFFHAND at draw rate, same as the world gun.
+	Option "World hands",       "rs_handworld", "OnOff"
+
+	StaticText "  poses", 1
+	// The same twenty shapes the psprite hands use, now reachable on a world
+	// actor. Frames 0-10 are the baked hand shapes; 11-19 are the manipulation
+	// set, which lives at frames 1289-1297 and could not be addressed at all
+	// until model frames could be named by number.
+	Option "Force pose",        "rs_handworld_forcepose", "RS_HandsPoseList"
+	Slider "Blend tics",        "rs_handworld_blend", 1, 20, 1, 0
+	Option "Log pose changes",  "rs_handworld_debug", "OnOff"
+
+	StaticText "  main hand", 1
+	Slider "M Left / Right",   "rs_hw_main_ofs_x", -60, 60, 0.5, 2
+	Slider "M Forward / Back", "rs_hw_main_ofs_y", -60, 60, 0.5, 2
+	Slider "M Down / Up",      "rs_hw_main_ofs_z", -60, 60, 0.5, 2
+	Slider "M Yaw",            "rs_hw_main_yaw",  -180, 180, 1, 1
+	Slider "M Pitch",          "rs_hw_main_pitch",-180, 180, 1, 1
+	Slider "M Roll",           "rs_hw_main_roll", -180, 180, 1, 1
+	Slider "M Scale",          "rs_hw_main_scale", 0.05, 5.0, 0.05, 2
+
+	StaticText "  off hand", 1
+	Slider "O Left / Right",   "rs_hw_off_ofs_x", -60, 60, 0.5, 2
+	Slider "O Forward / Back", "rs_hw_off_ofs_y", -60, 60, 0.5, 2
+	Slider "O Down / Up",      "rs_hw_off_ofs_z", -60, 60, 0.5, 2
+	Slider "O Yaw",            "rs_hw_off_yaw",  -180, 180, 1, 1
+	Slider "O Pitch",          "rs_hw_off_pitch",-180, 180, 1, 1
+	Slider "O Roll",           "rs_hw_off_roll", -180, 180, 1, 1
+	Slider "O Scale",          "rs_hw_off_scale", 0.05, 5.0, 0.05, 2
+
+	SafeCommand "Reset world hands", "resetcvar rs_hw_main_ofs_x rs_hw_main_ofs_y rs_hw_main_ofs_z rs_hw_main_yaw rs_hw_main_pitch rs_hw_main_roll rs_hw_main_scale rs_hw_off_ofs_x rs_hw_off_ofs_y rs_hw_off_ofs_z rs_hw_off_yaw rs_hw_off_pitch rs_hw_off_roll rs_hw_off_scale"
+
+}
+
+// Named so a forced pose reads as a hand shape rather than a frame number.
+OptionValue "RS_HandsPoseList"
+{
+	-1, "Controllers"
+	0,  "0 - Open"
+	1,  "1 - Grip (3-4-5)"
+	2,  "2 - Trigger (index)"
+	3,  "3 - Fist"
+	4,  "4 - Pinch"
+	5,  "5 - Thumb out"
+	6,  "6 - Grip + fire"
+	7,  "7 - Grip, thumb up"
+	8,  "8 - Finger on trigger"
+	9,  "9 - Finger on trigger, thumb up"
+	10, "10 - Fire, thumb up"
+	11, "11 - Hold a round"
+	12, "12 - Hold a shell"
+	13, "13 - Inserting"
+	14, "14 - Hold the slide"
+	15, "15 - Hold a magazine"
+	16, "16 - Hold a foregrip"
+	17, "17 - Hold the forend"
+	18, "18 - Reach"
+	19, "19 - Support (round the firing hand)"
+}
+
+OptionMenu "RS_HandsMainPlacement"
+{
+	Title "Main Hand"
+
+	StaticText ""
+	StaticText "Position", gold
+	Slider "Left / Right",   "vr_hand_ofs_x", -60, 60, 0.5, 2
+	Slider "Forward / Back", "vr_hand_ofs_y", -60, 60, 0.5, 2
+	Slider "Down / Up",      "vr_hand_ofs_z", -60, 60, 0.5, 2
+
+	StaticText " "
+	StaticText "Rotation", gold
+	Slider "Yaw",   "vr_hand_yaw",   -180, 180, 5, 1
+	Slider "Pitch", "vr_hand_pitch", -180, 180, 5, 1
+	Slider "Roll",  "vr_hand_roll",  -180, 180, 5, 1
+
+	StaticText " "
+	SafeCommand "Reset main hand", "resetcvar vr_hand_ofs_x vr_hand_ofs_y vr_hand_ofs_z vr_hand_yaw vr_hand_pitch vr_hand_roll"
+}
+
+OptionMenu "RS_HandsOffPlacement"
+{
+	Title "Off Hand"
+
+	StaticText ""
+	StaticText "Position", gold
+	Slider "Left / Right",   "vr_offhand_ofs_x", -60, 60, 0.5, 2
+	Slider "Forward / Back", "vr_offhand_ofs_y", -60, 60, 0.5, 2
+	Slider "Down / Up",      "vr_offhand_ofs_z", -60, 60, 0.5, 2
+
+	StaticText " "
+	StaticText "Rotation", gold
+	Slider "Yaw",   "vr_offhand_yaw",   -180, 180, 5, 1
+	Slider "Pitch", "vr_offhand_pitch", -180, 180, 5, 1
+	Slider "Roll",  "vr_offhand_roll",  -180, 180, 5, 1
+
+	StaticText " "
+	SafeCommand "Reset off hand", "resetcvar vr_offhand_ofs_x vr_offhand_ofs_y vr_offhand_ofs_z vr_offhand_yaw vr_offhand_pitch vr_offhand_roll"
+}
+
+
+
+
+
+// Hand grabbing gets its own Options entry. It is not a property of any weapon
+// -- it is how picking anything up works, and it is the thing most likely to be
+// tuned repeatedly.
+AddOptionMenu "OptionsMenu"
+{
+	Submenu "Hand Grab", "RS_GrabMenu"
+}
+
+OptionMenu "RS_GrabMenu"
+{
+	Title "Hand Grab"
+
+	StaticText ""
+	Option "Grabbing (master)",         "rs_grab", "OnOff"
+	StaticText ""
+	Submenu "Reach and aim",            "RS_GrabReachMenu"
+	Submenu "Holding",                  "RS_GrabHoldMenu"
+	Submenu "Distance grab",            "RS_GrabDistMenu"
+	Submenu "Flick and throw",          "RS_GrabThrowMenu"
+	Submenu "Using items",              "RS_GrabUseMenu"
+	Submenu "Feedback",                 "RS_GrabFeedMenu"
+	Submenu "What is grabbable",        "RS_GrabWhatMenu"
+}
+
+//======================================================================
+OptionMenu "RS_GrabReachMenu"
+{
+	Title "Reach and aim"
+
+	StaticText ""
+	StaticText "The oval IS the reach", 1
+	// Drawn from the same three cvars RS_Reach.Score tests against, so the
+	// gauge cannot drift from the volume.
+	StaticText "34 units = 1 metre.  A fist is about 2 units.", 1
+	StaticText "SIZE first, then the three axes for shape.", 1
+
+	StaticText "Main hand", 1
+	Slider "  OVERALL SIZE",   "rs_grab_m_scale", 0.005, 4.0, 0.005, 3
+	Slider "  Along fingers",  "rs_grab_m_scale_x", 0.2, 10, 0.1, 1
+	Slider "  Across palm",    "rs_grab_m_scale_y", 0.2, 10, 0.1, 1
+	Slider "  Through hand",   "rs_grab_m_scale_z", 0.2, 10, 0.1, 1
+	StaticText "Off hand", 1
+	Slider "  OVERALL SIZE",   "rs_grab_o_scale", 0.005, 4.0, 0.005, 3
+	Slider "  Along fingers",  "rs_grab_o_scale_x", 0.2, 10, 0.1, 1
+	Slider "  Across palm",    "rs_grab_o_scale_y", 0.2, 10, 0.1, 1
+	Slider "  Through hand",   "rs_grab_o_scale_z", 0.2, 10, 0.1, 1
+
+	StaticText ""
+	StaticText "Where it sits on the hand -- live", 1
+	StaticText "With world hands off, the reach centres on the", 1
+	StaticText "CONTROLLER, which is your wrist. Push it forward.", 1
+	Slider "M Forward / back", "rs_grab_m_ofs_x", -20, 20, 0.25, 2
+	Slider "M Left / right",   "rs_grab_m_ofs_y", -20, 20, 0.25, 2
+	Slider "M Down / up",      "rs_grab_m_ofs_z", -20, 20, 0.25, 2
+	Slider "O Forward / back", "rs_grab_o_ofs_x", -20, 20, 0.25, 2
+	Slider "O Left / right",   "rs_grab_o_ofs_y", -20, 20, 0.25, 2
+	Slider "O Down / up",      "rs_grab_o_ofs_z", -20, 20, 0.25, 2
+
+	StaticText ""
+	SafeCommand "Reset", "resetcvar rs_grab_m_ofs_x rs_grab_m_ofs_y rs_grab_m_ofs_z rs_grab_m_scale rs_grab_m_scale_x rs_grab_m_scale_y rs_grab_m_scale_z rs_grab_o_ofs_x rs_grab_o_ofs_y rs_grab_o_ofs_z rs_grab_o_scale rs_grab_o_scale_x rs_grab_o_scale_y rs_grab_o_scale_z"
+}
+
+//======================================================================
+OptionMenu "RS_GrabHoldMenu"
+{
+	Title "Holding"
+
+	StaticText ""
+	StaticText "A grabbed thing stays in your hand instead of", 1
+	StaticText "going straight into inventory.", 1
+	Option "Squeeze toggles",           "rs_hold_toggle",  "OnOff"
+	Option "Second hand can join",      "rs_hold_twohand", "OnOff"
+	Option "Second hand can take",      "rs_hold_pass",    "OnOff"
+
+	StaticText ""
+	StaticText "How far it may lag behind the palm before", 1
+	StaticText "your hand loses it. 34 units = 1 metre.", 1
+	Slider "Let go at",                 "rs_hold_break", 0, 120, 2, 0
+
+	StaticText ""
+	StaticText "Walking into a pickup collects it long before", 1
+	StaticText "your hand gets near it. On = you must reach.", 1
+	Option "Must reach for pickups",    "rs_grab_nowalkover", "OnOff"
+}
+
+//======================================================================
+OptionMenu "RS_GrabDistMenu"
+{
+	Title "Distance grab"
+
+	StaticText ""
+	StaticText "Point and squeeze. Only used when your palm", 1
+	StaticText "is empty -- something you are touching wins.", 1
+	Option "Distance grabbing",         "rs_dgrab", "OnOff"
+
+	StaticText ""
+	StaticText "Reach and spread are separate on purpose: how", 1
+	StaticText "FAR and how PRECISELY are different questions.", 1
+	Slider "  How far (34 = 1m)",       "rs_dgrab_reach",  34, 2048, 17, 0
+	Slider "  How tight to point",      "rs_dgrab_spread", 1, 45, 0.5, 1
+	Option "  Needs line of sight",     "rs_dgrab_sight", "OnOff"
+
+	StaticText ""
+	StaticText "Speed, not duration -- flight time comes from", 1
+	StaticText "the distance, so near and far arrive alike.", 1
+	Slider "  Speed (m/s)",             "rs_dgrab_speed",  2, 60, 1, 0
+	Slider "  Never quicker than",      "rs_dgrab_time_min", 1, 30, 1, 0
+	Slider "  Never slower than",       "rs_dgrab_time_max", 10, 140, 5, 0
+
+	StaticText ""
+	StaticText "1 = constant speed. Higher starts slow and", 1
+	StaticText "speeds up, which is what a PULL feels like.", 1
+	Slider "  Acceleration",            "rs_dgrab_accel",  1, 4, 0.1, 1
+
+	StaticText ""
+	StaticText "Arc height as a fraction of the distance, so", 1
+	StaticText "the shape holds at every range.", 1
+	Slider "  Arc height",              "rs_dgrab_arc",    0, 0.6, 0.01, 2
+
+	StaticText ""
+	StaticText "Miss the catch and it HITS you. A pickup gets", 1
+	StaticText "picked up; anything else does this much damage.", 1
+	Slider "  Impact damage if missed", "rs_dgrab_impact", 0, 40, 1, 0
+}
+
+//======================================================================
+OptionMenu "RS_GrabThrowMenu"
+{
+	Title "Flick and throw"
+
+	StaticText ""
+	StaticText "Yank an empty hand toward yourself at something", 1
+	StaticText "locked and it comes -- no button. Never fires on", 1
+	StaticText "a forward swing, so a throw cannot pull.", 1
+	Option "Flick to pull",             "rs_dgrab_flick", "OnOff"
+	Slider "  Flick speed (m/s)",       "rs_flick_speed", 0.5, 8, 0.1, 1
+
+	StaticText ""
+	StaticText "Letting go and throwing are the same act. Speed", 1
+	StaticText "is the PEAK of the last 180ms, not the instant", 1
+	StaticText "of release -- your arm is already slowing by then.", 1
+	Option "Throwing",                  "rs_throw", "OnOff"
+	Slider "  Strength",                "rs_throw_scale", 0.1, 3, 0.05, 2
+	Slider "  Drop below (m/s)",        "rs_throw_min", 0, 5, 0.1, 1
+}
+
+//======================================================================
+OptionMenu "RS_GrabUseMenu"
+{
+	Title "Using items"
+
+	StaticText ""
+	StaticText "Bring a held item to your face to use it.", 1
+	StaticText "Not your body -- a held thing is already inside", 1
+	StaticText "your own collision cylinder.", 1
+	Option "Use at face",               "rs_use_at_face", "OnOff"
+	Slider "  How close (34 = 1m)",     "rs_use_face_reach", 4, 40, 1, 0
+
+	StaticText ""
+	StaticText "Nobody brings a shell box to their mouth, so", 1
+	StaticText "caught ammo just resolves.", 1
+	StaticText "The pouch option does NOTHING yet -- the pouch", 1
+	StaticText "it would route to does not exist.", 1
+	Option "Ammo needs the pouch",      "rs_use_ammo_pouch", "OnOff"
+}
+
+//======================================================================
+OptionMenu "RS_GrabFeedMenu"
+{
+	Title "Feedback"
+
+	StaticText ""
+	StaticText "considered = neutral / orange", 1
+	StaticText "in your hand = orange / green", 1
+	StaticText "ready to use at your face = green / cyan", 1
+	Option "Flash the target",          "rs_grab_lightup", "OnOff"
+	Slider "  Flash speed (tics)",      "rs_grab_flash", 4, 70, 2, 0
+
+	StaticText ""
+	Submenu "The aiming ray",           "RS_GrabRayMenu"
+
+	StaticText ""
+	StaticText "HAPTICS HAVE NEVER BEEN PROVEN IN THIS BUILD.", 1
+	StaticText "Turn on vr_haptic_debug and read [HAPTIC]:", 1
+	StaticText "nothing printed = the call never left.", 1
+	Option "Tick at face range",        "rs_use_face_haptic", "OnOff"
+	Slider "  Strength",                "rs_use_face_haptic_amp", 0.05, 1.0, 0.05, 2
+
+	StaticText ""
+	StaticText "Gauges. The drawn volume IS the tested volume.", 1
+	Option "Show the reach volume",     "rs_grabviz", "OnOff"
+	Option "Only when something is in", "rs_grabviz_onlywhenhot", "OnOff"
+	Option "Show what it is on",        "rs_volviz", "OnOff"
+	Slider "Opacity",                   "rs_grabviz_alpha", 0.05, 1.0, 0.05, 2
+
+	StaticText ""
+	StaticText "The face sphere sits where you cannot look at", 1
+	StaticText "it. For dialling the number, then switch it off.", 1
+	Option "Show the face volume",      "rs_use_face_viz", "OnOff"
+
+	StaticText ""
+	Option "Log holding and grabbing",  "rs_hold_debug",   "OnOff"
+}
+
+//======================================================================
+//======================================================================
+OptionMenu "RS_GrabRayMenu"
+{
+	Title "The aiming ray"
+
+	StaticText ""
+	Option "Draw the ray at all",       "rs_dgrab_beam", "OnOff"
+	Slider "Edge softness",             "rs_beam_soft", 0, 1, 0.05, 2
+
+	StaticText ""
+	StaticText "IDLE -- pointing at nothing.", 1
+	StaticText "Off is a real choice: a permanent line in your", 1
+	StaticText "vision may be worse than the aiming it solves.", 1
+	Option "  Draw when idle",          "rs_beam_idle_show", "OnOff"
+	ColorPicker "  Colour",             "rs_beam_idle_color"
+	Slider "  Opacity",                 "rs_beam_idle_alpha", 0, 1, 0.05, 2
+	Slider "  Thickness",               "rs_beam_idle_thick", 0.05, 4, 0.05, 2
+	StaticText "0 = as far as you could actually pull from.", 1
+	Slider "  Length",                  "rs_beam_idle_len", 0, 2048, 32, 0
+
+	StaticText ""
+	StaticText "CANDIDATE -- something grabbable under it.", 1
+	ColorPicker "  Colour",             "rs_beam_hot_color"
+	Slider "  Opacity",                 "rs_beam_hot_alpha", 0, 1, 0.05, 2
+	Slider "  Thickness",               "rs_beam_hot_thick", 0.05, 4, 0.05, 2
+
+	StaticText ""
+	StaticText "LOCKED -- your fist is closed on it.", 1
+	ColorPicker "  Colour",             "rs_beam_lock_color"
+	Slider "  Opacity",                 "rs_beam_lock_alpha", 0, 1, 0.05, 2
+	Slider "  Thickness",               "rs_beam_lock_thick", 0.05, 4, 0.05, 2
+	StaticText "Drawn from the OBJECT to your hand, so the pulse,", 1
+	StaticText "the taper and the flare all run toward you.", 1
+	Option "  Reel the pulse inward",   "rs_dgrab_beam_reel", "OnOff"
+
+	StaticText ""
+	StaticText "THE LINE ITSELF. Level-wide -- these govern every", 1
+	StaticText "beam in the level, not just this one.", 1
+	StaticText "Everything directional runs start to end.", 1
+	Slider "Pulse speed",               "rs_beam_scroll",  0, 30, 0.5, 1
+	Slider "Pulse depth",               "rs_beam_depth",   0, 1, 0.05, 2
+	Slider "Glow in the air",           "rs_beam_airglow", 0, 3, 0.1, 1
+	Slider "Taper",                     "rs_beam_taper",   0, 1, 0.05, 2
+	Slider "Flare at the end",          "rs_beam_flare",   0, 5, 0.1, 1
+	Slider "Halo",                      "rs_beam_glow",    0, 2, 0.05, 2
+	Slider "Catches in fog",            "rs_beam_fog",     0, 2, 0.05, 2
+
+	StaticText ""
+	SafeCommand "Reset the ray", "resetcvar rs_beam_soft rs_beam_idle_show rs_beam_idle_color rs_beam_idle_alpha rs_beam_idle_thick rs_beam_idle_len rs_beam_hot_color rs_beam_hot_alpha rs_beam_hot_thick rs_beam_lock_color rs_beam_lock_alpha rs_beam_lock_thick rs_dgrab_beam_reel rs_beam_airglow rs_beam_scroll rs_beam_depth rs_beam_taper rs_beam_flare rs_beam_glow rs_beam_fog"
+}
+
+OptionMenu "RS_GrabWhatMenu"
+{
+	Title "What is grabbable"
+
+	StaticText ""
+	StaticText "The full table is in rs_grabpolicy.zs. These are", 1
+	StaticText "the answers worth changing mid-session.", 1
+	Option "Barrels",                   "rs_grab_barrels", "OnOff"
+	Option "Corpses",                   "rs_grab_corpses", "OnOff"
+	Option "Weapons on the floor",      "rs_grab_weapons", "OnOff"
+
+	StaticText ""
+	StaticText "A LIVE monster is never grabbable and has no", 1
+	StaticText "switch. Closing a hand on one is a way of", 1
+	StaticText "deleting monsters, not an interaction.", 1
+}
+
+
+// ============================================================
+// from RS_Holsters  (MENUDEF.txt)
+// ============================================================
+// Hooked directly into the root options menu rather than nested under any
+// other mod's submenu -- this pk3's menu presence does not depend on any
+// other mod's menu structure. The holsters need SOME weapon pack loaded to
+// have anything to show, but never reference RS_Main or any other specific
+// one -- doSwap/findFist/ShowWeapon (RS_Holsters.zs / RS_HolsterProp.zs)
+// all resolve weapons generically off the player's own inventory and
+// GetClassName(), never a hardcoded class.
+OptionValue "RS_HolsterSoundStyle"
+{
+	0, "Holster clunk"
+	1, "Ready-to-fire beep"
+}
+
+OptionValue "RS_HolsterMarkerShape"
+{
+	0, "Bracket reticle"
+	1, "Wireframe sphere"
+}
+
+OptionValue "RS_HolsterMarkerColor"
+{
+	0, "Default"
+	1, "Blue"
+	2, "Red"
+	3, "Gold"
+	4, "Purple"
+	5, "Orange"
+	6, "Green"
+	7, "Cyan"
+	8, "Pink"
+}
+
+OptionValue "RS_HolsterActiveCount"
+{
+	2, "2 -- Hip"
+	4, "4 -- + Shoulder"
+	6, "6 -- + Pectoral"
+	8, "8 -- + Hip (dual)"
+}
+
+AddOptionMenu "OptionsMenu"
+{
+	StaticText " "
+	Submenu "Body Holsters", "RS_HolsterOptions"
+}
+
+// ---------------------------------------------------------------------
+// Body Holsters. Split into subpages rather than one long scroll -- this
+// had grown to 7 sections in one page, which is a lot to scroll through in
+// VR for a single setting. Diagnostics stayed on the root page rather than
+// getting its own subpage: one SafeCommand is not worth a whole submenu.
+// ---------------------------------------------------------------------
+OptionMenu "RS_HolsterOptions"
+{
+	Title "Body Holsters"
+	StaticText " "
+
+	Submenu "Placement & Profiles", "RS_HolsterPlacement"
+	Submenu "Appearance & Sound",   "RS_HolsterAppearance"
+	Submenu "Timing & Grip",        "RS_HolsterTiming"
+	StaticText " "
+
+	StaticText "Diagnostics", "Gold"
+	SafeCommand "Debug dump to console", "netevent rs-holster-debug"
+}
+
+// SafeCommand rather than Command for the destructive/modal ones: edit
+// mode and reset both change state you would not want triggered by a
+// misread controller press while scrolling a menu in VR.
+OptionMenu "RS_HolsterPlacement"
+{
+	Title "Placement & Profiles"
+	StaticText " "
+
+	StaticText "Placement", "Gold"
+	Option "How many holsters",         "rs_holster_active_count", "RS_HolsterActiveCount"
+	Option "Chest ammo pouch (for RS_Reload)", "rs_holster_pouch_enabled", "OnOff"
+	SafeCommand "Edit Mode -- grab spheres and move them", "netevent rs-holster-edit"
+	SafeCommand "Print tuned table to console",            "netevent rs-holster-table"
+	SafeCommand "Reset offsets to defaults",               "netevent rs-holster-reset"
+	SafeCommand "Recalibrate standing height",             "netevent rs-holster-recalibrate"
+	StaticText " "
+
+	// A profile is the CURRENT edit-table -- tune it with Edit Mode above,
+	// then save it under whichever posture you tuned it for. Loading takes
+	// effect immediately; nothing here needs a rebuild or a relaunch.
+	StaticText "Profiles", "Gold"
+	SafeCommand "Save current as STANDING", "netevent rs-holster-save-standing"
+	SafeCommand "Load STANDING",            "netevent rs-holster-load-standing"
+	SafeCommand "Save current as SEATED",   "netevent rs-holster-save-seated"
+	SafeCommand "Load SEATED",              "netevent rs-holster-load-seated"
+	StaticText " "
+	SafeCommand "SWITCH seated/standing",   "netevent rs-holster-switch-profile"
+}
+
+OptionMenu "RS_HolsterAppearance"
+{
+	Title "Appearance & Sound"
+	StaticText " "
+
+	StaticText "Display", "Gold"
+	Option "Show holster spheres",      "rs_holster_props", "OnOff"
+	Option "Marker shape",              "rs_holster_marker_shape", "RS_HolsterMarkerShape"
+	Option "Marker color (cold)",       "rs_holster_marker_color", "RS_HolsterMarkerColor"
+	Option "Marker color (hot)",        "rs_holster_marker_color_hot", "RS_HolsterMarkerColor"
+	Slider "Marker scale",              "rs_holster_marker_scale", 0.3, 3.0, 0.1, 2
+	Slider "Stored weapon size (fallback)", "rs_holster_prop_scale", 0.05, 1.0, 0.01, 2
+	Slider "Fill amount (measured models)", "rs_holster_prop_fill", 0.1, 1.0, 0.05, 2
+	Slider "Stored weapon yaw",         "rs_holster_prop_yaw", -180.0, 180.0, 5.0, 0
+	Slider "Stored weapon pitch",       "rs_holster_prop_pitch", -180.0, 180.0, 5.0, 0
+	Slider "Stored weapon roll",        "rs_holster_prop_roll",  -180.0, 180.0, 5.0, 0
+	Slider "Stored weapon up/down",     "rs_holster_prop_up",  -12.0, 12.0, 0.5, 1
+	Slider "Stored weapon fwd/back",    "rs_holster_prop_fwd", -12.0, 12.0, 0.5, 1
+	Slider "Stored weapon side",        "rs_holster_prop_side", -12.0, 12.0, 0.5, 1
+	StaticText " "
+
+	StaticText "Sound", "Gold"
+	Option "Store/draw confirm sound", "rs_holster_sound", "OnOff"
+	Option "Confirm sound style",      "rs_holster_sound_style", "RS_HolsterSoundStyle"
+}
+
+OptionMenu "RS_HolsterTiming"
+{
+	Title "Timing & Grip"
+	StaticText " "
+
+	StaticText "Timing", "Gold"
+	// Uses GZDoom's own instant-switch mechanism, scoped to just the swap a
+	// holster triggers -- number-key and wheel switching keep their normal
+	// animated speed either way. Off restores the real ~16-tic lower/raise
+	// and a longer debounce between store/draw presses.
+	Option "Instant store/draw", "rs_holster_instant_switch", "OnOff"
+	StaticText " "
+
+	StaticText "Grip", "Gold"
+	// When on, a hand inside a holster spends its grip on the holster and
+	// nothing else -- stabilize and the shift layer both stand down for
+	// that hand. Off leaves grip alone entirely and the bound holster keys
+	// are the only way in. This is an ENGINE cvar (DoomXR), not this pk3's
+	// own -- referencing it here does not require this pk3 to own or
+	// declare it. Two handed weapons / stabilize distance used to be listed
+	// here too, but those are general VR control settings, not anything
+	// holster-specific -- they already have a home in the engine's own
+	// options menu, and duplicating them here was just two ways to find the
+	// same setting.
+	Option "Grip works holsters",       "vr_holster_use_grip", "OnOff"
+}
+
+
+// ============================================================
+// from RS_HardPoints  (MENUDEF.txt)
+// ============================================================
+// Hooked directly into the root options menu rather than nested under any
+// other mod's submenu -- this pk3's menu presence does not depend on any
+// other mod's menu structure. The hardpoints need SOME weapon pack loaded
+// to have anything to show, but never reference a specific one.
+OptionValue "RS_HardPointSoundStyle"
+{
+	0, "Holster clunk"
+	1, "Ready-to-fire beep"
+}
+
+OptionValue "RS_HardPointMarkerShape"
+{
+	0, "Bracket reticle"
+	1, "Wireframe sphere"
+	2, "Wireframe diamond"
+}
+
+OptionValue "RS_HardPointMarkerColor"
+{
+	0, "Default"
+	1, "Blue"
+	2, "Red"
+	3, "Gold"
+	4, "Purple"
+	5, "Orange"
+	6, "Green"
+	7, "Cyan"
+	8, "Pink"
+}
+
+OptionValue "RS_HardPointArmActiveCount"
+{
+	0, "Off"
+	1, "Forearm only"
+	2, "Wrist only"
+	3, "All six"
+}
+
+AddOptionMenu "OptionsMenu"
+{
+	StaticText " "
+	Submenu "Arm Hardpoints", "RS_HardPointOptions"
+}
+
+// The off-hand-anchored forearm/wrist hardpoints. SafeCommand rather than
+// Command for the destructive/modal ones: edit mode and reset both change
+// state you would not want triggered by a misread controller press while
+// scrolling a menu in VR.
+OptionMenu "RS_HardPointOptions"
+{
+	Title "Arm Hardpoints"
+	StaticText " "
+
+	StaticText "Placement", "Gold"
+	Option "Which hardpoints", "rs_hardpoint_arm_active_count", "RS_HardPointArmActiveCount"
+	SafeCommand "Edit Mode -- grab spheres and move them", "netevent rs-hardpoint-edit"
+	SafeCommand "Print tuned table to console",            "netevent rs-hardpoint-table"
+	SafeCommand "Reset offsets to defaults",               "netevent rs-hardpoint-reset"
+	StaticText " "
+
+	// The CURRENT edit-table -- tune it with Edit Mode above, then save it,
+	// so the tuning survives a restart without a rebuild. Loading takes
+	// effect immediately. One slot only: RS_Holsters keeps a seated and a
+	// standing profile because its anchors hang off a body, and these are
+	// bolted to a tracked controller, where posture is not a variable.
+	StaticText "Saved Layout", "Gold"
+	SafeCommand "Save tuned layout", "netevent rs-hardpoint-save-layout"
+	SafeCommand "Load tuned layout", "netevent rs-hardpoint-load-layout"
+	StaticText " "
+
+	StaticText "Appearance", "Gold"
+	Option "Show hardpoint markers",    "rs_hardpoint_props", "OnOff"
+	Option "Marker shape",              "rs_hardpoint_marker_shape", "RS_HardPointMarkerShape"
+	Option "Marker color (cold)",       "rs_hardpoint_marker_color", "RS_HardPointMarkerColor"
+	Option "Marker color (hot)",        "rs_hardpoint_marker_color_hot", "RS_HardPointMarkerColor"
+	Slider "Marker scale",              "rs_hardpoint_marker_scale", 0.3, 3.0, 0.1, 2
+	Slider "Hardpoint item size (fallback)", "rs_hardpoint_prop_scale_arm", 0.02, 0.5, 0.01, 2
+	Slider "Fill amount (measured models)",  "rs_hardpoint_prop_fill", 0.1, 1.0, 0.05, 2
+	Slider "Stored item yaw",           "rs_hardpoint_prop_yaw", -180.0, 180.0, 5.0, 0
+	Slider "Stored item pitch",         "rs_hardpoint_prop_pitch", -180.0, 180.0, 5.0, 0
+	Slider "Stored item roll",          "rs_hardpoint_prop_roll",  -180.0, 180.0, 5.0, 0
+	Slider "Stored item up/down",       "rs_hardpoint_prop_up",  -12.0, 12.0, 0.5, 1
+	Slider "Stored item fwd/back",      "rs_hardpoint_prop_fwd", -12.0, 12.0, 0.5, 1
+	Slider "Stored item side",          "rs_hardpoint_prop_side", -12.0, 12.0, 0.5, 1
+	StaticText " "
+
+	StaticText "Gesture-Cast Arming", "Gold"
+	Slider "Palm-out roll target",      "rs_hardpoint_gesture_roll_target", -180.0, 180.0, 5.0, 0
+	Slider "Palm-out roll tolerance",   "rs_hardpoint_gesture_roll_tolerance", 5.0, 90.0, 5.0, 0
+	StaticText " "
+
+	StaticText "Timing & Sound", "Gold"
+	Option "Instant store/draw",       "rs_hardpoint_instant_switch", "OnOff"
+	Option "Store/draw confirm sound", "rs_hardpoint_sound", "OnOff"
+	Option "Confirm sound style",      "rs_hardpoint_sound_style", "RS_HardPointSoundStyle"
+	StaticText " "
+
+	// ENGINE cvar (DoomXR), not this pk3's own -- referencing it here does
+	// not require this pk3 to own or declare it. Two handed weapons /
+	// stabilize distance used to be listed here too, but those are general
+	// VR control settings, not anything hardpoint-specific -- they already
+	// have a home in the engine's own options menu, and duplicating them
+	// here was just two ways to find the same setting.
+	StaticText "Grip", "Gold"
+	Option "Grip works holsters",       "vr_holster_use_grip", "OnOff"
+	StaticText " "
+
+	StaticText "Diagnostics", "Gold"
+	SafeCommand "Debug dump to console", "netevent rs-hardpoint-debug"
+}
+
+
+// ============================================================
+// from RS_Reload  (MENUDEF.txt)
+// ============================================================
+// EVERY CVAR IN THIS PACKAGE HAS A ROW HERE, and that is a hard rule rather
+// than a courtesy: this is played in VR with no keyboard, so a setting with no
+// menu row is a setting that does not exist.
+//
+// AddOptionMenu appends to the engine's own Options menu rather than replacing
+// it, so this coexists with RS_Hands, RS_Holsters and anything else loaded.
+
+AddOptionMenu "OptionsMenu"
+{
+	Submenu "RS Reload", "RR_Options"
+}
+
+OptionValue "RR_FeedForce"
+{
+	-1, "Auto"
+	 0, "None (vanilla reload)"
+	 1, "Box magazine"
+	 2, "Bolt"
+	 3, "Pump"
+	 4, "Break action"
+	 5, "Belt"
+	 6, "Pod / tube"
+	 7, "Energy cell"
+}
+
+OptionValue "RR_ArchForce"
+{
+	-1, "Auto"
+	 0, "Pistol"
+	 1, "Revolver"
+	 2, "SMG"
+	 3, "Rifle"
+	 4, "Sniper"
+	 5, "Shotgun"
+	 6, "Super shotgun"
+	 7, "Chaingun"
+	 8, "Railgun"
+	 9, "Rocket"
+	10, "Grenade launcher"
+	11, "Plasma"
+	12, "BFG"
+	13, "Unmaker"
+	14, "Melee"
+}
+
+OptionMenu "RR_Options"
+{
+	Title "RS Reload"
+
+	StaticText ""
+	StaticText "Reloading is gestural -- no button starts it.", "Gold"
+	StaticText "Your off hand arriving at the magwell is the release."
+	StaticText ""
+
+	Option "Magazines",      "rr_magazines", "OnOff"
+	Option "Show reach dot", "rr_marks",     "OnOff"
+	Slider "Ammo model size", "rr_ammo_scale", 0.05, 4.0, 0.05, 2
+
+	StaticText " "
+	StaticText "Tuning", "Gold"
+	// Forcing a family makes every weapon load the same way, which is how you
+	// tune one sequence at a time instead of hunting for a gun that uses it.
+	Option "Force feed type", "rr_force_feed", "RR_FeedForce"
+	Option "Force archetype", "rr_force_arch", "RR_ArchForce"
+	Option "Trace beats",     "rr_debug",      "OnOff"
+
+	StaticText " "
+	Submenu "Weapon Sizes", "RR_Sizes"
+}
+
+// THE ONLY PER-GUN NUMBERS IN THE SYSTEM. Fourteen pairs, not two per weapon --
+// tuning "Pistol" sizes every pistol in every mod that will ever load.
+//
+// Length is the gun in map units (a Doom player is 56 tall). Grip is how far
+// forward of the controller the firing grip sits, which also absorbs the
+// wrist-to-palm gap.
+OptionMenu "RR_Sizes"
+{
+	Title "Weapon Sizes"
+
+	StaticText ""
+	StaticText "Length / grip offset, in map units.", "Gold"
+	StaticText "Turn on the reach dot to see what you are moving."
+	StaticText ""
+
+	Slider "Pistol length",     "rr_len_pistol",     2, 40, 0.5, 1
+	Slider "Pistol grip",       "rr_grip_pistol",   -4, 16, 0.5, 1
+	Slider "Revolver length",   "rr_len_revolver",   2, 40, 0.5, 1
+	Slider "Revolver grip",     "rr_grip_revolver", -4, 16, 0.5, 1
+	Slider "SMG length",        "rr_len_smg",        2, 40, 0.5, 1
+	Slider "SMG grip",          "rr_grip_smg",      -4, 16, 0.5, 1
+	Slider "Rifle length",      "rr_len_rifle",      2, 40, 0.5, 1
+	Slider "Rifle grip",        "rr_grip_rifle",    -4, 16, 0.5, 1
+	Slider "Sniper length",     "rr_len_sniper",     2, 40, 0.5, 1
+	Slider "Sniper grip",       "rr_grip_sniper",   -4, 16, 0.5, 1
+	Slider "Shotgun length",    "rr_len_shotgun",    2, 40, 0.5, 1
+	Slider "Shotgun grip",      "rr_grip_shotgun",  -4, 16, 0.5, 1
+	Slider "Super SG length",   "rr_len_ssg",        2, 40, 0.5, 1
+	Slider "Super SG grip",     "rr_grip_ssg",      -4, 16, 0.5, 1
+	Slider "Chaingun length",   "rr_len_chaingun",   2, 40, 0.5, 1
+	Slider "Chaingun grip",     "rr_grip_chaingun", -4, 16, 0.5, 1
+	Slider "Railgun length",    "rr_len_railgun",    2, 40, 0.5, 1
+	Slider "Railgun grip",      "rr_grip_railgun",  -4, 16, 0.5, 1
+	Slider "Rocket length",     "rr_len_rocket",     2, 40, 0.5, 1
+	Slider "Rocket grip",       "rr_grip_rocket",   -4, 16, 0.5, 1
+	Slider "Grenade length",    "rr_len_grenade",    2, 40, 0.5, 1
+	Slider "Grenade grip",      "rr_grip_grenade",  -4, 16, 0.5, 1
+	Slider "Plasma length",     "rr_len_plasma",     2, 40, 0.5, 1
+	Slider "Plasma grip",       "rr_grip_plasma",   -4, 16, 0.5, 1
+	Slider "BFG length",        "rr_len_bfg",        2, 40, 0.5, 1
+	Slider "BFG grip",          "rr_grip_bfg",      -4, 16, 0.5, 1
+	Slider "Unmaker length",    "rr_len_unmaker",    2, 40, 0.5, 1
+	Slider "Unmaker grip",      "rr_grip_unmaker",  -4, 16, 0.5, 1
+}
+
+
+// ============================================================
+// from Headshots  (MENUDEF.txt)
+// ============================================================
+// ---------------------------------------------------------------------------
+// Headshots -- options.
+//
+// This mod decides WHEN the engine's VR laser sight should react to a
+// lined-up headshot (HS_Handler.WorldTick, hs_detect.zs), confirms an
+// actual hit (WorldThingDamaged, same file), and now deals a real damage
+// bonus on that hit -- own cvars, this mod's own menu section below.
+//
+// The sight-reaction cvars are engine-owned and surfaced again here rather
+// than left for a player to find by accident under VR Options: they only
+// do anything BECAUSE this mod is loaded, so this is where a player looks
+// for them first. Same cvars, same names -- a second doorway, not a copy.
+// ---------------------------------------------------------------------------
+AddOptionMenu "OptionsMenu"
+{
+	StaticText " "
+	Submenu "Headshots", "HS_Options"
+}
+
+OptionMenu "HS_Options"
+{
+	Title "Headshots"
+	StaticText " "
+	StaticText "Adds a lined-up-headshot reaction to the VR laser sight,", "DarkGray"
+	StaticText "a confirm marker and sound, and a real damage bonus, on", "DarkGray"
+	StaticText "an actual hit.", "DarkGray"
+	StaticText " "
+
+	StaticText "Damage Bonus", 1
+	Slider "Damage Multiplier", "hs_headshot_damage_mult", 1.0, 3.0, 0.1, 1
+	Slider "Damage Multiplier (High-ROF Weapons)", "hs_headshot_damage_mult_highrof", 1.0, 3.0, 0.1, 1
+	StaticText "High-ROF weapons (Chaingun and similar) get the second", "DarkGray"
+	StaticText "multiplier -- landing many headshots with them is a matter", "DarkGray"
+	StaticText "of spray volume, not aim, so they don't earn the full bonus.", "DarkGray"
+	StaticText " "
+
+	StaticText "Sight Reaction", 1
+	Option "React To Lined-Up Headshot", "vr_laser_headshot_react", "OnOff"
+	ColorPicker "Reaction Color", "vr_laser_headshot_color"
+	Option "Pulse", "vr_laser_headshot_pulse", "OnOff"
+	Slider "Pulse Speed (Hz)", "vr_laser_headshot_pulse_speed", 0.5, 20.0, 0.5, 1
+	StaticText " "
+	StaticText "More laser sight settings -- colour, range, cycling --", "DarkGray"
+	StaticText "live under VR Options > Laser Sight Options.", "DarkGray"
+}
+
+

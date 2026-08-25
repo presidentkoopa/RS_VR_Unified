@@ -1,0 +1,68 @@
+// RS_VR_Unified -- Hands, Holsters, HardPoints, Reload, Headshots in one package.
+//
+// ONE VERSION LINE, AND IT MUST BE 5.0.0.
+//
+// The five source packages declared two different versions: RS_Hands and
+// RS_Reload at "5.0.0", RS_Holsters / RS_HardPoints / Headshots at "4.14".
+// A merged project gets exactly one, and 5.0.0 is not a preference here --
+// zscript/hands/rs_grab.zs calls a native gated at version("4.15.1"), so a
+// merged build declaring 4.14 does not degrade, it fails to compile outright.
+//
+// Lifting the three 4.14 packages to 5.0.0 needs no code changes: their const
+// methods were checked against the 4.15.1 SafeConst rule (no member write, no
+// non-const self-call), and none of them use `unsafe`/`norollback`, `<>=`,
+// nested generics, or anything deprecated at 4.15.1. The engine is UZDoom
+// 5.0.0-rc.2 (E:\UZDXREMA, src/version.h) -- 5.0.0 IS the target.
+//
+// NOTE: RS_Reload's original preamble claimed 5.0.0 was required for "the
+// frame/bone API this package leans on" and that a lower version would make it
+// "silently vanish". Both halves are wrong -- it is RS_Hands, not RS_Reload,
+// that forces the floor, and the failure is a hard compile error, not silence.
+version "5.0.0"
+
+// ---------------------------------------------------------------- ORDER
+// ZScript resolves symbols across the whole compilation unit, so include order
+// does not affect linking. It DOES affect which file a duplicate-symbol error
+// is reported against, and it documents the dependency direction, so the order
+// below is the real one: foundation first, consumers after.
+//
+//   hands       RS_Basis and the hand poses. Everything else reads from it;
+//               it reads from nothing. Foundation.
+//   holsters    Torso anchors + the chest ammo pouch that reload requires.
+//   hardpoints  Arm anchors. Sibling of holsters (one mod until 2026-08-23),
+//               shares its design and, currently, ~1200 duplicated lines.
+//   reload      Depends on BOTH hands (RS_Basis) and holsters (the pouch).
+//   headshots   Independent. Hooks WorldThingDamaged and the laser trace and
+//               touches nothing else here -- the only member with no seam.
+
+// -- hands: foundation ------------------------------------------------------
+#include "zscript/hands/rs_hands.zs"
+#include "zscript/hands/handworld.zs"
+#include "zscript/hands/rs_grabpolicy.zs"
+#include "zscript/hands/rs_held.zs"
+#include "zscript/hands/rs_swing.zs"
+#include "zscript/hands/rs_throw.zs"
+#include "zscript/hands/rs_distance.zs"
+#include "zscript/hands/rs_grab.zs"
+#include "zscript/hands/rs_route.zs"
+#include "zscript/hands/rs_grabviz.zs"
+
+// -- holsters: torso anchors + ammo pouch ------------------------------------
+#include "zscript/holsters/RS_HolsterProp.zs"
+#include "zscript/holsters/RS_Holsters.zs"
+#include "zscript/holsters/RS_HolsterFlashlight.zs"
+#include "zscript/holsters/RS_HolsterStartLoadout.zs"
+
+// -- hardpoints: arm anchors -------------------------------------------------
+#include "zscript/hardpoints/RS_HardPointProp.zs"
+#include "zscript/hardpoints/RS_HardPoints.zs"
+
+// -- reload: needs hands' basis and holsters' pouch --------------------------
+#include "zscript/reload/rr_point.zs"
+#include "zscript/reload/rr_feed.zs"
+#include "zscript/reload/rr_ammo.zs"
+#include "zscript/reload/rr_sequence.zs"
+
+// -- headshots: independent --------------------------------------------------
+#include "zscript/headshots/hs_feedback.zs"
+#include "zscript/headshots/hs_detect.zs"

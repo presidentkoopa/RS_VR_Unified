@@ -1,0 +1,33 @@
+// RS_VR_Unified -- one AddEventHandlers list.
+//
+// The five source packages each shipped their own GameInfo block. Separately
+// that worked because AddEventHandlers APPENDS across pk3s rather than
+// replacing. Merged, they collapse into the single list below -- 14 handlers,
+// which is the whole VR interaction stack running every tic.
+//
+// ORDER IS LOAD-BEARING AND CURRENTLY UNDECLARED.
+//
+// Not one of the five packages declares an Order on any handler. With no Order,
+// GZDoom falls back to registration sequence -- which means the list below IS
+// the ordering, and it was previously an accident of pk3 load order rather than
+// a decision. That is fine only for as long as no two handlers write the same
+// field in the same tic, and three of them do: RS_Held, RS_HolsterManager and
+// RR_Reload all write GripClaim*, and the reader acts on ANY value rather than
+// on its own (see RS_Holsters.zs:1019). Fixing that properly means either
+// giving the claim fields per-owner identity, or declaring Order explicitly
+// here. Until then, do not reorder this list casually -- it is the tiebreak.
+//
+// Sequence rationale, foundation-first:
+//   1  RS_HandsAlwaysOn ... RS_GrabViz   hands publish pose/basis and resolve
+//                                        their own grab before anyone reads it
+//   2  RS_HolsterManager, StartLoadout   torso anchors + spawn loadout
+//   3  RS_HardPointManager               arm anchors (shares the grab netevent
+//                                        with the holster manager)
+//   4  RR_Reload                         consumes hands' basis AND the pouch,
+//                                        so it must see both already updated
+//   5  HS_Handler                        independent; last by convention, it
+//                                        reads damage events, not hand state
+GameInfo
+{
+	AddEventHandlers = "RS_HandsAlwaysOn", "RS_HandWorldHandler", "RS_GrabPolicy", "RS_GrabHandler", "RS_Swing", "RS_Held", "RS_Pull", "RS_Route", "RS_GrabViz", "RS_HolsterManager", "RS_HolsterStartLoadout", "RS_HardPointManager", "RR_Reload", "HS_Handler"
+}

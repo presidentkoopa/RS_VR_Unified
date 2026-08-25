@@ -1,0 +1,430 @@
+// ============================================================
+// from RS_Hands  (MODELDEF.txt)
+// ============================================================
+// Rigged VR hands, as a fist weapon.
+//
+// Frame layout mirrors RS_Main's RS_GH_Fist, which drives its swing off sprite
+// frames: A -> model frame 0, B -> 1, C -> 4, D -> 6. The animation baked into
+// these models is authored to those exact indices -- open at 0, closing through
+// 1, fist driving forward at 4, follow through at 6.
+//
+// NOAUTOREVERSE matters here. The engine mirrors whichever model lands on the
+// left physical controller so one weapon mesh can serve both hands. These are
+// two purpose-built left and right meshes, so that mirror would flip an
+// already-correct hand. RS_GH_Fist needs the mirror (Scale -1 mainhand, +1
+// offhand) precisely because it is one mesh; we do not.
+
+
+
+// ---------------------------------------------------------------------
+// ALWAYS-ON HANDS
+//
+// Separate from the fist weapon above, and they have to be. A weapon owns
+// its hand slot, so a fist model is only ever drawn when nothing else is
+// equipped -- it cannot show a hand and a gun on the same controller.
+// These ride their own psprite layers instead, so they are visible no
+// matter what is held.
+//
+// BaseFrame, not FrameIndex, and it must come last. BaseFrame is the only
+// thing that registers into BaseSpriteModelFrames and sets hasmodel, which
+// is what a +DECOUPLEDANIMATIONS actor's model lookup reads. Without it the
+// psprite falls through to the sprite path and nothing is drawn.
+// ---------------------------------------------------------------------
+
+// There is no hand_right.iqm any more, and its absence is deliberate. The file
+// that used to ship here was never referenced by either block below, and it was
+// STALE: built from an older pose list carrying 11 baked poses where hand_left
+// carries 20. Anything that switched to it would have silently lost nine poses
+// and shifted every index above 10. A 600KB file that looks current and is not
+// is worse than no file at all. If a genuinely separate right-hand mesh is ever
+// wanted, rebuild it from hand_final.fbx with tools/tools_export_poses.py
+// rather than resurrecting that one.
+
+// Both hands use hand_left.iqm, and the main hand mirrors it with a negative
+// X scale. That is not a workaround, it is the convention every other weapon
+// model here follows (RS_GH_Fist, VanillaVRPlus: Scale -1 one hand, +1 the
+// other).
+//
+// The reason: measured signed volume of the two meshes is -1288.6 and +1288.6
+// -- identical magnitude, opposite sign, so they are true mirrors and the pair
+// is geometrically correct. But this HUD path flips normals unconditionally, so
+// the negative-winding mesh is the one that shades correctly and the positive
+// one renders inside out. Driving the mirror from scale instead keeps shading
+// right, because the renderer watches for a negative scale product and flips
+// face culling to match.
+Model RS_HandIdleMain
+{
+	Path "models/hands"
+	Model 0 "hand_left.iqm"
+	Skin 0 "hand_basecolor.png"
+	Scale -1.0 1.0 1.0
+	Offset 0.0 -18.0 -12.0
+	UseHandOffsets
+	NOAUTOREVERSE
+	PitchOffset 90.0
+	RollOffset 0.0
+	AngleOffset 0.0
+	BaseFrame
+}
+
+Model RS_HandIdleOff
+{
+	Path "models/hands"
+	Model 0 "hand_left.iqm"
+	Skin 0 "hand_basecolor.png"
+	Scale 1.0 1.0 1.0
+	Offset 0.0 -18.0 -12.0
+	NOAUTOREVERSE
+	UseHandOffsets
+	PitchOffset 90.0
+	RollOffset 0.0
+	AngleOffset 0.0
+	BaseFrame
+}
+
+
+// ===========================================================================
+// WORLD-ACTOR HANDS. Same wire as the world M9: MDL_FOLLOWMAINHAND/OFFHAND make
+// the model take its transform from GetWeaponTransform at DRAW time, instead of
+// from wherever script last put the actor at 35Hz.
+//
+// Scale 0.196035, NOT 1.0. The psprite blocks above sit at Scale 1.0 because the HUD
+// path works out to 173.44 units per metre and this mesh is baked 1875x oversized
+// to suit it. The world path uses vr_vunits_per_meter -- 34 units per metre -- so
+// a 0.19 m hand must occupy 6.46 map units: 6.46 / 32.9533 = 0.196035.
+//
+// The main hand keeps the negative X. These are ONE mesh mirrored, and this path
+// watches for a negative scale product to flip face culling to match; dropping
+// the sign renders the main hand inside out.
+// ===========================================================================
+
+Model RS_HandWorldMain
+{
+	Path "models/hands"
+	Model 0 "hand_left.iqm"
+	PlacementCVars rs_hw_main
+	Scale -0.196035 0.196035 0.196035
+	Offset 0.0 0.0 0.0
+	AngleOffset 0.0
+	PitchOffset 0.0
+	RollOffset 0.0
+	NOAUTOREVERSE
+	FollowMainHand
+	BaseFrame
+}
+
+Model RS_HandWorldOff
+{
+	Path "models/hands"
+	Model 0 "hand_left.iqm"
+	PlacementCVars rs_hw_off
+	Scale 0.196035 0.196035 0.196035
+	Offset 0.0 0.0 0.0
+	AngleOffset 0.0
+	PitchOffset 0.0
+	RollOffset 0.0
+	NOAUTOREVERSE
+	FollowOffHand
+	BaseFrame
+}
+
+
+// ---------------------------------------------------------------------
+// THE REACH VOLUME and THE COLLISION VOLUME
+//
+// These live in the HANDS package because they are properties of a hand, not of
+// anything it might pick up. They were written inside a weapon package, and
+// deleting that weapon took the hands' grab gauge with it.
+//
+// FLAGS MUST PRECEDE THE FrameIndex LINES. Each FrameIndex pushes a copy of the
+// model frame with the flags set at that moment, so a flag written after the
+// last FrameIndex parses cleanly and applies to nothing.
+// ---------------------------------------------------------------------
+
+Model RS_GrabOvalMain
+{
+	Path "models"
+	Model 0 "rs_wiresphere.obj"
+	Skin  0 "rs_grab_idle.png"
+	Model 1 "rs_wiresphere.obj"
+	Skin  1 "rs_grab_hot.png"
+	// Unit radius mesh, so the per-axis placement scale IS the semi-axis in map
+	// units -- rs_grab_m_scale_x/_y/_z, the same three RS_Reach.Score tests.
+	Scale 1.0 1.0 1.0
+	PlacementCVars rs_grab_m
+	FollowMainHand
+	FrameIndex RSGB A 0 0
+	FrameIndex RSGB B 1 0
+}
+
+// The face volume. No Follow flag -- it is placed at HmdPos from script rather
+// than carried by a controller, and it uses the actor's own Scale rather than
+// PlacementCVars because a sphere has one radius and not three.
+Model RS_FaceVol
+{
+	Path "models"
+	Model 0 "rs_wiresphere.obj"
+	Skin  0 "rs_vol_idle.png"
+	Model 1 "rs_wiresphere.obj"
+	Skin  1 "rs_vol_hot.png"
+	Scale 1.0 1.0 1.0
+	FrameIndex RSGB A 0 0
+	FrameIndex RSGB B 1 0
+}
+
+Model RS_GrabOvalOff
+{
+	Path "models"
+	Model 0 "rs_wiresphere.obj"
+	Skin  0 "rs_grab_idle.png"
+	Model 1 "rs_wiresphere.obj"
+	Skin  1 "rs_grab_hot.png"
+	Scale 1.0 1.0 1.0
+	PlacementCVars rs_grab_o
+	FollowOffHand
+	FrameIndex RSGB A 0 0
+	FrameIndex RSGB B 1 0
+}
+
+// Unit box spanning -1..1, so the actor's Scale is literally the half-extent.
+// No Follow flag -- this one sits on a thing out in the world, not on your hand.
+Model RS_VolumeBox
+{
+	Path "models"
+	Model 0 "rs_wirebox.obj"
+	Skin  0 "rs_vol_idle.png"
+	Model 1 "rs_wirebox.obj"
+	Skin  1 "rs_vol_hot.png"
+	Scale 1.0 1.0 1.0
+
+	USEACTORPITCH
+	USEACTORROLL
+
+	FrameIndex RSGB A 0 0
+	FrameIndex RSGB B 1 0
+}
+
+
+// ============================================================
+// from RS_Holsters  (MODELDEF)
+// ============================================================
+Model RS_HolsterMarker
+{
+	Path "models"
+	Model 0 "rs_holster_bracket.obj"
+	Skin 0 "rs_wire_idle.png"
+	Model 1 "rs_holster_bracket.obj"
+	Skin 1 "rs_wire_hot.png"
+	// Unit-radius mesh, same convention rs_wiresphere.obj used -- this Scale
+	// is what makes the reticle's true size match hsRadius exactly, the same
+	// "what you see is the actual volume" property the sphere had.
+	Scale 3.0 3.0 3.0
+
+	// FLAGS MUST PRECEDE THE FrameIndex LINES. Each FrameIndex immediately
+	// pushes a COPY of the in-progress model frame into the render table
+	// (r_data/models.cpp: SpriteModelFrames.Push(smf), inside the FrameIndex
+	// branch), capturing whatever flags are set AT THAT MOMENT. Flags written
+	// after the last FrameIndex mutate a template nothing reads again -- they
+	// parse without error and apply to nothing.
+	USEACTORPITCH
+	USEACTORROLL
+
+	// Idle spin, entirely engine-driven -- no per-tic script needed. The
+	// mesh is flat in its own local XY plane (every vertex z=0), so spinning
+	// around local Z keeps the whole reticle in-plane, like a rotating dial,
+	// rather than tumbling it out of the plane the player is meant to read it
+	// in. Speed 0.2 is a full turn roughly every 1000 tics (~28s at 35
+	// tics/sec) -- present, but not distracting.
+	Rotating
+	Rotation-Speed 0.2
+	Rotation-Vector 0 0 1
+
+	FrameIndex RSHM A 0 0
+	FrameIndex RSHM B 1 0
+}
+
+// RS_HolsterFlashlight (zscript/weapons/RS_HolsterFlashlight.zs) -- model,
+// skin and AngleOffset copied from GlowInTheDark's own GITD_FlashlightModel
+// entry (E:\GlowInTheDark\modeldef.txt). USEACTORPITCH/USEACTORROLL matter
+// here even though this is a normal held weapon in-hand: the SAME model is
+// also what RS_HolsterProp shows when this weapon is holstered, and that
+// path is a real world Actor with pitch/roll set manually, same as every
+// other holster prop -- flags MUST precede FrameIndex (see the comment
+// above on RS_HolsterMarker) or they apply to nothing.
+Model RS_HolsterFlashlight
+{
+	Path "models"
+	Model 0 "rs_holster_flashlight.md3"
+	Skin 0 "rs_holster_flashlight.jpg"
+	AngleOffset 90
+
+	USEACTORPITCH
+	USEACTORROLL
+
+	FrameIndex FLSH A 0 0
+}
+
+
+// ============================================================
+// from RS_HardPoints  (MODELDEF)
+// ============================================================
+Model RS_HardPointMarker
+{
+	Path "models"
+	Model 0 "rs_hp_bracket.obj"
+	Skin 0 "rs_hp_wire_idle.png"
+	Model 1 "rs_hp_bracket.obj"
+	Skin 1 "rs_hp_wire_hot.png"
+	// Unit-radius mesh, same convention rs_hp_wiresphere.obj used -- this Scale
+	// is what makes the reticle's true size match hsRadius exactly, the same
+	// "what you see is the actual volume" property the sphere had.
+	Scale 3.0 3.0 3.0
+
+	// FLAGS MUST PRECEDE THE FrameIndex LINES. Each FrameIndex immediately
+	// pushes a COPY of the in-progress model frame into the render table
+	// (r_data/models.cpp: SpriteModelFrames.Push(smf), inside the FrameIndex
+	// branch), capturing whatever flags are set AT THAT MOMENT. Flags written
+	// after the last FrameIndex mutate a template nothing reads again -- they
+	// parse without error and apply to nothing.
+	USEACTORPITCH
+	USEACTORROLL
+
+	// Idle spin, entirely engine-driven -- no per-tic script needed. The
+	// mesh is flat in its own local XY plane (every vertex z=0), so spinning
+	// around local Z keeps the whole reticle in-plane, like a rotating dial,
+	// rather than tumbling it out of the plane the player is meant to read it
+	// in. Speed 0.2 is a full turn roughly every 1000 tics (~28s at 35
+	// tics/sec) -- present, but not distracting.
+	Rotating
+	Rotation-Speed 0.2
+	Rotation-Vector 0 0 1
+
+	FrameIndex RSHP A 0 0
+	FrameIndex RSHP B 1 0
+}
+
+
+
+// ============================================================
+// from RS_Reload  (MODELDEF.txt)
+// ============================================================
+// THE AMMO IN YOUR OFF HAND. Five meshes, one per feed family, for every gun in
+// every mod that will ever load.
+//
+// These blocks are copied in shape from RS_Hands' own hand blocks, because that
+// is the path that is known to work on this renderer:
+//
+//   UseHandOffsets   take the controller transform, same as the hands do
+//   NOAUTOREVERSE    no automatic frame reversal on a model with one frame
+//   PitchOffset 90   the hands' correction; a mesh in the same hand needs it too
+//   BaseFrame        LAST, and load-bearing. BaseFrame is the only thing that
+//                    registers into BaseSpriteModelFrames and sets hasmodel,
+//                    which is what a +DECOUPLEDANIMATIONS actor's model lookup
+//                    reads. Without it the psprite falls through to the sprite
+//                    path and draws nothing at all -- silently.
+//
+// NO FrameIndex ANYWHERE BELOW. FrameIndex and +DECOUPLEDANIMATIONS are mutually
+// exclusive: a decoupled actor resolves through BaseSpriteModelFrames, which only
+// BaseFrame populates. Set FrameIndex on one of these and it draws nothing, with
+// nothing in the log.
+//
+// THE SCALES BELOW ARE MEASURED, NOT GUESSED. tools/md3_measure.py reads each
+// mesh's own bounding box out of its MD3 frame record and divides a real-world
+// target size by it:
+//
+//     scale = (target_metres * 173.44) / longest_axis_in_model_units
+//
+// 173.44 is what this HUD/psprite path works out to per metre. It is NOT 34 --
+// that is the world path, and mixing the two is the whole "100x" class of bug.
+//
+//     mag_pistol    12.94 units  -> 0.12 m  -> 1.6089
+//     shot_shell    10.56 units  -> 0.07 m  -> 1.1502
+//     mag_plasma    17.18 units  -> 0.20 m  -> 2.0196
+//     pod_rocket    21.85 units  -> 0.30 m  -> 2.3813
+//     mag_chaingun  14.15 units  -> 0.22 m  -> 2.6972
+//
+// They are all different, which is why a single global slider was the wrong
+// shape for this: these meshes were modelled at whatever scale each happened to
+// be drawn at in Rusted Legacy, not to a common one. rr_ammo_scale stays as a
+// multiplier ON TOP for taste, defaulting to 1.0 so it changes nothing.
+//
+// Off hand only, so no negative X mirror. RS_Hands mirrors its MAIN hand with a
+// negative X scale because both hands share one mesh; nothing here is shared and
+// nothing here is ever drawn on the main hand.
+
+Model RR_AmmoMag
+{
+	Path "models/ammo"
+	Model 0 "mag_pistol.md3"
+	Skin 0 "berettam9.jpg"
+	Scale 1.6089 1.6089 1.6089
+	Offset 0.0 -18.0 -12.0
+	UseHandOffsets
+	NOAUTOREVERSE
+	PitchOffset 90.0
+	RollOffset 0.0
+	AngleOffset 0.0
+	BaseFrame
+}
+
+Model RR_AmmoShell
+{
+	Path "models/ammo"
+	Model 0 "shot_shell.md3"
+	Skin 0 "shells.png"
+	Scale 1.1502 1.1502 1.1502
+	Offset 0.0 -18.0 -12.0
+	UseHandOffsets
+	NOAUTOREVERSE
+	PitchOffset 90.0
+	RollOffset 0.0
+	AngleOffset 0.0
+	BaseFrame
+}
+
+Model RR_AmmoCell
+{
+	Path "models/ammo"
+	Model 0 "mag_plasma.md3"
+	Skin 0 "plasmarifle.png"
+	Scale 2.0196 2.0196 2.0196
+	Offset 0.0 -18.0 -12.0
+	UseHandOffsets
+	NOAUTOREVERSE
+	PitchOffset 90.0
+	RollOffset 0.0
+	AngleOffset 0.0
+	BaseFrame
+}
+
+Model RR_AmmoPod
+{
+	Path "models/ammo"
+	Model 0 "pod_rocket.md3"
+	Skin 0 "rocketlauncher.png"
+	Scale 2.3813 2.3813 2.3813
+	Offset 0.0 -18.0 -12.0
+	UseHandOffsets
+	NOAUTOREVERSE
+	PitchOffset 90.0
+	RollOffset 0.0
+	AngleOffset 0.0
+	BaseFrame
+}
+
+Model RR_AmmoBelt
+{
+	Path "models/ammo"
+	Model 0 "mag_chaingun.md3"
+	Skin 0 "chaingun.png"
+	Scale 2.6972 2.6972 2.6972
+	Offset 0.0 -18.0 -12.0
+	UseHandOffsets
+	NOAUTOREVERSE
+	PitchOffset 90.0
+	RollOffset 0.0
+	AngleOffset 0.0
+	BaseFrame
+}
+
+

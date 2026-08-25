@@ -1,0 +1,110 @@
+// ============================================================
+// from RS_Holsters  (SNDINFO.txt)
+// ============================================================
+// RS_HolsterFlashlight's draw/holster click. Files and voicing copied from
+// GlowInTheDark's DarkDoomZ flashlight click set (E:\GlowInTheDark\sounds,
+// credited there to mshahen, CC BY 3.0) -- same 12-on/12-off split, own
+// logical names so this pk3 does not need GlowInTheDark loaded to have a
+// sound at all.
+$random rs_holster_flashlight_on {
+	rs_holster_flashlight/on01
+	rs_holster_flashlight/on02
+	rs_holster_flashlight/on03
+	rs_holster_flashlight/on04
+	rs_holster_flashlight/on05
+	rs_holster_flashlight/on06
+	rs_holster_flashlight/on07
+	rs_holster_flashlight/on08
+	rs_holster_flashlight/on09
+	rs_holster_flashlight/on10
+	rs_holster_flashlight/on11
+	rs_holster_flashlight/on12	}
+
+$random rs_holster_flashlight_off {
+	rs_holster_flashlight/off01
+	rs_holster_flashlight/off02
+	rs_holster_flashlight/off03
+	rs_holster_flashlight/off04
+	rs_holster_flashlight/off05
+	rs_holster_flashlight/off06
+	rs_holster_flashlight/off07
+	rs_holster_flashlight/off08
+	rs_holster_flashlight/off09
+	rs_holster_flashlight/off10
+	rs_holster_flashlight/off11
+	rs_holster_flashlight/off12	}
+
+rs_holster_flashlight/on01	DDZCLK13
+rs_holster_flashlight/on02	DDZCLK14
+rs_holster_flashlight/on03	DDZCLK15
+rs_holster_flashlight/on04	DDZCLK16
+rs_holster_flashlight/on05	DDZCLK17
+rs_holster_flashlight/on06	DDZCLK18
+rs_holster_flashlight/on07	DDZCLK19
+rs_holster_flashlight/on08	DDZCLK20
+rs_holster_flashlight/on09	DDZCLK21
+rs_holster_flashlight/on10	DDZCLK22
+rs_holster_flashlight/on11	DDZCLK23
+rs_holster_flashlight/on12	DDZCLK24
+
+rs_holster_flashlight/off01	DDZCLK01
+rs_holster_flashlight/off02	DDZCLK02
+rs_holster_flashlight/off03	DDZCLK03
+rs_holster_flashlight/off04	DDZCLK04
+rs_holster_flashlight/off05	DDZCLK05
+rs_holster_flashlight/off06	DDZCLK06
+rs_holster_flashlight/off07	DDZCLK07
+rs_holster_flashlight/off08	DDZCLK08
+rs_holster_flashlight/off09	DDZCLK09
+rs_holster_flashlight/off10	DDZCLK10
+rs_holster_flashlight/off11	DDZCLK11
+rs_holster_flashlight/off12	DDZCLK12
+
+
+// ============================================================
+// from RS_Reload  (SNDINFO.txt)
+// ============================================================
+// Reload sounds, addressed by FEED FAMILY and never by weapon.
+//
+// A missing sound is not an error in GZDoom -- it is a log line and silence --
+// so an unmapped logical name here reads in play as the beat not firing at all.
+// Every name rr_feed.zs can hand to A_StartSound is defined below, even the ones
+// still pointing at a placeholder, so a beat is never silent for a reason that
+// takes a log dive to find.
+//
+// The files these should point at are Rusted Legacy's, which already exist and
+// are already timed to these sequences:
+//
+//   rr/magdraw    DSSWTCHN
+rr/shelldraw  DSSWTCHN
+rr/celldraw   DSSWTCHN
+
+rr/magin      DSSWTCHX
+rr/shellin    DSSWTCHX
+rr/cellin     DSSWTCHX
+rr/podin      DSSWTCHX
+
+rr/stow       DSSWTCHN
+rr/drop       DSBDCLOS
+
+
+// ============================================================
+// from Headshots  (SNDINFO.txt)
+// ============================================================
+// Mini-crit hit confirms, lifted from mk-crits (TF2 source set).
+// Five variants so a burst of hits doesn't machine-gun the same sample.
+
+hs/mini1					"sounds/tf2/crit_hit_mini1.ogg"
+hs/mini2					"sounds/tf2/crit_hit_mini2.ogg"
+hs/mini3					"sounds/tf2/crit_hit_mini3.ogg"
+hs/mini4					"sounds/tf2/crit_hit_mini4.ogg"
+hs/mini5					"sounds/tf2/crit_hit_mini5.ogg"
+
+$random headshot/mini { hs/mini1 hs/mini2 hs/mini3 hs/mini4 hs/mini5 }
+
+// Plays off the marker actor at the impact point, not off the player, so it
+// arrives from the thing you shot. $limit keeps a shotgun spread from stacking
+// five copies of the same confirm on top of each other.
+$limit headshot/mini 2
+
+

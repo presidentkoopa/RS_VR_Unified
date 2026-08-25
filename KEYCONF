@@ -1,0 +1,110 @@
+// RS_VR_Unified -- one key section.
+//
+// BUG FIXED HERE. Both source packages opened with the SAME line:
+//
+//     addkeysection "RS HardPoints" RSHardPoints
+//
+// byte-identical in RS_Holsters/KEYCONF:1 and RS_HardPoints/KEYCONF:1 -- a
+// copy-paste survivor of the 2026-08-23 split that was never renamed on the
+// Holsters side. Two packages declaring one section id means they share a
+// section file, and the binds of whichever loaded first get overwritten on
+// every config save. That has been quietly eating one mod's key binds since
+// the split. Merged, there is one section and the problem cannot recur.
+addkeysection "RS VR Unified" RSVRUnified
+
+// ---------------------------------------------------------------- grip
+// The engine synthesises F13 (main hand) / F14 (off hand) for an anchor-context
+// grip, ONLY when the grip arbiter resolves a clean tap that started inside an
+// anchor's radius. Outside one, or during a combo, grip keeps its normal
+// meaning and these never fire -- which is why binding grip's anchor role here
+// does not steal grip from two-hand stabilize or the modifier layer.
+//
+// BOTH alias pairs below fire the SAME netevent, which every handler receives.
+// In the separate pk3s that split existed because a key binds to exactly ONE
+// alias, so two packages could not both claim F13. Merged, that constraint is
+// gone and ONE bind is enough -- binding F13 to rs_holster_main alone already
+// reaches the hardpoint manager too. Both names are kept so existing binds in
+// an already-written config keep working; bind either, not both.
+//
+// NO DEFAULT BINDS -- bind these yourself under Customize Controls.
+//
+// STILL UNSOLVED, AND IT IS NOT A KEYCONF PROBLEM: the two managers arbitrate
+// purely on "your hand is only ever in one place", which nothing enforces.
+// Edit mode lets you drag a wrist mount onto a hip holster, and the engine
+// emits one indistinguishable pulse for both contexts. Overlap the anchors and
+// both doSwap bodies run on one press. The fix belongs in ZScript (a tiebreak
+// on HolsterClaim*/HardpointClaim*, both already published every tic), not here.
+addmenukey "Anchor: store/draw (MAIN hand)" rs_holster_main
+alias rs_holster_main "netevent rs-vrhp-grab-main"
+
+addmenukey "Anchor: store/draw (OFF hand)" rs_holster_off
+alias rs_holster_off "netevent rs-vrhp-grab-off"
+
+alias rs_hardpoint_main "netevent rs-vrhp-grab-main"
+alias rs_hardpoint_off  "netevent rs-vrhp-grab-off"
+
+// ---------------------------------------------------------------- holsters
+addmenukey "Holster: recalibrate height" rs_holster_recal
+alias rs_holster_recal "netevent rs-holster-recalibrate"
+
+addmenukey "Holster: debug dump" rs_holster_debug
+alias rs_holster_debug "netevent rs-holster-debug"
+
+addmenukey "Holster: EDIT MODE toggle" rs_holster_edit
+alias rs_holster_edit "netevent rs-holster-edit"
+
+addmenukey "Holster: print tuned table" rs_holster_table
+alias rs_holster_table "netevent rs-holster-table"
+
+addmenukey "Holster: reset offsets" rs_holster_reset
+alias rs_holster_reset "netevent rs-holster-reset"
+
+addmenukey "Holster: save profile STANDING" rs_holster_save_standing
+alias rs_holster_save_standing "netevent rs-holster-save-standing"
+
+addmenukey "Holster: load profile STANDING" rs_holster_load_standing
+alias rs_holster_load_standing "netevent rs-holster-load-standing"
+
+addmenukey "Holster: save profile SEATED" rs_holster_save_seated
+alias rs_holster_save_seated "netevent rs-holster-save-seated"
+
+addmenukey "Holster: load profile SEATED" rs_holster_load_seated
+alias rs_holster_load_seated "netevent rs-holster-load-seated"
+
+addmenukey "Holster: SWITCH seated/standing" rs_holster_switch_profile
+alias rs_holster_switch_profile "netevent rs-holster-switch-profile"
+
+// ---------------------------------------------------------------- hardpoints
+addmenukey "Hardpoint: debug dump" rs_hardpoint_debug
+alias rs_hardpoint_debug "netevent rs-hardpoint-debug"
+
+addmenukey "Hardpoint: EDIT MODE toggle" rs_hardpoint_edit
+alias rs_hardpoint_edit "netevent rs-hardpoint-edit"
+
+addmenukey "Hardpoint: print tuned table" rs_hardpoint_table
+alias rs_hardpoint_table "netevent rs-hardpoint-table"
+
+addmenukey "Hardpoint: reset offsets" rs_hardpoint_reset
+alias rs_hardpoint_reset "netevent rs-hardpoint-reset"
+
+addmenukey "Hardpoint: save tuned layout" rs_hardpoint_save_layout
+alias rs_hardpoint_save_layout "netevent rs-hardpoint-save-layout"
+
+addmenukey "Hardpoint: load tuned layout" rs_hardpoint_load_layout
+alias rs_hardpoint_load_layout "netevent rs-hardpoint-load-layout"
+
+// GESTURE-CAST fire. Off hand only, wrist trio only. Each alias is hardcoded to
+// ONE hardpoint index: grip -> 3, pad/X -> 4, trigger -> 5.
+//
+// PLACEHOLDER BINDS -- bind to a throwaway test key, NOT the real grip/trigger/
+// pad. Wiring these onto the actual controller buttons needs engine-side context
+// gating that does not exist yet; without it a raw trigger read ALSO fires
+// whatever the off hand's held weapon does on that same physical pull.
+addmenukey "Hardpoint: gesture-fire GRIP (hardpoint 3)" rs_hardpoint_gesture_grip
+alias rs_hardpoint_gesture_grip "netevent rs-hardpoint-gesture-grip"
+
+addmenukey "Hardpoint: gesture-fire PAD/X (hardpoint 4)" rs_hardpoint_gesture_padx
+alias rs_hardpoint_gesture_padx "netevent rs-hardpoint-gesture-padx"
+
+addmenukey "Hardpoint: gesture-fire TRIGGER (hardpoint 5)" rs_hardpoint_gesture_trigger
+alias rs_hardpoint_gesture_trigger "netevent rs-hardpoint-gesture-trigger"

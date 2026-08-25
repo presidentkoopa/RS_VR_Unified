@@ -1,0 +1,749 @@
+// ============================================================
+// from RS_Hands  (CVARINFO.txt)
+// ============================================================
+// Mod-side CVARs. These live here rather than in the engine so the hands can be
+// tuned and shipped without an engine rebuild.
+// THE PSPRITE HANDS ARE THE ONES ON SCREEN. This is the path with the working
+// pose driver and the tuned hand/gun alignment.
+//
+// Never run both at once: two hand systems draw one mesh on top of another, in
+// two different spaces at two different scales, which reads as the model being
+// doubled or z-fighting rather than as two systems each doing their job.
+//
+// A DEFAULT HERE CANNOT OVERRIDE A VALUE ALREADY SAVED IN THE INI. Both hand
+// systems sat saved as `true` while this file said false for both, which is why
+// changing a default looks like a fix that silently did nothing. Change the ini
+// or use the menu; a fresh cvar name is the only way a default ever takes.
+user bool  rs_hands       = true;
+user float rs_hand_scale  = 1.0;
+
+// Traces pose selection. Pair with the engine's vr_pose_debug to see both
+// ends of the handoff: this prints what was chosen, that prints what the
+// renderer did with it.
+user bool rs_hands_debug = true;
+
+// Overrides pose selection so a frame can be inspected without pressing
+// anything -- the point being to separate "the pose never renders" from "the
+// input never arrives", which look identical from inside a headset.
+// -1 leaves the controllers in charge.
+user int rs_hands_forcepose = -1;
+
+
+// Show the rigged hand in place of a mod's fist weapon. The weapon still does
+// the damage -- this only stops it drawing, so the hand is what you see.
+user bool rs_hands_fists = true;
+
+// Scrub the source animation kept in the model -- 1278 authored frames from
+// the original rig. -1 leaves the pose logic alone. Use it to find a shape by
+// eye, then wire that frame number into the pose table.
+user int rs_hands_srcframe = -1;
+
+// Anchor the hand to the held weapon's grip bone instead of placing it at the
+// controller. OFF by default: the placement you dialled in by hand still
+// applies when this is off, and anchoring replaces it rather than adding to it.
+
+// Tics taken to blend from one hand pose to the next. Lower is snappier, higher
+// is smoother. 0 disables blending and poses snap, which is the old behaviour.
+user float rs_hands_blend = 4.0;
+
+// How a hand SITS on the bone it is anchored to. Keyed by role rather than by
+// weapon, because a hand wrapped round a pistol grip sits the same way on every
+// pistol grip -- so a new weapon inherits a fit that is already dialled in.
+//
+// grip    = the firing hand, on the grip
+// support = the other hand, helping hold the weapon
+// rack    = the hand on the slide or the pump, working the action
+
+
+
+// ---------------------------------------------------------------------------
+// WORLD-ACTOR HANDS. ON by default -- a feature shipped switched off never gets
+// tested. Separate slider sets per hand: they are one mirrored mesh, so a shared
+// offset pushes them in opposite directions and a shared roll turns them
+// opposite ways. That is not theoretical, it is why the per-hand split exists.
+// ---------------------------------------------------------------------------
+// OFF, and kept. Grabbing does NOT need these -- the reach volume and its drawn
+// oval both ride the controller directly, and the oval is its own actor using
+// MODELDEF FollowMainHand.
+//
+// What these are the only route to, should any of it be wanted:
+//   - a hand that is a THING IN THE WORLD: findable in the blockmap, able to
+//     block, able to be hit. A psprite cannot be any of those.
+//   - other players seeing your hands. A psprite draws for its owner alone.
+//   - where a named finger bone is IN THE ROOM, live, including the current
+//     pose -- ModelPointToWorld needs a world actor to run the matrix on.
+//     A fingertip on a button needs this; a palm holding a crate does not,
+//     because a fixed offset covers that.
+//
+// With them off, the reach centre falls back to the controller origin, which
+// sits at the WRIST, roughly 10cm behind the palm. The per-hand grab offset
+// sliders exist to put that back.
+user bool rs_handworld = false;
+
+user float rs_hw_main_ofs_x = 0.0;
+user float rs_hw_main_ofs_y = 0.0;
+user float rs_hw_main_ofs_z = 0.0;
+user float rs_hw_main_yaw   = 0.0;
+user float rs_hw_main_pitch = 0.0;
+user float rs_hw_main_roll  = 0.0;
+user float rs_hw_main_scale = 1.0;
+
+user float rs_hw_off_ofs_x = 0.0;
+user float rs_hw_off_ofs_y = 0.0;
+user float rs_hw_off_ofs_z = 0.0;
+user float rs_hw_off_yaw   = 0.0;
+user float rs_hw_off_pitch = 0.0;
+user float rs_hw_off_roll  = 0.0;
+user float rs_hw_off_scale = 1.0;
+
+// ---- world-hand poses ---------------------------------------------------
+// -1 lets the controllers and whatever is being held decide. Anything else
+// parks the hand on that shape so it can be looked at -- there is no console
+// here, so a menu that holds a pose is the only way to inspect one.
+user int   rs_handworld_forcepose = -1;
+// Tics to travel between shapes. Blends BONE matrices, so a grip closes.
+user float rs_handworld_blend = 4.0;
+user bool  rs_handworld_debug = false;
+
+// ---- HAND GRABBING ------------------------------------------------------
+//
+// A property of the HAND. These were written into a weapon package and vanished
+// with it; nothing about a reach volume is weapon-specific.
+user bool  rs_grab = true;
+user bool  rs_grabviz = true;
+user bool  rs_grabviz_onlywhenhot = false;
+user float rs_grabviz_alpha = 0.55;
+// Draw the collision volume of whatever is in reach.
+user bool  rs_volviz = true;
+
+// The reach OVAL, per hand. Semi-axes in MAP UNITS, hand-local: x along the
+// fingers, y across the palm, z through the back of the hand. 34 units is a
+// metre; a fist is about 2 units.
+//
+// An oval and not a sphere: a hand reaches further along the fingers than it
+// does through the back of the wrist, and a sphere wide enough to touch the
+// fingertips also grabs things behind you.
+//
+// _scale is the master multiplier over all three axes, and it has a slider now.
+// The three per-axis numbers say the SHAPE; this one says the SIZE. With only
+// the first three, making the whole volume smaller meant moving three sliders in
+// step and hoping they stayed in proportion.
+//
+// Its range reaches down to 0.005 because the drawn volume rides the hand
+// through the same transform the viewmodel uses, and that space is NOT the 34-
+// units-to-a-metre of the world path. A unit-radius mesh arrives already metres
+// across. Trim SIZE first, then dial the three axes for shape.
+user float rs_grab_m_ofs_x = 0.0;
+user float rs_grab_m_ofs_y = 0.0;
+user float rs_grab_m_ofs_z = 0.0;
+user float rs_grab_m_yaw = 0.0;
+user float rs_grab_m_pitch = 0.0;
+user float rs_grab_m_roll = 0.0;
+user float rs_grab_m_scale = 1.0;
+user float rs_grab_m_scale_x = 3.2;
+user float rs_grab_m_scale_y = 2.2;
+user float rs_grab_m_scale_z = 1.6;
+
+user float rs_grab_o_ofs_x = 0.0;
+user float rs_grab_o_ofs_y = 0.0;
+user float rs_grab_o_ofs_z = 0.0;
+user float rs_grab_o_yaw = 0.0;
+user float rs_grab_o_pitch = 0.0;
+user float rs_grab_o_roll = 0.0;
+user float rs_grab_o_scale = 1.0;
+user float rs_grab_o_scale_x = 3.2;
+user float rs_grab_o_scale_y = 2.2;
+user float rs_grab_o_scale_z = 1.6;
+
+// ---- HOLDING ------------------------------------------------------------
+//
+// Grabbing used to call CallTryPickup, which is Doom's ordinary pickup path:
+// the item went straight into inventory and the world actor died. Nothing was
+// ever in your hand. These govern what happens instead.
+
+// Squeeze once to take, once more to let go. Off means hold-to-keep: the
+// fingers open, the object drops. Both exist because both are wrong somewhere
+// -- a toggle drops things you meant to keep, and hold-to-keep is a hand cramp
+// over a session.
+user bool rs_hold_toggle = true;
+
+// A second hand on something the first hand already holds JOINS it rather than
+// stealing it. Only for objects big enough to warrant two hands.
+user bool rs_hold_twohand = true;
+
+// A second hand on something too small for two hands TAKES it, hand to hand.
+// Off means the second hand is refused and the object stays where it is.
+user bool rs_hold_pass = true;
+
+// How far the object may lag behind the palm before the hand lets go, in map
+// units. 34 units is a metre. A carried object is moved with TryMove and so
+// stops at walls -- push your hand through a doorframe and the object stays
+// behind it, and without a break it would be dragged through the level the
+// moment a gap opened. 0 disables the break entirely.
+user float rs_hold_break = 40.0;
+
+user bool rs_hold_debug = true;
+
+// ---- WHAT IS GRABBABLE --------------------------------------------------
+//
+// The table lives in zscript/rs_grabpolicy.zs. These are the few answers worth
+// changing mid-session from inside a headset; everything else is a line in the
+// table.
+
+// Barrels. Big, round, two-handed, and the best thing in Doom to pick up.
+user bool rs_grab_barrels = true;
+
+// Corpses. A dead imp is a prop. A live one is not -- that is not policy and
+// there is no switch for it, because closing a hand on a live monster is a way
+// of deleting monsters rather than an interaction.
+user bool rs_grab_corpses = true;
+
+// Weapons lying on the floor. OFF: taking a shotgun off the ground by hand
+// instead of walking over it is a whole interaction and wants deciding on
+// purpose rather than arriving by default.
+user bool rs_grab_weapons = false;
+
+// Stop collecting things by walking into them.
+//
+// Doom picks an item up the moment your collision cylinder touches it, and in VR
+// your cylinder gets there long before your hand does -- so the room empties
+// itself as you cross it and the grab you were reaching for never happens.
+//
+// OFF by default: BOTH ROUTES WORK. Reach for a thing and grab it, or walk over
+// it like Doom always has. They are not in competition -- one is deliberate and
+// one is incidental, and there is no reason a shotgun should refuse to be picked
+// up because you happened to walk onto it rather than point at it.
+//
+// On, only things the grabbability table already allows stop being collected by
+// touch. Anything you could not have grabbed is still walked over, because
+// otherwise it would be unreachable by any means at all.
+//
+// NOTE: this is saved TRUE in existing inis, and a CVARINFO default cannot
+// override a saved value. Flip it in the menu -- Hand Grab, Holding, "Must
+// reach for pickups" -- or it will keep suppressing walk-over.
+user bool rs_grab_nowalkover = false;
+
+// ---- DISTANCE GRABBING --------------------------------------------------
+//
+// Point at a thing across the room and squeeze; it arcs over to your hand.
+// Only ever consulted when your palm is empty -- something you are already
+// touching is unambiguously the thing you meant.
+user bool rs_dgrab = true;
+
+// REACH AND SPREAD ARE SEPARATE NUMBERS on purpose. How FAR you can pull from
+// and how PRECISELY you must point are different complaints with different
+// fixes, and one combined "cone size" slider forces one of them to be wrong in
+// order to get the other right. 34 units is a metre, so 512 is about 15m.
+user float rs_dgrab_reach = 512.0;
+// HALF-angle, degrees. 12 is a cone about the width of a doorway at 10 metres.
+user float rs_dgrab_spread = 12.0;
+
+// HOW FAST IT TRAVELS, metres per second -- not how long it takes. Flight time
+// is derived from the distance, so a thing across the room and a thing at your
+// feet arrive at the same speed. A fixed tic count made the far pull a blur and
+// the near one a drift, off one slider.
+user float rs_dgrab_speed = 15.0;
+
+// Floor and ceiling on that, in tics. 35 to a second.
+user float rs_dgrab_time_min = 6.0;
+user float rs_dgrab_time_max = 70.0;
+
+// ACCELERATION. 1 is constant speed; above 1 starts slow and speeds up, which
+// is what a thing being PULLED does. A pull that begins at full speed reads as a
+// teleport with a delay.
+user float rs_dgrab_accel = 1.6;
+
+// Arc height as a FRACTION OF THE LAUNCH DISTANCE, so the arc keeps its shape at
+// every range instead of a long pull reading flat and a short one as a lob.
+//
+// A NEW NAME, not the old rs_dgrab_lift, and that is deliberate. The old one
+// meant map units and is sitting in inis at 24; reusing it with a fractional
+// meaning would give a 512-unit pull an arc twelve thousand units high. A
+// CVARINFO default cannot override a saved value -- a fresh name is the only way
+// a changed meaning ever actually takes.
+user float rs_dgrab_arc = 0.15;
+
+// Refuse to pull things you cannot see. Off lets you grab through walls.
+user bool rs_dgrab_sight = true;
+
+// ---- FLICK --------------------------------------------------------------
+//
+// Yank an empty hand toward yourself while the cone has something locked and it
+// comes to you, no button. Only ever fires with a lock, only on motion coming
+// TOWARD you, and only above the speed below -- a forward swing can never read
+// as "come here" however hard you throw it.
+user bool rs_dgrab_flick = true;
+
+// Metres per second, measured as the PEAK of the last ~180ms rather than the
+// speed at any single moment. Your arm is already slowing down by the end of a
+// gesture, so the last sample always reads slower than the flick felt.
+user float rs_flick_speed = 2.5;
+
+// The line from your palm to what you have locked. Answers "what will I get",
+// which is the question you have while pointing -- a drawn cone would answer
+// "where can I aim", which is the one you do not.
+user bool  rs_dgrab_beam = true;
+user float rs_dgrab_beam_thick = 0.7;
+
+// Flash whatever you are pointing at, and whatever is in your hand.
+//
+//   considered / lasered over    neutral <-> orange
+//   in your hand                 orange  <-> green
+//   in flight toward you         nothing -- the arc is the feedback by then
+//
+// A translation remap rather than a model swap: a voxel is bound to a SPRITE
+// NAME and resolved before any per-instance override is read, so hiding one
+// gets you an invisible object rather than a sprite. Colours are in TRNSLATE.
+user bool rs_grab_lightup = true;
+
+// Tics for a full cycle. 35 to a second, so 24 is a slow pulse -- fast enough
+// to read as alive, slow enough that a room full of pickups is not a strobe.
+user float rs_grab_flash = 24.0;
+
+// What a non-pickup does when it reaches you uncaught, in damage. A barrel that
+// detonates on contact makes every missed pull a near-death; you can still shoot
+// one out of the air if that is what you wanted. 0 makes an impact harmless.
+user float rs_dgrab_impact = 5.0;
+
+// ---- THROWING -----------------------------------------------------------
+//
+// Letting go and throwing are the same act; the difference is how fast the hand
+// was moving. Speed comes from the PEAK of the last ~180ms, not the instant of
+// release -- your arm is already slowing by then, and a throw built on that
+// number comes out limp however hard it felt.
+user bool rs_throw = true;
+
+// Metres per second below which a release is a DROP. Under it the object leaves
+// at the hand's current speed instead of inheriting a peak from a fifth of a
+// second ago -- otherwise setting something down right after catching it makes
+// it leap out of your hand.
+user float rs_throw_min = 1.2;
+
+// Multiplier on the throw. 1.0 is your actual arm speed.
+user float rs_throw_scale = 1.0;
+
+// ---- USING WHAT YOU ARE HOLDING -----------------------------------------
+//
+// Bring it to your face. This is the counterpart to switching walk-over off:
+// once the room stops emptying itself as you cross it, a pickup has to be used
+// somewhere, and that somewhere has to be a place you can only reach on purpose.
+//
+// Not your body -- a held object is permanently inside your own collision
+// cylinder, so consuming on body contact is the walk-over behaviour again under
+// a different name.
+user bool rs_use_at_face = true;
+
+// How close to your head, in map units. 34 is a metre, so 12 is about a hand's
+// length from your face.
+user float rs_use_face_reach = 12.0;
+
+// Ammo goes to a pouch instead of resolving when you catch it.
+//
+// INERT TODAY. The pouch this would route to died with RS_UnifiedVR. The switch
+// exists so the decision is recorded and the menu entry is already here when a
+// pouch lands -- with it on and no pouch, ammo is simply held, which is worse
+// than resolving, and is why it defaults off.
+user bool rs_use_ammo_pouch = false;
+
+// A tick when a held item crosses into face range.
+//
+// HAPTICS HAVE NEVER BEEN PROVEN TO WORK IN THIS TREE. This is wired and
+// instrumented rather than assumed: turn on the engine's vr_haptic_debug and
+// read [HAPTIC]. Nothing printed means the call never left. "runtime accepted"
+// printed and nothing felt means the problem is past this code. Either is an
+// answer; neither is a guess.
+user bool  rs_use_face_haptic = true;
+user float rs_use_face_haptic_amp = 0.35;
+
+// A wire sphere at your head, sized to the face reach, so what you see is what
+// triggers -- the same discipline the grab oval uses. OFF: it is for dialling
+// the number in, not for playing with.
+user bool rs_use_face_viz = false;
+
+// ---- THE AIMING RAY, PER STATE ------------------------------------------
+//
+// Three states, three lines, because they are three different messages:
+//
+//   idle       pointing at nothing        dim, neutral
+//   candidate  pointing at a grabbable    amber
+//   locked     your fist is closed on it  green, and reeled inward
+//
+// Each carries its own colour, thickness and opacity. Telling them apart at a
+// glance is the entire reason the ray is drawn.
+
+// IDLE -- the ray with nothing under it. Off is a real option: a permanent line
+// in your vision may be worse than the aiming problem it solves.
+user bool  rs_beam_idle_show  = true;
+user color rs_beam_idle_color = "50 60 70";
+user float rs_beam_idle_alpha = 0.35;
+user float rs_beam_idle_thick = 0.4;
+// How far the idle ray reaches. 0 means as far as you could actually pull from,
+// so the line ends exactly where the ability does.
+user float rs_beam_idle_len   = 0.0;
+
+// CANDIDATE -- something grabbable under the ray.
+user color rs_beam_hot_color = "ff c0 60";
+user float rs_beam_hot_alpha = 1.0;
+user float rs_beam_hot_thick = 0.7;
+
+// LOCKED -- your fist is closed on it.
+user color rs_beam_lock_color = "50 ff 70";
+user float rs_beam_lock_alpha = 1.0;
+user float rs_beam_lock_thick = 0.9;
+
+// How soft the edges of the line are, all three states.
+user float rs_beam_soft = 0.5;
+
+// ---- HOW THE BEAM LOOKS -------------------------------------------------
+//
+// LEVEL-WIDE, all of it. There is no way to read these back, so this package
+// owns the look for every beam in the level and anything else drawing one
+// inherits it. Nothing else in a normal load uses beams.
+//
+// Every directional part runs START to END: the scroll travels that way, the
+// taper is thin at the start, the flare is bright at the end.
+
+// Draw the locked beam from the OBJECT to your hand instead of the other way,
+// so the energy runs toward you and the bright end sits in your palm. Pointing
+// at a thing and hauling it in should not look like the same act.
+user bool rs_dgrab_beam_reel = true;
+
+// 0 lights only what it touches -- a spotlight rather than a laser.
+user float rs_beam_airglow = 1.0;
+// The pulse travelling along it. 0 is a still beam.
+user float rs_beam_scroll = 6.0;
+// How pronounced the pulse is. 0 is smooth.
+user float rs_beam_depth = 0.25;
+// Thinner at the start than at the end.
+user float rs_beam_taper = 0.35;
+// Brightness boost where it lands.
+user float rs_beam_flare = 1.5;
+// Glow around the line, and how much it catches in fog.
+user float rs_beam_glow = 0.35;
+user float rs_beam_fog = 0.2;
+
+
+// ============================================================
+// from RS_Holsters  (CVARINFO.txt)
+// ============================================================
+// Show a model of the stored weapon at each body holster anchor.
+user bool rs_holster_props = true;
+
+// Holster prop appearance. Live-tunable because the right values are found by
+// looking at them in the headset, not by reasoning about model units.
+// A weapon's MODELDEF Scale is tuned for the HUD projection, so reusing it on
+// a world actor renders it enormous -- hence the shrink.
+user float rs_holster_prop_scale = 0.18;
+
+// Vestigial: the forearm/wrist rig this sized moved out to RS_HardPoints,
+// which declares its own. Kept declared because holsterPropScaleArm() is
+// still called from a branch that is now unreachable (see isHandAnchored
+// in RS_Holsters.zs) -- removing the cvar would leave that call reading a
+// null CVar, which it handles, but declaring it costs nothing and keeps
+// the two files honest with each other.
+user float rs_holster_prop_scale_arm = 0.08;
+
+// Fraction of a holster's own claim radius that a stored weapon's MEASURED
+// bounding radius (level.GetModelBoundsHint) gets scaled to fill, so a BFG
+// and a pistol read as "the same size in the ring" instead of both taking
+// the same flat multiplier regardless of how big either model actually is.
+// Only takes effect when the native finds real geometry to measure (every
+// weapon in this arsenal is an OBJ, which it does); rs_holster_prop_scale/
+// _arm above remain the exact fallback for anything it can't measure, same
+// as before this existed. Under 1.0 on purpose -- a weapon that exactly
+// touches the marker sphere's edge reads as clipping out of it, not as
+// filling it.
+user float rs_holster_prop_fill = 0.55;
+
+// Trim on top of each holster's own pitch/roll (RS_Holsters.zs, GetHolster).
+// Every weapon MODELDEF block carries USEACTORPITCH/USEACTORROLL (added by
+// Add-ModelDefPitchFlags.ps1), so these do real work now -- earlier they did
+// nothing at all, silently, because the renderer ignored both flags entirely.
+user float rs_holster_prop_pitch = 0.0;
+user float rs_holster_prop_roll  = 0.0;
+
+// Centring trim, on top of the AUTOMATIC correction (level.GetModelOffsetHint,
+// read per-weapon in RS_HolsterProp.ShowWeapon). Residual now, not the whole
+// mechanism -- a weapon's baked MODELDEF Offset is measured and cancelled
+// automatically; these three exist for whatever the automatic fix does not
+// fully resolve for a given model.
+user float rs_holster_prop_up   = 0.0;
+user float rs_holster_prop_fwd  = 0.0;
+user float rs_holster_prop_side = 0.0;
+
+// Yaw trim, plus the automatic mirror-flip and AngleOffset cancellation
+// (level.GetModelOrientationHint) applied ahead of it.
+user float rs_holster_prop_yaw = 0.0;
+
+// The store/draw confirm sound (RS_Holsters.zs doSwap).
+user bool rs_holster_sound = true;
+
+// Which sound plays: 0 = rs_fx_holster, 1 = rs_allclear_ready. Both are
+// looked up by NAME, so whichever loaded weapon pack happens to define
+// them supplies them -- and GZDoom resolves an undefined sound to silence
+// rather than to an error, so neither is a hard dependency.
+user int rs_holster_sound_style = 0;
+
+// Store/draw uses GZDoom's own CF_INSTANTWEAPSWITCH cheat flag (constants.zs),
+// set transiently around the MoveWeaponToHand call and restored right after
+// (RS_Holsters.zs, moveWeaponInstant) -- so ordinary weapon switching (number
+// keys, the wheel) is untouched, only a holster-triggered swap is instant.
+// Also what makes two-hand near-simultaneous store/draw work: with this on,
+// the whole lower-then-raise cycle resolves the same tic instead of over
+// ~16 tics, so there is no shared-PendingWeapon window for a second hand's
+// swap to collide with.
+user bool rs_holster_instant_switch = true;
+
+// Marker look. Shape reads at SetHot's next re-check (immediate, since
+// SetHot's guard watches this cvar too -- RS_HolsterProp.zs). Color is a
+// class choice, not a field, so a change respawns the marker the next tic
+// (RS_Holsters.zs updateProps) rather than tinting an existing one live.
+// 0 = bracket reticle, 1 = the original wireframe sphere.
+user int rs_holster_marker_shape = 0;
+// Cold (idle) marker color. 0 = default (untinted), 1 = blue, 2 = red,
+// 3 = gold, 4 = purple, 5 = orange, 6 = green, 7 = cyan, 8 = pink.
+user int rs_holster_marker_color = 0;
+// Hot (hand-in-range) marker color, same palette, independent cvar --
+// picking the same color for both used to be the only option there was,
+// and two states that look identical defeat the point of a color cue.
+// Defaults to 0/untinted, same as rs_holster_marker_color, so a fresh
+// install looks exactly as it did before this existed; the two only
+// diverge once you actually pick different values in the menu.
+user int rs_holster_marker_color_hot = 0;
+// Flat marker size multiplier, on top of the proximity-tighten Tick()
+// already does (RS_HolsterProp.zs). 1.0 is the authored unit-radius mesh
+// at MODELDEF's Scale 3.0 -- unchanged from before this cvar existed.
+user float rs_holster_marker_scale = 1.0;
+
+// How many of the 8 declared holsters are live: 2 = hip, 4 = +shoulder,
+// 6 = +pectoral, 8 = +second hip pair (RS_Holsters.zs, GetHolster/
+// activeCount). Snapped to the nearest of those four on read, so any other
+// value (a hand-edited ini, an old config) still resolves to something
+// sane rather than an in-between state nothing was ever tuned for.
+// Defaults to everything on -- the point of just having added the second
+// hip pair is seeing it, not opting into it separately.
+user int rs_holster_active_count = 8;
+
+// The chest ammo pouch (AMMO_POUCH_IDX, index 8 in RS_Holsters.zs), for
+// RS_Reload. Its own toggle rather than folded into rs_holster_active_count
+// above -- that cvar's tiers snap to exactly 2/4/6/8 and never reach 9, and
+// a pouch is a different kind of thing anyway (ammo, not a weapon slot).
+user bool rs_holster_pouch_enabled = true;
+
+
+// ============================================================
+// from RS_HardPoints  (CVARINFO.txt)
+// ============================================================
+// Show a model of the stored item at each hardpoint anchor.
+user bool rs_hardpoint_props = true;
+
+// Hardpoint prop appearance. Live-tunable because the right values are found
+// by looking at them in the headset, not by reasoning about model units.
+// A weapon's MODELDEF Scale is tuned for the HUD projection, so reusing it on
+// a world actor renders it enormous -- hence the shrink. Small by default: a
+// utility item on a wrist mount should read as compact gear, not as a full
+// holstered sidearm.
+user float rs_hardpoint_prop_scale_arm = 0.08;
+
+// Fraction of a hardpoint's own claim radius that a stored item's MEASURED
+// bounding radius (level.GetModelBoundsHint) gets scaled to fill, so a BFG
+// and a pistol read as "the same size in the ring" instead of both taking
+// the same flat multiplier regardless of how big either model actually is.
+// Only takes effect when the native finds real geometry to measure;
+// rs_hardpoint_prop_scale_arm above remains the exact fallback for anything
+// it can't measure. Under 1.0 on purpose -- an item that exactly touches the
+// marker's edge reads as clipping out of it, not as filling it.
+user float rs_hardpoint_prop_fill = 0.55;
+
+// Trim on top of each hardpoint's own pitch/roll (RS_HardPoints.zs,
+// GetHolster). Every weapon MODELDEF block that carries USEACTORPITCH/
+// USEACTORROLL honours these; without those flags the renderer ignores both
+// axes entirely, which is a property of that weapon's MODELDEF, not of this.
+user float rs_hardpoint_prop_pitch = 0.0;
+user float rs_hardpoint_prop_roll  = 0.0;
+
+// Centring trim, on top of the AUTOMATIC correction (level.GetModelOffsetHint,
+// read per-item in RS_HardPointProp.ShowWeapon). Residual only, not the whole
+// mechanism -- an item's baked MODELDEF Offset is measured and cancelled
+// automatically; these three exist for whatever that does not fully resolve.
+user float rs_hardpoint_prop_up   = 0.0;
+user float rs_hardpoint_prop_fwd  = 0.0;
+user float rs_hardpoint_prop_side = 0.0;
+
+// Yaw trim, plus the automatic mirror-flip and AngleOffset cancellation
+// (level.GetModelOrientationHint) applied ahead of it.
+user float rs_hardpoint_prop_yaw = 0.0;
+
+// The store/draw confirm sound (RS_HardPoints.zs doSwap).
+user bool rs_hardpoint_sound = true;
+
+// Which sound plays: 0 = rs_fx_holster, 1 = rs_allclear_ready. Both are
+// looked up by NAME, so whichever loaded weapon pack happens to define them
+// supplies them -- and GZDoom resolves an undefined sound to silence rather
+// than to an error, so neither is a hard dependency.
+user int rs_hardpoint_sound_style = 0;
+
+// Store/draw uses GZDoom's own CF_INSTANTWEAPSWITCH cheat flag (constants.zs),
+// set transiently around the MoveWeaponToHand call and restored right after
+// (RS_HardPoints.zs, moveWeaponInstant) -- so ordinary weapon switching (number
+// keys, the wheel) is untouched, only a hardpoint-triggered swap is instant.
+// Also what makes two-hand near-simultaneous store/draw work: with this on,
+// the whole lower-then-raise cycle resolves the same tic instead of over
+// ~16 tics, so there is no shared-PendingWeapon window for a second hand's
+// swap to collide with.
+user bool rs_hardpoint_instant_switch = true;
+
+// Marker look. Shape reads at SetHot's next re-check (immediate, since
+// SetHot's guard watches this cvar too -- RS_HardPointProp.zs). Color is a
+// class choice, not a field, so a change respawns the marker the next tic
+// (RS_HardPoints.zs updateProps) rather than tinting an existing one live.
+// 0 = bracket reticle, 1 = the original wireframe sphere, 2 = wireframe
+// diamond (HardPoints-only shape -- lets a hand tell arm-mounted gear apart
+// from torso holster gear on sight).
+user int rs_hardpoint_marker_shape = 0;
+// Cold (idle) marker color. 0 = default (untinted), 1 = blue, 2 = red,
+// 3 = gold, 4 = purple, 5 = orange, 6 = green, 7 = cyan, 8 = pink. Applies
+// to whichever shape is selected above -- color is a Translation on the
+// class, independent of which model A_ChangeModel binds.
+user int rs_hardpoint_marker_color = 0;
+// Hot (hand-in-range) marker color, same palette, independent cvar --
+// two states that look identical defeat the point of a color cue.
+user int rs_hardpoint_marker_color_hot = 0;
+// Flat marker size multiplier, on top of the proximity-tighten Tick()
+// already does (RS_HardPointProp.zs). 1.0 is the authored unit-radius mesh
+// at MODELDEF's Scale 3.0 -- unchanged from before this cvar existed.
+user float rs_hardpoint_marker_scale = 1.0;
+
+// Which hardpoints are live (RS_HardPoints.zs, armMode). A MODE, not a
+// count: 0 = off, 1 = forearm only (Forearm1/2/3), 2 = wrist only
+// (WristBelow/Knuckle/Joint), 3 = both, all six. Wrist-only has to be a
+// mode rather than a count, since the wrist trio is never the low end of
+// the anchor table -- "first N active" could never express it alone.
+// Clamped to a valid mode on read, so any other value (a hand-edited ini,
+// an old config from before this was a mode) still resolves to something
+// sane rather than an in-between state nothing was ever tuned for.
+//
+// Defaults to 1 (forearm only), NOT 0. This rig defaulted OFF back when
+// it shipped inside RS_Holsters next to 8 already-tuned torso holsters,
+// where switching on new unproven anchor math should never have been a
+// side effect of installing something else. Standalone it is the whole
+// mod, and a default of 0 would mean loading this pk3 and seeing nothing
+// at all.
+user int rs_hardpoint_arm_active_count = 1;
+
+// GESTURE-CAST arming (RS_HardPoints.zs, updateGestureArm). Off hand only,
+// roll-only -- rolling the wrist away from a normal weapon grip toward
+// palm-out/open-palm arms the wrist trio for HP1/HP2/HP3 fire. Both are
+// live sliders because the right raw OffhandRoll value for "palm out" has
+// to be read off a real controller, not guessed on paper -- see the
+// throttled wrist-pitch debug dump (gated on the arm rig being on) for the
+// live number to tune against.
+user float rs_hardpoint_gesture_roll_target = 0.0;
+user float rs_hardpoint_gesture_roll_tolerance = 30.0;
+
+
+// ============================================================
+// from RS_Reload  (CVARINFO.txt)
+// ============================================================
+// RS_Reload.
+//
+// FRESH NAMES ONLY. A default in this file CANNOT override a value already saved
+// in the ini -- the saved value always wins, which is why changing a default
+// reads as a fix that silently did nothing. If one of these ever has to change
+// meaning, rename it rather than re-defaulting it.
+
+// ---- dev ------------------------------------------------------------------
+
+// Prints beat transitions. Pair with rr_marks: this says what the runner
+// decided, that shows you where it was looking.
+user bool rr_debug = false;
+
+// Draws the current beat's point. Green when the off hand is inside the volume
+// that is actually being tested, amber when it is not -- the same rule
+// rs_grabviz holds itself to, because a gauge that can disagree with the thing
+// it gauges is worse than no gauge.
+user bool rr_marks = true;
+
+// ---- behaviour ------------------------------------------------------------
+
+// Magazines. OFF while the gesture is being tuned: ammo behaviour that fights
+// the tuning makes the tuning harder to read. See RR_Reload.Refill.
+user bool rr_magazines = false;
+
+// Size of the magazine/shell drawn in your off hand. Rusted Legacy's meshes were
+// baked for Rusted Legacy's MODELDEF scale, and this path is not that path -- a
+// model scaled for one is wildly wrong on the other. Dial it here rather than
+// guessing a number into MODELDEF.
+user float rr_ammo_scale = 1.0;
+
+// Force every weapon to a feed family / archetype, for tuning one family at a
+// time. -1 is auto.
+//   feed: 0 none  1 box  2 bolt  3 pump  4 break  5 belt  6 pod  7 cell
+//   arch: 0 pistol 1 revolver 2 smg 3 rifle 4 sniper 5 shotgun 6 ssg
+//         7 chaingun 8 railgun 9 rocket 10 grenade 11 plasma 12 bfg
+//         13 unmaker 14 melee
+user int rr_force_feed = -1;
+user int rr_force_arch = -1;
+
+// ---- archetype size ---------------------------------------------------------
+//
+// THE ONLY PER-GUN NUMBERS IN THE SYSTEM, and there are fourteen pairs rather
+// than two per weapon. Tuning `pistol` sizes every pistol in every mod that will
+// ever load -- which is the whole reason this keys off archetype and not class.
+//
+// len  -- the gun's length in map units. A Doom player is 56 tall.
+// grip -- how far forward of the controller the firing grip sits. Absorbs the
+//         wrist-to-palm gap as well as the model's own forward bias.
+//
+// THESE NUMBERS ALSO APPEAR IN rr_feed.zs (ARCH_LEN / ARCH_GRIP) AND THAT IS ON
+// PURPOSE -- do not "fix" the duplication. The cvar is the source of truth and
+// the array is the fallback for a load where this file is absent or a name has
+// been renamed. Without it a missing cvar reads as a zero-length gun, and every
+// point on it collapses onto the grip with nothing in the log to say why.
+
+user float rr_len_pistol    =  8;
+user float rr_len_revolver  =  9;
+user float rr_len_smg       = 14;
+user float rr_len_rifle     = 24;
+user float rr_len_sniper    = 30;
+user float rr_len_shotgun   = 26;
+user float rr_len_ssg       = 18;
+user float rr_len_chaingun  = 26;
+user float rr_len_railgun   = 30;
+user float rr_len_rocket    = 26;
+user float rr_len_grenade   = 18;
+user float rr_len_plasma    = 24;
+user float rr_len_bfg       = 30;
+user float rr_len_unmaker   = 18;
+
+user float rr_grip_pistol   = 2;
+user float rr_grip_revolver = 2;
+user float rr_grip_smg      = 3;
+user float rr_grip_rifle    = 4;
+user float rr_grip_sniper   = 4;
+user float rr_grip_shotgun  = 4;
+user float rr_grip_ssg      = 3;
+user float rr_grip_chaingun = 4;
+user float rr_grip_railgun  = 4;
+user float rr_grip_rocket   = 5;
+user float rr_grip_grenade  = 4;
+user float rr_grip_plasma   = 4;
+user float rr_grip_bfg      = 6;
+user float rr_grip_unmaker  = 4;
+
+
+// ============================================================
+// from Headshots  (CVARINFO.txt)
+// ============================================================
+// Headshot damage bonus. Applied as a SEPARATE, immediate follow-up hit on
+// top of the original damage -- WorldThingDamaged fires AFTER DamageMobj
+// has already run, so the original hit's number can't be changed in place.
+// See hs_detect.zs (WorldThingDamaged, HS_BONUS_DAMAGETYPE).
+//
+// High-ROF weapons get the lower of the two: landing many headshots is a
+// matter of spray volume rather than aim for them, so they don't earn the
+// full bonus. See HS_HighROF in hs_detect.zs for which weapons that is.
+server float hs_headshot_damage_mult = 1.5;
+server float hs_headshot_damage_mult_highrof = 1.2;
+
+
