@@ -112,7 +112,24 @@ class RS_HolsterFlashlight : Weapon
 		// Raw input plus the corrected/resolved direction, throttled to
 		// ~3.5/sec -- read against an actual physical tilt, same reasoning
 		// as the wrist-pitch dump in RS_Holsters.zs.
-		if ((debugTic++ % 10) == 0)
+		//
+		// GATED BEHIND rs_holster_verbose AS OF 2026-08-26. This ran in the
+		// default build with no switch at all: hold the flashlight and it
+		// printed roughly three and a half lines a second into the player's
+		// console, forever. GATED, NOT DELETED -- the question it answers is
+		// still open (see this file's own header on OffhandPitch being stored
+		// negated, and whether RS_Holsters' hand-anchored basis has the same
+		// bug), and re-deriving that from scratch later would cost far more
+		// than a cvar read costs now.
+		//
+		// debugTic still advances on the OUTSIDE of the gate on purpose, so
+		// switching the cvar on mid-session lands on the same 10-tic cadence
+		// it always had rather than restarting the counter and printing
+		// immediately.
+		int tick = debugTic++;
+		let dbgCv = CVar.GetCVar("rs_holster_verbose", pmo.player);
+		bool wantDbg = (dbgCv != null) && dbgCv.GetBool();
+		if (wantDbg && (tick % 10) == 0)
 		{
 			double rawPit = offhand ? pmo.OffhandPitch : pmo.AttackPitch;
 			double rawAng = offhand ? pmo.OffhandAngle : pmo.AttackAngle;

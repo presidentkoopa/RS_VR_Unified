@@ -132,6 +132,13 @@ class RS_GrabViz : EventHandler
         bool show    = RS_Reach.Flag("rs_grabviz", p, true);
         bool showVol = RS_Reach.Flag("rs_volviz",  p, true);
 
+        // ASKED ONCE, FOR BOTH DRAWINGS. RS_GrabHandler ticks ahead of this one
+        // (the MAPINFO order), so its answer for this tic is already sitting
+        // there -- and the note further down about not scanning twice was
+        // written for the box while the oval a few lines above it was doing
+        // exactly that, once per hand, every tic, blockmap query and all.
+        let gh = RS_GrabHandler.Get();
+
         for (int h = 0; h < 2; h++)
         {
             // ---- the reach oval on the hand ------------------------------
@@ -149,7 +156,17 @@ class RS_GrabViz : EventHandler
                 if (viz[h])
                 {
                     viz[h].Alpha = RS_Reach.Num("rs_grabviz_alpha", p, 0.55);
-                    let best = RS_Reach.Best(pmo, p, h);
+                    // The handler's near pick, not a second RS_Reach.Best. It is
+                    // the same scan and it can come back with a different answer
+                    // -- the oval going hot for one object while the box drawn
+                    // below promises another is precisely the disagreement this
+                    // gauge exists to rule out.
+                    //
+                    // It also goes cold for a FULL hand, where the old scan stayed
+                    // hot. That is the honest reading: the oval means "a squeeze
+                    // takes this", and a squeeze on a full hand does not take
+                    // anything, it lets go.
+                    Actor best = gh ? gh.NearTargetFor(h) : null;
                     if (RS_Reach.Flag("rs_grabviz_onlywhenhot", p, false) && !best)
                         viz[h].Alpha = 0;
                     State want = best ? viz[h].FindState("Hot") : viz[h].FindState("Spawn");
@@ -163,7 +180,8 @@ class RS_GrabViz : EventHandler
             // are two answers, and a box that promises a different object than
             // the one that arrives is the exact failure the drawn volume is
             // supposed to make impossible.
-            let gh = RS_GrabHandler.Get();
+            // `gh` is resolved once above the loop now, and the oval uses it
+            // too: this note applied to the oval all along.
             Actor target = (showVol && gh) ? gh.TargetFor(h) : null;
             if (!target)
             {
@@ -389,7 +407,23 @@ class RS_GrabViz : EventHandler
         if (!RS_Reach.Flag("rs_dgrab_beam", p, true)
             || !RS_Reach.Flag("rs_dgrab", p, true))
         {
-            if (beamsOn) { Level.SetBeamCount(0, 0, 0); beamsOn = false; }
+            // BLANK THE TWO SLOTS WE OWN -- never lower the count. Fixed
+            // 2026-08-26: this used to call Level.SetBeamCount(0, 0, 0),
+            // which is LEVEL-WIDE, so switching rs_dgrab_beam or rs_dgrab off
+            // destroyed every beam in the level rather than just ours. The
+            // comment 8 lines above already says this claims slots 0 and 1
+            // and "anything else wanting beams must start at 2" -- lowering
+            // the count to zero breaks exactly that contract.
+            //
+            // Zero length AND zero intensity, the same pair the per-hand
+            // branch below uses at :438 -- either alone still leaves a dot
+            // sitting at the origin.
+            if (beamsOn)
+            {
+                Level.SetBeam(0, (0,0,0), (0,0,0), 0, 0, 0x000000, 0);
+                Level.SetBeam(1, (0,0,0), (0,0,0), 0, 0, 0x000000, 0);
+                beamsOn = false;
+            }
             return;
         }
 

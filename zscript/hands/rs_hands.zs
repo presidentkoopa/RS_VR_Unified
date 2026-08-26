@@ -486,9 +486,15 @@ class RS_HandsAlwaysOn : EventHandler
 
 		int tics = isMain ? blendTicsMain : blendTicsOff;
 
+		// Read UNCONDITIONALLY and let the <= 0 test below do the snapping.
+		// Fixed 2026-08-26: the guard used to be `cSpeed.GetFloat() > 0.0`,
+		// so setting rs_hands_blend to 0 meant the cvar was never read at all
+		// and speed kept its 4.0 default -- which made the (speed <= 0.0)
+		// branch below unreachable and blending impossible to turn off.
+		// CVARINFO.txt:43 states "0 disables blending and poses snap".
 		double speed = 4.0;
 		CVar cSpeed = CVar.GetCVar("rs_hands_blend", player);
-		if (cSpeed != null && cSpeed.GetFloat() > 0.0)
+		if (cSpeed != null)
 			speed = cSpeed.GetFloat();
 
 		double f = (speed <= 0.0) ? 1.0 : double(tics) / speed;

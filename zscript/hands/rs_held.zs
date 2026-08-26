@@ -68,6 +68,8 @@ class RS_Held : EventHandler
 	private bool hOwnsFlags[2];
 	private bool hSavedSpecial[2];
 	private bool hSavedNoGravity[2];
+	// THE THIRD PAIR, and the barrel is why. See SaveFlags.
+	private bool hSavedThruActors[2];
 
 	// The last value THIS system wrote to GripClaimMain/Off, kept apart from the
 	// slot above because the slot is gone by the time the claim needs clearing.
@@ -278,16 +280,18 @@ class RS_Held : EventHandler
 		hRole[hand]    = ROLE_NONE;
 		hSubject[hand] = GRIPSUBJ_None;
 		hPose[hand]    = -1;
-		hOwnsFlags[hand]      = false;
-		hSavedSpecial[hand]   = false;
-		hSavedNoGravity[hand] = false;
+		hOwnsFlags[hand]       = false;
+		hSavedSpecial[hand]    = false;
+		hSavedNoGravity[hand]  = false;
+		hSavedThruActors[hand] = false;
 	}
 
 	private void SaveFlags(int hand, Actor a)
 	{
-		hOwnsFlags[hand]      = true;
-		hSavedSpecial[hand]   = a.bSPECIAL;
-		hSavedNoGravity[hand] = a.bNOGRAVITY;
+		hOwnsFlags[hand]       = true;
+		hSavedSpecial[hand]    = a.bSPECIAL;
+		hSavedNoGravity[hand]  = a.bNOGRAVITY;
+		hSavedThruActors[hand] = a.bTHRUACTORS;
 
 		// SPECIAL cleared is the one that is not optional. An item in your hand
 		// is an item permanently inside your own collision cylinder, so Doom's
@@ -296,16 +300,40 @@ class RS_Held : EventHandler
 		// behaviour holding is meant to replace.
 		a.bSPECIAL   = false;
 		a.bNOGRAVITY = true;
+
+		// AND THRUACTORS, WHICH IS WHY YOU COULD NEVER HOLD A BARREL.
+		//
+		// Nothing here cleared SOLID, and CarryOne moves the object with TryMove
+		// -- Doom's real movement, which is the whole reason a carried thing
+		// stops at walls. An ExplosiveBarrel is +SOLID and so are you, so the
+		// move is refused the moment the palm comes within barrel radius plus
+		// player radius, 10 + 16 = 26 map units. That is most of the envelope a
+		// hand can reach: the object never moved, ShouldBreak measured the gap it
+		// never closed, and the barrel was dropped a few tics after every grab.
+		// It read exactly like the reach volume missing, which is why it survived
+		// so long -- and rs_grabpolicy calls the barrel "the single most
+		// satisfying thing in Doom to pick up".
+		//
+		// THRUACTORS rather than clearing SOLID, for two reasons. PIT_CheckThing
+		// tests `(thing->flags2 | tm.thing->flags2) & MF2_THRUACTORS`
+		// (p_map.cpp:1444) -- an OR, so one flag on the object excuses the pair
+		// in BOTH directions, and you can walk while carrying it as well as carry
+		// it while walking. And SOLID is load-bearing for everything else about
+		// the object: what shoots it, what it blocks, what a corpse pile looks
+		// like. Borrowing the smaller flag is the smaller lie, and it is put back
+		// exactly, the same way the other two are.
+		a.bTHRUACTORS = true;
 		a.Vel = (0, 0, 0);
 	}
 
 	private void MoveFlagsTo(int to, int from)
 	{
 		if (!hOwnsFlags[from]) return;      // nothing to hand over
-		hOwnsFlags[to]        = true;
-		hSavedSpecial[to]     = hSavedSpecial[from];
-		hSavedNoGravity[to]   = hSavedNoGravity[from];
-		hOwnsFlags[from]      = false;
+		hOwnsFlags[to]         = true;
+		hSavedSpecial[to]      = hSavedSpecial[from];
+		hSavedNoGravity[to]    = hSavedNoGravity[from];
+		hSavedThruActors[to]   = hSavedThruActors[from];
+		hOwnsFlags[from]       = false;
 	}
 
 	private void RestoreFlags(int hand, Actor a)
@@ -315,8 +343,9 @@ class RS_Held : EventHandler
 		// SPECIAL off a pickup that arrived with it -- the exact silent
 		// unpickable-forever failure the ownership flag is here to prevent.
 		if (!hOwnsFlags[hand]) return;
-		a.bSPECIAL   = hSavedSpecial[hand];
-		a.bNOGRAVITY = hSavedNoGravity[hand];
+		a.bSPECIAL    = hSavedSpecial[hand];
+		a.bNOGRAVITY  = hSavedNoGravity[hand];
+		a.bTHRUACTORS = hSavedThruActors[hand];
 		a.Vel = (0, 0, 0);
 	}
 
@@ -393,8 +422,10 @@ class RS_Held : EventHandler
 		for (int h = 0; h < 2; h++)
 			if (!hActor[h] && hRole[h] != ROLE_NONE) ClearSlot(h);
 
-		// Dead hands hold nothing.
-		if (pmo.Health <= 0) { ReleaseAll(); return; }
+		// Dead hands hold nothing. ClearClaims after ReleaseAll, never instead
+		// of it: ReleaseAll empties the slots, and this is what withdraws what
+		// those slots had published.
+		if (pmo.Health <= 0) { ReleaseAll(); ClearClaims(pmo); return; }
 
 		// Switching grabbing off mid-hold has to LET GO, not stop carrying.
 		// The input handler is gated on the same cvar, so a hold left standing
@@ -402,7 +433,7 @@ class RS_Held : EventHandler
 		// menu entry, which is the one place a player can reach from inside a
 		// headset. Stranding an object behind the off position of its own toggle
 		// is not a state anything can get out of.
-		if (!Flag("rs_grab", p, true)) { ReleaseAll(); return; }
+		if (!Flag("rs_grab", p, true)) { ReleaseAll(); ClearClaims(pmo); return; }
 
 		// CARRY FIRST, THEN TEST THE BREAK, in two passes and not one.
 		//
@@ -460,6 +491,32 @@ class RS_Held : EventHandler
 			let hd = RS_HandWorldHandler.Get(h);
 			if (hd) hd.HoldPose(hPose[h]);
 		}
+
+		ClearClaims(pmo);
+	}
+
+	// TAKE BACK WHAT WE PUBLISHED FOR A HAND THAT IS NOW EMPTY.
+	//
+	// Its own function because the tic has three exits and this used to sit at
+	// the bottom of only one of them. Die, or switch grabbing off in the menu
+	// mid-hold, and ReleaseAll emptied the slots and returned -- past this --
+	// leaving GripClaim* standing at the subject of an object nobody was holding
+	// any more. Nothing else can clear it: the convention is that only the writer
+	// clears its own value, and the writer had just returned. The engine went on
+	// reading the hand as closed on a thing for the rest of the level, with
+	// two-hand stabilize stood down and the pose latched to whatever was last
+	// held.
+	//
+	// IDEMPOTENT, which is what makes calling it from every exit safe. A hand
+	// with nothing published (hClaimed == None) is skipped, so the extra calls on
+	// the ordinary path cost two compares.
+	//
+	// The pose reset rides along for the same reason: a hand that is no longer
+	// holding anything must stop being told to hold something, and it fails the
+	// same way -- fingers frozen round an object that is gone.
+	private void ClearClaims(PlayerPawn pmo)
+	{
+		if (!pmo) return;
 
 		// Clear the claim for an empty hand, but only if the value standing there
 		// is one we put there. More than one mod writes these.

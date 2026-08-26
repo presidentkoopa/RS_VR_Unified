@@ -48,51 +48,6 @@ enum RR_ArchKind
 	RR_A_MAX
 }
 
-// Beat completion modes.
-//
-// THERE IS NO TRIP TO A POUCH. An earlier cut sent the off hand to a chest
-// pouch mid-reload and that is gone for two reasons: no pouch actually exists
-// (RS_Holsters has none -- only the engine enum does), and a reload that makes
-// you reach across your body mid-fight is a reload you stop using.
-//
-// Everything happens at ONE PLACE ON THE GUN. Touch it, pull away, touch it
-// again. That is a real reload motion and it needs no second location, no body
-// volume and no mod to be loaded alongside.
-enum RR_BeatMode
-{
-	RR_M_TOUCH = 0,  // off hand entered the point's ellipsoid
-	RR_M_LEAVE,      // off hand left it again -- the mag coming clear
-	RR_M_TRAVEL,     // off hand moved far enough along a weapon axis
-	RR_M_HOLD        // dwell, in tics
-}
-
-// One step of a reload. Built on demand rather than held in a table, because
-// ZScript has no array-of-struct literal and the runner only ever needs the
-// beat it is currently on -- which it caches when it advances, so this is
-// allocated a handful of times per reload and never per tic.
-class RR_BeatDef
-{
-	int     subject;   // GRIPSUBJ_* claimed while this beat is live
-	int     mode;
-	Vector3 pt;        // normalised point on the weapon, gun-lengths
-	Vector3 radii;     // ellipsoid semi-axes, map units (TOUCH)
-	int     axis;      // 0 fwd 1 side 2 up (TRAVEL)
-	double  param;     // travel distance in map units, or dwell in tics
-	String  snd;
-	String  label;     // dev trace only
-
-	static RR_BeatDef Make(int subject, int mode, Vector3 pt, Vector3 radii,
-		int axis, double param, String snd, String label)
-	{
-		let b = new("RR_BeatDef");
-		b.subject = subject; b.mode = mode;
-		b.pt = pt; b.radii = radii;
-		b.axis = axis; b.param = param;
-		b.snd = snd; b.label = label;
-		return b;
-	}
-}
-
 // PLAY SCOPE, DECLARED. InferArch reads AmmoType1, bMeleeWeapon and the
 // defaults off a live Weapon, and reading a play object's fields from data
 // scope does not compile -- the error lands on the `let` line rather than the
@@ -194,6 +149,14 @@ class RR_Feed play
 	// a reload as a series of places to tap. It is not: it is one thing carried
 	// to one place. The rest is grip.
 	//
+	// The RR_BeatDef class and the RR_BeatMode enum were the last residue of
+	// that first cut and were deleted on 2026-08-26 with zero call sites. Their
+	// header carried a paragraph asserting that no trip to a pouch existed and
+	// that everything happened at one place on the gun -- true of the beat
+	// runner, and flatly contradicted by the mod that got built instead, which
+	// starts every reload at the chest pouch (rr_sequence.zs). Leaving a
+	// confident wrong statement in the file was worse than losing it.
+	//
 	// Normalised, in gun-lengths from the firing grip.
 	// x forward, y sideways, z up -- the MODEL convention, not Doom's.
 	static Vector3 Magwell(int feed)
@@ -282,46 +245,181 @@ class RR_Feed play
 		return ARCH_FEED[arch], arch;
 	}
 
+	// SHOTGUN OR DOUBLE BARREL, and AmmoUse1 answers it without asking anyone to
+	// tag anything: a double barrel spends two shells a shot because it fires
+	// two, and that has been true of every one ever shipped. Doom's own pair
+	// differ by exactly this and by nothing else -- Shotgun is AmmoUse 1 /
+	// AmmoGive 8 (weaponshotgun.zs:31-32), SuperShotgun AmmoUse 2 / AmmoGive 8
+	// (weaponssg.zs:31-32).
+	//
+	// The name is the second opinion rather than the first because "super" and
+	// "double" are naming conventions and AmmoUse is arithmetic.
+	static int ShellArch(string cn, int use)
+	{
+		if (use >= 2) return RR_A_SSG;
+		if (cn.IndexOf("super") >= 0 || cn.IndexOf("double") >= 0
+			|| cn.IndexOf("sawn") >= 0 || cn.IndexOf("sawed") >= 0)
+			return RR_A_SSG;
+		return RR_A_SHOTGUN;
+	}
+
 	// Everything here is readable on ANY Weapon from ANY mod, which is the point.
 	// Nothing below names a class from another package.
+	//
+	// bTwoHanded WAS THE PRIMARY SPLIT AND THAT WAS THE BUG (fixed 2026-08-26).
+	// It is a flagdef this fork added -- weapons.zs:163, WeaponFlags bit 22 --
+	// and nothing in the stock game sets it, let alone a foreign mod. So every
+	// weapon this package was built for read as one-handed and all four tests
+	// hanging off the flag resolved to their wrong side together: a plain pump
+	// shotgun came out RR_A_SSG on RR_F_BREAK, and every bullet weapon in
+	// existence came out a pistol. That is the core premise of the mod failing
+	// on precisely the weapons it exists for.
+	//
+	// The flag survives below in ONE place and as a one-way statement: TRUE
+	// still means two-handed, FALSE now means "nobody said". Those are not the
+	// same claim and reading them as the same is what broke this.
+	//
+	// THE SIGNALS THAT DO SURVIVE THE TRIP TO A FOREIGN MOD:
+	//
+	//   ammo class name -- almost every mod either uses Doom's four or names its
+	//                      own after what it is. It picks the FAMILY, which is
+	//                      the expensive thing to get wrong: family sets the
+	//                      feed and feed sets the whole sequence.
+	//   AmmoUse1        -- what one shot costs. Arithmetic rather than
+	//                      convention, and it is the only thing that separates
+	//                      the two pairs nothing else can. Read off the DEFAULT
+	//                      for the same reason AmmoGive1 was: the engine
+	//                      rewrites a live weapon's AmmoUse1 for multi-attack
+	//                      weapons (weapons.zs:92).
+	//   class name      -- mods name guns after what they are far more reliably
+	//                      than they set any flag. It picks the archetype WITHIN
+	//                      a family, and is the whole answer when the ammo class
+	//                      is one this has never seen. Same trick and the same
+	//                      deliberate narrowness as RS_Hands' IsFist
+	//                      (rs_hands.zs:208-216): a false positive hides a real
+	//                      gun, so only match words that announce themselves.
+	//
+	// AmmoGive1 is no longer read at all. See the cell branch for why -- it does
+	// not separate the one case it was being used for.
 	static int InferArch(Weapon w)
 	{
 		if (!w || w.bMeleeWeapon) return RR_A_MELEE;
 
-		string ammo = "";
-		if (w.AmmoType1) ammo = ("" .. w.AmmoType1.GetClassName());
+		string cn = "" .. w.GetClassName();
+		cn = cn.MakeLower();
+
+		// NAMED MELEE, BEFORE THE AMMO FAMILIES AND NOT AFTER. A chainsaw that
+		// burns a "Fuel" ammo type would otherwise land in the energy family
+		// below and be handed a cell to seat. Stock does set the flag above
+		// (Chainsaw and Fist both carry +WEAPON.MELEEWEAPON), which is exactly
+		// the reason not to trust it -- the mods that do not are the ones this
+		// has to survive.
+		if (cn.IndexOf("chainsaw") >= 0 || cn.IndexOf("fist") >= 0
+			|| cn.IndexOf("punch") >= 0 || cn.IndexOf("melee") >= 0)
+			return RR_A_MELEE;
+
+		// NO AMMUNITION MEANS NOTHING TO FEED, whatever else is true. Such a
+		// weapon used to fall out of the bottom of this function as a RIFLE and
+		// be offered a magazine. RR_A_MELEE is the archetype whose feed is
+		// RR_F_NONE, which is the "leave it to the weapon's own Reload" answer.
+		if (!w.AmmoType1) return RR_A_MELEE;
+
+		string ammo = "" .. w.AmmoType1.GetClassName();
 		ammo = ammo.MakeLower();
 
-		bool twoHand = w.bTwoHanded;
-		int  give    = w.default.AmmoGive1;
+		int use = w.default.AmmoUse1;
 
-		// Ammo class name is the strongest generic signal there is: almost every
-		// mod either uses Doom's four or names its own after what it is.
-		if (ammo.IndexOf("shell") >= 0)
-			return twoHand ? RR_A_SHOTGUN : RR_A_SSG;
+		// ---- family, from the ammunition --------------------------------------
+
+		if (ammo.IndexOf("shell") >= 0) return ShellArch(cn, use);
 
 		if (ammo.IndexOf("rocket") >= 0 || ammo.IndexOf("grenade") >= 0)
-			return twoHand ? RR_A_ROCKET : RR_A_GRENADE;
+		{
+			// Both put one large round down a tube and both feed RR_F_POD, so
+			// only the size is at stake and the launcher's own name settles it.
+			if (cn.IndexOf("grenade") >= 0 || ammo.IndexOf("grenade") >= 0)
+				return RR_A_GRENADE;
+			return RR_A_ROCKET;
+		}
 
 		if (ammo.IndexOf("cell") >= 0 || ammo.IndexOf("plasma") >= 0
 			|| ammo.IndexOf("energy") >= 0 || ammo.IndexOf("fuel") >= 0)
 		{
-			// A big cell pool is a BFG, a small one is a rifle. Crude, and the
-			// only cost of getting it wrong is the point spacing being sized for
-			// the wrong gun -- which one menu row fixes.
-			if (give >= 40) return RR_A_BFG;
+			if (cn.IndexOf("bfg") >= 0)     return RR_A_BFG;
+			if (cn.IndexOf("unmaker") >= 0) return RR_A_UNMAKER;
+			if (cn.IndexOf("rail") >= 0)    return RR_A_RAILGUN;
+
+			// COST PER SHOT, NOT POOL SIZE. This test read `give >= 40`, and
+			// Doom's plasma rifle and BFG BOTH give 40 (weaponplasma.zs:32,
+			// weaponbfg.zs:33) -- so the plasma rifle came out a BFG on the
+			// stock game, sized 30 units long on a 6-unit grip. What actually
+			// separates them is what a shot costs: 1 against 40
+			// (weaponplasma.zs:31, weaponbfg.zs:32). Anything spending ten cells
+			// to fire once is a BFG-class weapon whoever built it.
+			if (use >= 10) return RR_A_BFG;
 			return RR_A_PLASMA;
 		}
 
-		if (ammo.IndexOf("clip") >= 0 || ammo.IndexOf("bullet") >= 0
-			|| ammo.IndexOf("ammo") >= 0)
-		{
-			if (!twoHand) return RR_A_PISTOL;
-			if (give >= 50) return RR_A_CHAINGUN;
-			return RR_A_RIFLE;
-		}
+		// ---- family, from the weapon's own name --------------------------------
+		//
+		// Reached when the ammo class is one this has never seen, which is the
+		// ordinary case in a total conversion. Ordered so the longer word wins
+		// where two overlap: "sniperrifle" must not read as a rifle, and a
+		// "plasmarifle" that arrived here on some exotic ammo type must not
+		// either.
 
-		return twoHand ? RR_A_RIFLE : RR_A_PISTOL;
+		if (cn.IndexOf("bfg") >= 0)     return RR_A_BFG;
+		if (cn.IndexOf("unmaker") >= 0) return RR_A_UNMAKER;
+		if (cn.IndexOf("rail") >= 0)    return RR_A_RAILGUN;
+		if (cn.IndexOf("sniper") >= 0)  return RR_A_SNIPER;
+
+		if (cn.IndexOf("chaingun") >= 0 || cn.IndexOf("minigun") >= 0
+			|| cn.IndexOf("gatling") >= 0)
+			return RR_A_CHAINGUN;
+
+		if (cn.IndexOf("revolver") >= 0 || cn.IndexOf("magnum") >= 0)
+			return RR_A_REVOLVER;
+
+		if (cn.IndexOf("shotgun") >= 0 || cn.IndexOf("shotty") >= 0)
+			return ShellArch(cn, use);
+
+		if (cn.IndexOf("grenade") >= 0) return RR_A_GRENADE;
+
+		if (cn.IndexOf("rocket") >= 0 || cn.IndexOf("missile") >= 0
+			|| cn.IndexOf("launcher") >= 0)
+			return RR_A_ROCKET;
+
+		if (cn.IndexOf("plasma") >= 0 || cn.IndexOf("laser") >= 0)
+			return RR_A_PLASMA;
+
+		if (cn.IndexOf("smg") >= 0 || cn.IndexOf("submachine") >= 0
+			|| cn.IndexOf("uzi") >= 0)
+			return RR_A_SMG;
+
+		if (cn.IndexOf("pistol") >= 0 || cn.IndexOf("handgun") >= 0)
+			return RR_A_PISTOL;
+
+		if (cn.IndexOf("rifle") >= 0 || cn.IndexOf("carbine") >= 0)
+			return RR_A_RIFLE;
+
+		// ---- nothing announced itself ------------------------------------------
+		//
+		// Doom's own pistol and chaingun are the honest limit of all this: same
+		// ammo class, same AmmoUse, same AmmoGive -- weaponpistol.zs:31-33 and
+		// weaponchaingun.zs:31-33 are the identical three lines. Nothing but the
+		// name tells them apart, so a weapon that reaches here has genuinely not
+		// said what it is and a guess is all that is left.
+		//
+		// THE ONLY SURVIVING bTwoHanded READ, and it is one-way. Set, it is a
+		// real statement that this is a long gun. Unset, it says nothing, so the
+		// answer is a middle-sized gun rather than either extreme. Pistol, SMG
+		// and rifle all feed RR_F_BOX, so this choice moves the magwell and
+		// changes nothing else -- and the SMG's 14 units sits between a pistol's
+		// 8 and a rifle's 24. Guessing the middle is wrong by six; guessing an
+		// end, which is what this used to do to every foreign weapon, is wrong
+		// by sixteen. One menu row fixes either.
+		if (w.bTwoHanded) return RR_A_RIFLE;
+		return RR_A_SMG;
 	}
 }
 

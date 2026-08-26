@@ -43,9 +43,26 @@ class RR_Point play
 	{
 		return ((hand == 0) ? pmo.AttackAngle : pmo.OffhandAngle) + 90;
 	}
+	// NEGATED, fixed 2026-08-26. This returned AttackPitch/OffhandPitch RAW
+	// while RS_Reach.HandPitch (RS_Hands, rs_grab.zs:73-76) negates -- and both
+	// feed the SAME RS_Basis. The engine stores these pitches negated; stock
+	// ZScript negates on read too (weaponmace.zs, `directionPitch =
+	// -player.mo.AttackPitch`), which is the precedent RS_Hands cites.
+	//
+	// Yaw() directly above already documents that it matches RS_Hands' +90
+	// convention deliberately, and why: "two packages disagreeing about which
+	// way is forward is exactly the class of bug where everything reads correct
+	// at rest and goes wrong the moment you turn." The same argument applies
+	// here and this function was simply missed.
+	//
+	// EFFECT: the magwell point was mirrored vertically whenever the gun was
+	// pitched -- level shots looked right, which is why it survived. Expect the
+	// reload target point to MOVE for any non-level gun; that movement is the
+	// fix, not a regression. Verify in headset with the gun pitched steeply up
+	// and down before trusting the tuned per-archetype numbers.
 	static double Pit(PlayerPawn pmo, int hand)
 	{
-		return (hand == 0) ? pmo.AttackPitch : pmo.OffhandPitch;
+		return -((hand == 0) ? pmo.AttackPitch : pmo.OffhandPitch);
 	}
 	static double Rol(PlayerPawn pmo, int hand)
 	{
@@ -110,24 +127,20 @@ class RR_Point play
 		return fx*fx + fy*fy + fz*fz;
 	}
 
-	// HOW FAR THE OFF HAND HAS TRAVELLED ALONG A WEAPON AXIS, signed, in map
-	// units -- the whole of the travel-driven beat.
+	// TRAVEL WAS HERE AND IS GONE (2026-08-26). It measured how far the reaching
+	// hand had moved along a weapon axis, signed, in map units -- the whole of
+	// the travel-driven beat, for a beat runner that no longer exists. What got
+	// built instead is one carry to one point (rr_sequence.zs), so it had zero
+	// call sites and it went with RR_BeatDef and RR_BeatMode.
 	//
+	// KEEP THE LESSON IT WAS BUILT FOR, because it outlives the function.
 	// Rusted Legacy completed a step the instant a distance check passed, which
 	// is why a hand resting on the boundary retriggered it over and over. A rack
 	// is not a place you touch, it is a distance you PULL, and the difference is
-	// the difference between the gesture reading as performed and as tripped.
-	//
-	// axis: 0 fwd, 1 side, 2 up.
-	static double Travel(PlayerPawn pmo, Vector3 from, int axis, int gunHand, int reachHand)
-	{
-		double y = Yaw(pmo, gunHand), p = Pit(pmo, gunHand), r = Rol(pmo, gunHand);
-		Vector3 d = HandPos(pmo, reachHand) - from;
-
-		if (axis == 1) return d dot RS_Basis.Side(y, p, r);
-		if (axis == 2) return d dot RS_Basis.Up  (y, p, r);
-		return d dot RS_Basis.Fwd(y, p, r);
-	}
+	// the difference between the gesture reading as performed and as tripped. If
+	// a racking beat ever comes back it wants a travel measure and not a
+	// proximity test; the `guard` debounce in rr_sequence.zs is the same worry
+	// in the shape the current design needed.
 
 	// The dev marker.
 	//

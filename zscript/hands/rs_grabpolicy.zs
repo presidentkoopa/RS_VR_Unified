@@ -49,6 +49,25 @@ class RS_GrabPolicy : EventHandler
 {
 	private Array<RS_GrabRule> rules;
 
+	// THE CORPSE ANSWER, ONE OBJECT, REFILLED.
+	//
+	// The corpse rule cannot live in the table above because it turns on STATE
+	// and not class -- the same imp is a monster and then a prop, a second apart
+	// -- so it is built at the moment it is asked for. It was built with `new`
+	// every time, and "every time" here means per corpse per blockmap candidate
+	// per hand per tic, on a floor after a firefight, on Quest-class hardware.
+	//
+	// Nothing outlives the call. Every caller reads subject, pose, twohand and
+	// why straight out of it and is done; the one field that would make a shared
+	// instance wrong -- cls, which differs per corpse -- is read by nobody, and
+	// it is still filled in so that stays true rather than merely convenient.
+	//
+	// Not built in Build() with the rest: a null pointer that comes back null
+	// from a savegame is refilled by the check at the point of use, which is the
+	// same "ask the thing itself rather than a flag about it" discipline the
+	// table's own guard uses.
+	private RS_GrabRule corpseRule;
+
 	static RS_GrabPolicy Get()
 	{
 		return RS_GrabPolicy(EventHandler.Find("RS_GrabPolicy"));
@@ -220,7 +239,28 @@ class RS_GrabPolicy : EventHandler
 		if (!inv || inv.Owner) return;
 		if (!Decide(a, pmo, p)) return;
 
-		a.bSPECIAL = !noWalk;
+		// Never resurrect something that was already hidden. An invisible or
+		// unrendered item is deliberately not a pickup, and handing it SPECIAL
+		// makes it collectable by walking through empty-looking air.
+		// GetRenderStyle(), not RenderStyle. The field is declared
+		// `native private int RenderStyle;` (actor.zs:628, with the engine's own
+		// note that it "is kept private until its real type has been implemented
+		// into the VM"), so reading it from an EventHandler is a hard "Private
+		// member not accessible" compile error -- fatal and global. The public
+		// read is `native clearscope int GetRenderStyle() const` at actor.zs:971,
+		// which returns the symbolic index and is legal from play scope.
+		if (a.bINVISIBLE || a.GetRenderStyle() == STYLE_None) return;
+
+		// RESTORE TO THE CLASS DEFAULT, never unconditionally to true. Fixed
+		// 2026-08-26: this was `a.bSPECIAL = !noWalk;`, which GRANTS SPECIAL to
+		// every qualifying Inventory actor when walk-over is switched back on,
+		// including ones that shipped without it and were never pickups. This
+		// mod only ever suppresses, so the most it should ever restore is what
+		// the class itself declares.
+		//
+		// The `default.` accessor has precedent in the family -- RS_Reload
+		// reads w.default.AmmoGive1 at rr_feed.zs:296.
+		a.bSPECIAL = noWalk ? false : a.default.bSPECIAL;
 	}
 
 	private void Sweep(PlayerPawn pmo, PlayerInfo p, bool noWalk)
@@ -412,15 +452,17 @@ class RS_GrabPolicy : EventHandler
 			if (a.Health > 0) return null;
 			if (!CategoryOn('Corpses', p)) return null;
 
-			RS_GrabRule r = RS_GrabRule(new("RS_GrabRule"));
-			r.cls      = a.GetClass();
-			r.allow    = true;
-			r.subject  = GRIPSUBJ_Magazine;
-			r.pose     = RS_HandWorldBase.POSE_HOLD_FOREND;
-			r.twohand  = true;                   // it is a body
-			r.category = 'Corpses';
-			r.why      = "a corpse";
-			return r;
+			// One instance, refilled -- see the field. Every value is written on
+			// every pass, so a stale one cannot survive from the last corpse.
+			if (!corpseRule) corpseRule = RS_GrabRule(new("RS_GrabRule"));
+			corpseRule.cls      = a.GetClass();
+			corpseRule.allow    = true;
+			corpseRule.subject  = GRIPSUBJ_Magazine;
+			corpseRule.pose     = RS_HandWorldBase.POSE_HOLD_FOREND;
+			corpseRule.twohand  = true;                   // it is a body
+			corpseRule.category = 'Corpses';
+			corpseRule.why      = "a corpse";
+			return corpseRule;
 		}
 
 		Build();

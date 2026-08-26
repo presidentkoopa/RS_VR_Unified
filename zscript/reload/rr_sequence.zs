@@ -57,7 +57,20 @@ class RR_Reload : EventHandler
 	private Name target;      // class of the weapon being fed
 	private int  guard;       // debounce, tics
 
-	static RR_Reload Get() { return RR_Reload(EventHandler.Find("RR_Reload")); }
+	// NO Get() ACCESSOR, DELIBERATELY. One was here --
+	// `RR_Reload(EventHandler.Find("RR_Reload"))` -- with zero call sites, and
+	// it went on 2026-08-26 for a second reason beyond being dead.
+	//
+	// EventHandler.Find(literal) is a COMPILE-TIME link and not a lookup. A
+	// missing class there does not return null, it fails to compile -- and a
+	// ZScript error is fatal AND GLOBAL: thingdef.cpp:420-424 calls I_Error and
+	// then refuses to compile every pk3 LATER IN THE LOAD ORDER as well, so one
+	// unused convenience function is enough to stop the game starting. Nothing
+	// outside this file needs a handle on the runner. If something ever does,
+	// reach it with ServiceIterator.Find(String), which fails soft.
+	//
+	// MAPINFO.txt registers this handler through AddEventHandlers, which is what
+	// makes it tick; that is the only wiring it has ever needed.
 
 	override void WorldTick()
 	{

@@ -66,3 +66,15 @@ version "5.0.0"
 // -- headshots: independent --------------------------------------------------
 #include "zscript/headshots/hs_feedback.zs"
 #include "zscript/headshots/hs_detect.zs"
+
+// -- the grip arbiter --------------------------------------------------------
+// A Service, not an EventHandler, so it needs no MAPINFO entry: InitServices()
+// instantiates every Service subclass by itself. Included last because nothing
+// references it by name -- consumers reach it through ServiceIterator by
+// string, which is what lets it stay optional in the separate-pk3 world.
+//
+// Inside this merged package it is not strictly optional any more, since
+// everything compiles together. It is included anyway so the unified build
+// exercises the SAME lookup path the separate pk3s use -- testing a different
+// code path than the one that ships would defeat the point.
+#include "zscript/arbiter/rs_griparbiter.zs"

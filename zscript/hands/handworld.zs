@@ -182,7 +182,18 @@ class RS_HandWorldHandler : EventHandler
         return c ? c.GetBool() : fallback;
     }
 
-    override void WorldLoaded(WorldEvent e)
+    // Live reconcile state. No field initializers in this codebase, so both
+    // rely on the zero-default: lastWantValid starts false, which forces the
+    // first WorldTick after a load to evaluate rather than compare against a
+    // meaningless zero.
+    private bool lastWant;
+    private bool lastWantValid;
+
+    // Spawn or destroy the world hands to match the cvar. IDEMPOTENT -- it
+    // spawns only what is missing and destroys only what is unwanted -- which
+    // is what makes it safe to call every time the setting changes rather than
+    // only at level load.
+    private void Reconcile()
     {
         for (int i = 0; i < MAXPLAYERS; i++)
         {
@@ -208,6 +219,20 @@ class RS_HandWorldHandler : EventHandler
             }
 
             Console.Printf("[HANDWORLD] world hands %s", want ? "ON" : "off");
+        }
+    }
+
+    override void WorldLoaded(WorldEvent e)
+    {
+        Reconcile();
+
+        // Seed the live-change detector so the first tick does not immediately
+        // reconcile a second time for no reason.
+        let p = players[consoleplayer];
+        if (p)
+        {
+            lastWant = Flag("rs_handworld", p, true);
+            lastWantValid = true;
         }
     }
 
@@ -242,6 +267,23 @@ class RS_HandWorldHandler : EventHandler
         let p = players[consoleplayer];
         if (!p || !p.mo) return;
         let pmo = p.mo;
+
+        // LIVE RECONCILE. rs_handworld used to be read only in WorldLoaded, so
+        // toggling it in the menu did nothing until the next map -- while the
+        // menu presented it as an ordinary switch. There is no menu callback for
+        // a cvar in ZScript, so a cheap compare against the last value is the
+        // only way to notice; RS_GrabPolicy already does exactly this for
+        // rs_grab_nowalkover (rs_grabpolicy.zs:265-272).
+        //
+        // A bool compare per tic is nothing next to the two ThinkerIterators
+        // below, and Reconcile only runs on an actual change.
+        bool wantWorld = Flag("rs_handworld", p, true);
+        if (!lastWantValid || wantWorld != lastWant)
+        {
+            lastWant = wantWorld;
+            lastWantValid = true;
+            Reconcile();
+        }
 
         // A forced pose beats everything, and it is HELD rather than latched --
         // leaving the menu on a pose parks the hand there for as long as it takes

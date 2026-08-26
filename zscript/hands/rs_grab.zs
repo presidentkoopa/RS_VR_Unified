@@ -91,6 +91,15 @@ class RS_Reach play
         let c = CVar.GetCVar(n, p);
         return c ? color(c.GetInt()) : d;
     }
+    // A LIST cvar -- an int chosen from a MENUDEF OptionValue block, not a
+    // quantity. Read through GetInt like Col does rather than through Num,
+    // because a float round-trip on an enumeration is a way to land between two
+    // cases and match neither.
+    static int Opt(String n, PlayerInfo p, int d)
+    {
+        let c = CVar.GetCVar(n, p);
+        return c ? c.GetInt() : d;
+    }
 
     // Find this hand's world-actor, so its bones can be read.
     static Actor Hand(int hand)
@@ -98,6 +107,83 @@ class RS_Reach play
         String cls = (hand == 0) ? "RS_HandWorldMain" : "RS_HandWorldOff";
         ThinkerIterator it = ThinkerIterator.Create(cls);
         return Actor(it.Next());
+    }
+
+    // THE THREE SEMI-AXES OF THE REACH VOLUME, IN MAP UNITS, returned in the
+    // order the RENDERER scales them: x sideways, y forward, z up.
+    //
+    // Its own function because two things need it and they must not be able to
+    // disagree: the ellipsoid test in ScoreAt, and -- in mesh space, see below --
+    // the centre offset in Centre, because the renderer measures that offset in
+    // semi-axes rather than in map units.
+    //
+    // NAMED BY THE AXIS THEY ACTUALLY SCALE, not by the letter in the cvar,
+    // because the two did not agree and the disagreement was the bug.
+    //
+    // The renderer puts _scale_x on the same matrix axis as _ofs_x, which is
+    // SIDEWAYS (see the note in Centre): models.cpp:716-719 multiplies
+    // scaleFactorX by wPlaceAxis[0] and scaleFactorY -- the forward one -- by
+    // wPlaceAxis[1], i.e. by _scale_y. The test had x on forward and y on
+    // sideways, so the drawn oval was long across the palm while the tested
+    // ellipsoid was long along the fingers. Both at once, and neither visible
+    // from inside the other.
+    //
+    // The class defaults moved with the mapping (CVARINFO), so a fresh config
+    // still reaches further along the fingers than through the wrist -- the shape
+    // the sliders promise -- and the tested volume is the same one it always was.
+    // An ini with tuned numbers in it keeps them and will need one re-dial, which
+    // is unavoidable: those numbers were tuned against a drawing that was lying
+    // about which way round it was.
+    static Vector3 SemiAxes(PlayerInfo p, int hand)
+    {
+        String pre = (hand == 0) ? "rs_grab_m" : "rs_grab_o";
+        double m  = Num(pre .. "_scale",   p, 1.0);  if (m <= 0) m = 1.0;
+        double aSide = Num(pre .. "_scale_x", p, 2.2) * m;
+        double aFwd  = Num(pre .. "_scale_y", p, 3.2) * m;
+        double aUp   = Num(pre .. "_scale_z", p, 1.6) * m;
+
+        // WHICH SPACE THE THREE NUMBERS ARE IN, and this CANNOT be settled from
+        // source -- only by looking at the oval in a headset. So both readings
+        // are here and a cvar picks, defaulting to the one that has always been
+        // in force so nothing moves for anyone who does not go looking.
+        //
+        // The case for MAP UNITS is this code's own history, the 3.2 / 2.2 / 1.6
+        // defaults, which are sane map-unit semi-axes for a hand (34 units to a
+        // metre, a fist about 2), and MODELDEF.txt, which asserted it flatly
+        // until this went in.
+        //
+        // The case for MESH SPACE is everything on the drawing side. The oval is
+        // a unit-radius sphere at MODELDEF Scale 1.0 riding MDL_FOLLOWMAINHAND,
+        // so its transform is GetWeaponTransform -- and that matrix carries
+        // `scale(vr_vunits_per_meter, ...)` (vk_openxrdevice.cpp:5927), which
+        // makes one mesh unit ONE METRE. That is what CVARINFO.txt means by "a
+        // unit-radius mesh arrives already metres across", it is why MENUDEF
+        // ships an OVERALL SIZE slider that starts at 0.005, and it is why
+        // RS_GrabViz's own note says the useful master value is around 0.025.
+        // Under that reading the drawn semi-axis in map units is scale * master
+        // * 34, and the tested one was 34x too small the moment the oval was
+        // dialled to look right -- straight down onto the 0.05 floor below.
+        //
+        // Read live rather than hardcoded at 34: vr_vunits_per_meter is a user
+        // setting, and a player who changes their world scale would otherwise
+        // find the test silently detached from the drawing all over again.
+        if (Opt("rs_grab_scale_space", p, 0) == 1)
+        {
+            double k = Num("vr_vunits_per_meter", p, 34.0);
+            if (k < 0.001) k = 34.0;
+            aSide *= k;
+            aFwd  *= k;
+            aUp   *= k;
+        }
+
+        // AFTER the conversion, never before. The floor is a guard against a
+        // zeroed slider collapsing the volume to a point, and it is stated in map
+        // units -- applying it to a mesh-space number would clamp a perfectly
+        // ordinary 0.025 up to 0.05 and double the oval.
+        if (aSide < 0.05) aSide = 0.05;
+        if (aFwd  < 0.05) aFwd  = 0.05;
+        if (aUp   < 0.05) aUp   = 0.05;
+        return (aSide, aFwd, aUp);
     }
 
     // WHERE THE HAND ACTUALLY IS -- the palm bone, when it can be read.
@@ -129,10 +215,57 @@ class RS_Reach play
         double yaw = ((hand == 0) ? pmo.AttackAngle : pmo.OffhandAngle) + 90;
         double pit = HandPitch(pmo, hand);
         double rol = ((hand == 0) ? pmo.MainHandRoll : pmo.OffhandRoll);
+
+        // X IS SIDEWAYS, Y IS FORWARD. It was the other way round here, and here
+        // only, which meant the slider captioned "Forward / back" pushed the
+        // TESTED centre along the fingers and the DRAWN oval sideways -- the one
+        // thing this whole class exists to make impossible.
+        //
+        // These are not our cvars alone. MODELDEF hands the same three names to
+        // the engine as `PlacementCVars rs_grab_m`, and the engine sums _ofs_x
+        // into the same matrix component as vr_hand_ofs_x -- literally the same
+        // translate() call, models.cpp:982 on the HUD path and :723 on the world
+        // path this model actually draws through. vr_hand_ofs_x is captioned
+        // "Left / Right" (MENUDEF.txt:113), and so is rs_hw_main_ofs_x (:60), and
+        // so is every other _ofs_x in this family. There is one odd man out and
+        // it was this function.
+        //
+        // The SENSE of each slider -- whether positive is left or right -- is not
+        // decidable from source, because it depends on the controller frame's
+        // handedness and the auto-reverse mirror the main hand carries. It also
+        // does not need to be: a slider pushing the wrong way is fixed by dragging
+        // it the other way, and it will be dragged either way during tuning.
+        double ox = Num(pre .. "_ofs_x", p, 0);
+        double oy = Num(pre .. "_ofs_y", p, 0);
+        double oz = Num(pre .. "_ofs_z", p, 0);
+
+        // IN MESH SPACE THE OFFSET IS MEASURED IN SEMI-AXES, not in map units,
+        // and that is the renderer's doing rather than a choice made here.
+        //
+        // VSMatrix::translate and ::scale both POST-multiply (matrix.cpp:177 and
+        // :210), and models.cpp calls scale BEFORE translate -- so the vertex
+        // meets the translate first and the scale second, and the placement
+        // offset comes out multiplied by the placement scale. The engine divides
+        // the offset by the MODELDEF scale to cancel that, but not by
+        // wPlaceScale or wPlaceAxis. With the master at the ~0.025 mesh space
+        // wants, the drawn oval moves a fortieth as far as the tested centre did.
+        //
+        // One mesh radius maps to one semi-axis, so multiplying by the semi-axis
+        // is exactly what the renderer does and the two land on the same spot.
+        // Under the map-units reading none of this applies: the offset is a
+        // distance and stays one, which is why this is behind the same switch.
+        if (Opt("rs_grab_scale_space", p, 0) == 1)
+        {
+            Vector3 ax = SemiAxes(p, hand);
+            ox *= ax.x;
+            oy *= ax.y;
+            oz *= ax.z;
+        }
+
         return c
-            + RS_Basis.Fwd(yaw, pit, rol)  * Num(pre .. "_ofs_x", p, 0)
-            + RS_Basis.Side(yaw, pit, rol) * Num(pre .. "_ofs_y", p, 0)
-            + RS_Basis.Up(yaw, pit, rol)   * Num(pre .. "_ofs_z", p, 0);
+            + RS_Basis.Side(yaw, pit, rol) * ox
+            + RS_Basis.Fwd(yaw, pit, rol)  * oy
+            + RS_Basis.Up(yaw, pit, rol)   * oz;
     }
 
     // How far into the reach volume a world point is: <= 1 is inside, smaller is
@@ -141,27 +274,39 @@ class RS_Reach play
     // An ELLIPSOID and not a sphere. A hand reaches further along the fingers
     // than it does through the back of the wrist, and a sphere wide enough to
     // touch the fingertips also grabs things behind you. The three semi-axes are
-    // the same three cvars the renderer scales the drawn oval with, so what you
-    // see is what grabs.
+    // the same three cvars the renderer scales the drawn oval with -- which was
+    // the CLAIM long before it was true; see SemiAxes for what it took to make
+    // "what you see is what grabs" an actual statement about this code.
     static double Score(PlayerPawn pmo, PlayerInfo p, int hand, Vector3 world)
     {
-        String pre = (hand == 0) ? "rs_grab_m" : "rs_grab_o";
-        double m  = Num(pre .. "_scale",   p, 1.0);  if (m <= 0) m = 1.0;
-        double ax = Num(pre .. "_scale_x", p, 3.2) * m;
-        double ay = Num(pre .. "_scale_y", p, 2.2) * m;
-        double az = Num(pre .. "_scale_z", p, 1.6) * m;
-        if (ax < 0.05) ax = 0.05;
-        if (ay < 0.05) ay = 0.05;
-        if (az < 0.05) az = 0.05;
+        return ScoreAt(pmo, p, hand, world, Centre(pmo, p, hand));
+    }
+
+    // THE SAME QUESTION WITH THE CENTRE ALREADY IN HAND.
+    //
+    // Score's old shape called Centre itself, and Centre walks the thinker list
+    // looking for the hand actor. Best asks Score once per blockmap candidate
+    // while holding the very same centre in a local, so a room with a dozen
+    // pickups in it walked every thinker in the level a dozen times per hand per
+    // tic -- for an answer that cannot change between two candidates.
+    //
+    // Split rather than changed in place: Score is public surface that other
+    // packages read, and a signature change there is a compile error in a repo
+    // this one cannot see. The wrapper above keeps that contract exactly.
+    static double ScoreAt(PlayerPawn pmo, PlayerInfo p, int hand, Vector3 world, Vector3 centre)
+    {
+        // (sideways, forward, up) -- the renderer's order, resolved in one place
+        // so this test and the drawn oval cannot pick different letters.
+        Vector3 ax = SemiAxes(p, hand);
 
         double yaw = ((hand == 0) ? pmo.AttackAngle : pmo.OffhandAngle) + 90;
         double pit = HandPitch(pmo, hand);
         double rol = ((hand == 0) ? pmo.MainHandRoll : pmo.OffhandRoll);
 
-        Vector3 d = world - Centre(pmo, p, hand);
-        double fx = (d dot RS_Basis.Fwd(yaw, pit, rol))  / ax;
-        double fy = (d dot RS_Basis.Side(yaw, pit, rol)) / ay;
-        double fz = (d dot RS_Basis.Up(yaw, pit, rol))   / az;
+        Vector3 d = world - centre;
+        double fx = (d dot RS_Basis.Fwd(yaw, pit, rol))  / ax.y;
+        double fy = (d dot RS_Basis.Side(yaw, pit, rol)) / ax.x;
+        double fz = (d dot RS_Basis.Up(yaw, pit, rol))   / ax.z;
         return fx*fx + fy*fy + fz*fz;
     }
 
@@ -231,7 +376,10 @@ class RS_Reach play
             Actor a = it.thing;
             if (held && held.HeldBy(hand) == a) continue;
             if (!pol.Decide(a, pmo, p)) continue;
-            double sc = Score(pmo, p, hand, ClosestOn(a, c));
+            // ScoreAt, not Score, and `c` is why: Score would re-derive this
+            // exact centre per candidate, and deriving it walks every thinker in
+            // the level looking for the hand actor.
+            double sc = ScoreAt(pmo, p, hand, ClosestOn(a, c), c);
             if (sc <= bestScore) { bestScore = sc; best = a; }
         }
         return best;
@@ -282,8 +430,61 @@ class RS_GrabHandler : EventHandler
         return nearTarget[hand] ? null : farTarget[hand];
     }
 
+    // THE NEAR PICK ALONE, for the gauge that draws the reach volume.
+    //
+    // It exists so RS_GrabViz can stop running its own RS_Reach.Best. That scan
+    // is a blockmap query plus a Score per candidate, it was running a second
+    // time for the same hand in the same tic, and the function it ran in already
+    // carried a comment forbidding exactly that for the box a few lines below.
+    // The oval and the box now come out of one answer, which is also the only
+    // way the oval can be honest: it goes hot for what a squeeze would TAKE, and
+    // a squeeze on a full hand does not take, it lets go.
+    Actor NearTargetFor(int hand) const
+    {
+        if (hand != 0 && hand != 1) return null;
+        return nearTarget[hand];
+    }
+
+    // IS THIS GRIP SPOKEN FOR? Asked once, answered once, used twice.
+    //
+    // Holding something, reaching for something, pulling something and having
+    // hold of something at range are the four states that mean this squeeze
+    // belongs to grabbing. Two places need that answer -- the GrabClaim written
+    // to the engine, and the holster stand-down that decides whether to throw
+    // this hand's squeeze away -- and they were written out separately.
+    //
+    // They drifted immediately. The stand-down listed three of the four and left
+    // out HandIsFull, which reads as a small omission and is not: for a hand that
+    // is CARRYING something both target slots are unconditionally nulled at the
+    // top of the tic and Locked() is always null, so all three of its conditions
+    // are false by construction. Standing in a holster volume -- which is where
+    // an arm hanging at your side lives more or less permanently -- the guard
+    // fired and skipped every release path below it. The hand could never let go.
+    //
+    // One function, so a fifth state added later cannot be added to one of them.
+    private bool GripSpokenFor(int hand, RS_Held held, RS_Pull pull) const
+    {
+        if (!held) return false;
+        return held.HandIsFull(hand) || TargetFor(hand) != null
+            || (pull && (pull.Flying(hand) || pull.Locked(hand) != null));
+    }
+
     override void WorldTick()
     {
+        // CLEARED BEFORE ANY EARLY RETURN, and that ordering is the whole point.
+        //
+        // These two are published state: the flash, the volume box and the aim
+        // beam all read them through the accessors above, and RS_GrabViz ticks
+        // after this handler. Every bail below used to leave last tic's answer
+        // standing, so switching grabbing off -- or simply dying -- left an
+        // object lit and boxed with a beam drawn to it, promising a grab from a
+        // system that had stopped running.
+        for (int h = 0; h < 2; h++)
+        {
+            nearTarget[h] = null;
+            farTarget[h]  = null;
+        }
+
         let p = players[consoleplayer];
         if (!p || !p.mo) return;
         let pmo = p.mo;
@@ -349,11 +550,11 @@ class RS_GrabHandler : EventHandler
         // unable to turn, which is the exact fault GrabClaim was added to fix.
         //
         // Holding something, reaching for something, pulling something and
-        // having hold of something at range are all "this grip is spoken for".
-        pmo.GrabClaimMain = held.HandIsFull(0) || TargetFor(0) != null
-            || (pull && (pull.Flying(0) || pull.Locked(0) != null));
-        pmo.GrabClaimOff  = held.HandIsFull(1) || TargetFor(1) != null
-            || (pull && (pull.Flying(1) || pull.Locked(1) != null));
+        // having hold of something at range are all "this grip is spoken for" --
+        // stated once, in GripSpokenFor, because the stand-down below needs the
+        // same four conditions and used to carry its own copy of three of them.
+        pmo.GrabClaimMain = GripSpokenFor(0, held, pull);
+        pmo.GrabClaimOff  = GripSpokenFor(1, held, pull);
 
         for (int hand = 0; hand < 2; hand++)
         {
@@ -420,11 +621,34 @@ class RS_GrabHandler : EventHandler
             // hip, and the cone having a target is exactly the evidence of that.
             // So: no target, the holster keeps the grip; a target, and the grip
             // was clearly meant for it.
-            if (ctx == GRIPCTX_Holster && !farTarget[hand] && !nearTarget[hand]
-                && !(pull && pull.Locked(hand)))
+            //
+            // AND A FULL HAND IS EVIDENCE TOO -- see GripSpokenFor, which is now
+            // the single statement of what "this grip is mine" means. Written out
+            // here as three of its four conditions, this guard could not tell a
+            // hand reaching into a holster from a hand standing over one with a
+            // barrel already in it, and let go of neither.
+            //
+            // HARDPOINT COUNTS AS WELL AS HOLSTER. Same argument exactly: a body
+            // hardpoint is anchored to you, so a hand at rest is inside one, and
+            // the arbiter publishes GRIPCTX_Hardpoint there rather than
+            // GRIPCTX_Holster (constants.zs:1644). Only the holster half was
+            // written, so the same "cannot let go at your own hip" fault survived
+            // at every hardpoint. The other half of the hardpoint story -- a
+            // shared "the grip was consumed this tic" latch that both doSwap
+            // implementations would check -- needs the merged tree and is not
+            // here; this is only the stand-down, which is local and correct on
+            // its own.
+            // Named apart from the function it came from. ZScript identifiers
+            // are case-insensitive, and a local that differs from a method of the
+            // same class by case alone does compile here -- `Vector3 dir =
+            // Dir(...)` in rs_distance.zs is exactly that and has always worked
+            // -- but it reads as a definition of the thing it is calling, and
+            // this is not the file to spend a headset run finding that out in.
+            bool spokenFor = GripSpokenFor(hand, held, pull);
+            if ((ctx == GRIPCTX_Holster || ctx == GRIPCTX_Hardpoint) && !spokenFor)
             {
                 if (press && dbg)
-                    Console.Printf("[RSGRIP] hand %d ignored -- arbiter says HOLSTER and nothing is in reach", hand);
+                    Console.Printf("[RSGRIP] hand %d ignored -- arbiter says ctx=%d and nothing is in reach", hand, ctx);
                 continue;
             }
 
@@ -529,28 +753,30 @@ class RS_GrabHandler : EventHandler
                 continue;
             }
 
-            if (!press) continue;
-
-            if (toggle && full)
-            {
-                Actor was = held.HeldBy(hand);
-                String wasName = "something";
-                if (was) wasName = was.GetClassName();
-                held.Release(hand, pmo, p);
-                if (dbg) Console.Printf("[RSHELD] hand %d let go of %s", hand, wasName);
-                continue;
-            }
-
-            Actor a = nearTarget[hand];
-
             // CATCH. The same input that threw it takes it out of the air.
+            //
+            // A HELD GRIP CATCHES, not only a fresh press edge, and this sits
+            // above the `!press` gate for that reason alone.
+            //
+            // Below the gate it needed a NEW press in the handful of tics the
+            // object was inside your reach volume -- so the natural thing, which
+            // is to close your hand and hold it out waiting for the thing to
+            // arrive, could never catch anything. Your fist was already shut when
+            // the window opened, there was no edge left to give, and the object
+            // sailed through your closed hand and hit you. Holding your hand open
+            // and snapping it shut at the right instant was the only motion that
+            // worked, which is the opposite of how catching feels.
+            //
+            // The MISS LOG stays on the edge. It fires when you reached and the
+            // thing was not there yet, and that is a per-attempt message: on a
+            // held grip it would print every tic of the flight.
             if (pull && pull.Flying(hand))
             {
-                if (a && pull.Catch(hand, pmo, p)) continue;
+                if (grip && nearTarget[hand] && pull.Catch(hand, pmo, p)) continue;
                 // Reached for it and it was not there yet. Said out loud,
                 // because a catch that silently does nothing is indistinguish-
                 // able from an input that never arrived.
-                if (dbg)
+                if (press && dbg)
                 {
                     // GetClassName() returns Name, not string -- ?: needs
                     // both branches the SAME type, which a ternary mixing a
@@ -568,6 +794,20 @@ class RS_GrabHandler : EventHandler
                 }
                 continue;
             }
+
+            if (!press) continue;
+
+            if (toggle && full)
+            {
+                Actor was = held.HeldBy(hand);
+                String wasName = "something";
+                if (was) wasName = was.GetClassName();
+                held.Release(hand, pmo, p);
+                if (dbg) Console.Printf("[RSHELD] hand %d let go of %s", hand, wasName);
+                continue;
+            }
+
+            Actor a = nearTarget[hand];
 
             // A GRIP PRESS AT ARM'S LENGTH IS A LOCK, NOT A LAUNCH.
             //

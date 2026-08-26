@@ -283,9 +283,26 @@ class RS_HolsterManager : EventHandler
 	// any means (a dedicated Save/Load button, not just the toggle itself).
 	string activeProfile;
 
-	bool editMode;
-	int  grabbedMain;  // holster index being dragged, -1 for none
-	int  grabbedOff;
+	// PER PLAYER as of 2026-08-26, where all three used to be one global
+	// each. The edit TABLE above stays deliberately global -- one person
+	// wears the headset, and there is one set of anchors to tune -- but
+	// "is this player editing" and "which sphere is this hand dragging"
+	// are not tuning values, they are live per-hand state. As single
+	// globals, a second player toggling edit mode dropped the first
+	// player's sphere mid-drag, and either player's grab overwrote the
+	// other's. Mirrored from RS_HardPoints in the same pass.
+	//
+	// int arrays default to 0, a VALID holster index -- exactly the trap
+	// nearMain/nearOff document further up -- so grabbedMain/grabbedOff MUST
+	// be seeded to -1 before updateGrabs ever reads them. ensureEdit does
+	// that, and updateGrabs now calls ensureEdit first for precisely that
+	// reason: previously the zero-default meant the first calibrated tic
+	// dragged holster 0 to wherever the main hand happened to be, and only
+	// anchorPos' own ensureEdit call (which runs later in the same tic)
+	// undid it.
+	bool editMode[MAXPLAYERS];
+	int  grabbedMain[MAXPLAYERS];  // holster index being dragged, -1 for none
+	int  grabbedOff[MAXPLAYERS];
 
 	// ---- body yaw ----
 	// Anchors follow THIS, not HmdYaw directly. Your hips do not counter-rotate
@@ -381,6 +398,242 @@ class RS_HolsterManager : EventHandler
 		}
 	}
 
+	// ------------------------------------------------------------------
+	// LIFECYCLE. THERE WAS NONE OF THIS AT ALL until 2026-08-26 -- the only
+	// overrides this class had were WorldTick and NetworkProcess -- and the
+	// consequences were not cosmetic.
+	//
+	// This handler is registered through MAPINFO's AddEventHandlers, which
+	// makes it a PER-LEVEL handler: a new instance is constructed for every
+	// map, so every field here (contents[], the edit table, eyeHeight[],
+	// activeProfile) is wiped on any level change. The WEAPONS are not wiped
+	// -- they travel with the player. So a holstered weapon crossed the exit
+	// line still carrying bHolsterHidden = true, with the only code that ever
+	// clears it left behind on the previous map. What that flag does is
+	// documented in doSwap below: CheckAmmo refuses to let a bHolsterHidden
+	// weapon FIRE, and refuses to let weapnext/weapprev or slot-select reach
+	// it. Nothing else anywhere clears it. Every weapon you were carrying in
+	// a holster when you took the exit was permanently, silently bricked --
+	// still in inventory, un-fireable, unreachable, for the rest of the run.
+	//
+	// The same absence showed up on death: contents[] and pouchPrevious* kept
+	// pointing at the corpse's weapons, and the props kept displaying them.
+	// pouchPrevious was the worse of the two -- updatePouchClaim's restore
+	// branch fires whenever the hand is unclaimed and prev is non-null, and
+	// on the first tic after a respawn a brand new pawn is unclaimed by
+	// definition, so it tried to move a dead body's weapon into a living
+	// player's hand.
+	//
+	// SCOPE NOTE for whoever is building the grip arbiter: nothing here
+	// changes how pouchPrevious*/GripClaim* WORK. releasePlayer only nulls
+	// stale pointers at the two moments the pawn they belong to stops
+	// existing. Leave updatePouchClaim itself alone.
+	// ------------------------------------------------------------------
+
+	// The pawn is gone or going. Hand every holstered weapon back its flags
+	// while the pointers are still good, then forget them.
+	override void PlayerDied(PlayerEvent e)
+	{
+		releasePlayer(e.PlayerNumber, true);
+	}
+
+	// A brand new pawn with a brand new inventory. The old contents[] and
+	// pouchPrevious* pointers describe weapons that are not this player's any
+	// more, and re-measuring eye height is right anyway -- a respawn point can
+	// sit at a different floor height than the one calibration was taken at,
+	// and every anchor here is placed as a fraction of that measurement.
+	override void PlayerRespawned(PlayerEvent e)
+	{
+		releasePlayer(e.PlayerNumber, true);
+
+		// Destroyed rather than left to be repositioned. ForceRecalibrate
+		// below makes WorldTick take its `continue` branch until the new eye
+		// height lands (up to CALIBRATE_MAX_TRIES, about a second), and
+		// updateProps does not run during that window -- so the existing
+		// props and markers would hang in the air at the corpse's last anchor
+		// positions for that whole second. updateProps respawns any that read
+		// null the first time it does run.
+		despawnPlayerActors(e.PlayerNumber);
+		ForceRecalibrate(e.PlayerNumber);
+	}
+
+	// updateProps only ever runs for players with playeringame[i] set, so a
+	// disconnecting player's props and markers simply stop being touched --
+	// they do not stop EXISTING. Nine props plus nine markers per player were
+	// left parked and visible at whatever world position they last held.
+	override void PlayerDisconnected(PlayerEvent e)
+	{
+		releasePlayer(e.PlayerNumber, true);
+		despawnPlayerActors(e.PlayerNumber);
+	}
+
+	// Leaving the level: unflag everything BEFORE this handler (and its
+	// contents[] table) ceases to exist, which is the only moment the mapping
+	// from weapon to "is holstered" still exists at all.
+	override void WorldUnloaded(WorldEvent e)
+	{
+		for (int i = 0; i < MAXPLAYERS; ++i)
+		{
+			releasePlayer(i, true);
+			despawnPlayerActors(i);
+		}
+	}
+
+	override void WorldLoaded(WorldEvent e)
+	{
+		// A savegame restores this handler's OWN fields, contents[] included,
+		// so the weapons it describes are legitimately still holstered and the
+		// sweep below would wrongly un-holster every one of them. Only a
+		// genuinely fresh level needs any of this.
+		if (e.IsSaveGame)
+			return;
+
+		// The backstop for the bricking described above. WorldUnloaded is the
+		// primary fix, but it cannot help a weapon stowed by a build (or a
+		// session) from before any of this existed, and it never runs at all
+		// on the first map of a session. Sweeping inventory here catches both.
+		// Safe to run against weapons this mod never holstered: at this point
+		// contents[] is empty for every player, so "holstered" is a state
+		// nothing on this map claims -- including RS_HardPoints, whose own
+		// table was wiped by the very same level change.
+		for (int i = 0; i < MAXPLAYERS; ++i)
+		{
+			if (!playeringame[i] || players[i].mo == null)
+				continue;
+			unstowInventory(players[i].mo);
+		}
+
+		// And the tuned profile, which until now had to be reloaded by hand
+		// after EVERY map change -- edInit is a per-level field, so ensureEdit
+		// reseeded the placeholder table from GetHolster's switch on every
+		// level load and threw away whatever the player had dragged and saved.
+		// A profile that only survives until the next door is not persistence.
+		autoLoadProfile();
+	}
+
+	// Give every weapon this player owns its ordinary flags back. Walks
+	// inventory rather than contents[], deliberately: the whole failure this
+	// exists for is a weapon whose holstering manager no longer exists to be
+	// asked. Same walk findFist does.
+	private void unstowInventory(PlayerPawn pawn)
+	{
+		for (Inventory item = pawn.Inv; item != null; item = item.Inv)
+		{
+			let w = Weapon(item);
+			if (w == null)
+				continue;
+			if (!w.bHolsterHidden)
+				continue;
+			w.bNoAutoSwitchTo = w.Default.bNoAutoSwitchTo;
+			w.bHolsterHidden = false;
+		}
+	}
+
+	// Empty one player's tables. unflag=false exists for the case where the
+	// pointers are known to be stale rather than merely finished with; every
+	// current caller passes true, since GZDoom nulls an Actor-typed field
+	// automatically once the actor is destroyed, so a stale pointer already
+	// reads null here and the flag write never happens.
+	private void releasePlayer(int i, bool unflag)
+	{
+		if (i < 0 || i >= MAXPLAYERS)
+			return;
+
+		ensureContents();
+		for (int h = 0; h < HOLSTER_COUNT; ++h)
+		{
+			int ci = (i * HOLSTER_COUNT) + h;
+			let w = contents[ci];
+			if (w != null && unflag)
+			{
+				w.bNoAutoSwitchTo = w.Default.bNoAutoSwitchTo;
+				w.bHolsterHidden = false;
+			}
+			contents[ci] = null;
+		}
+
+		// -1, not 0: these are holster indices, and their int zero-default is
+		// a VALID index. See WorldTick's own note on the same trap.
+		nearMain[i] = -1;
+		nearOff[i] = -1;
+		pendingDump[i] = -1;
+
+		// The ammo-pouch backup pointers, nulled for the reason given in the
+		// block comment above: left set across a death they name a corpse's
+		// weapon, and updatePouchClaim's restore branch runs on the first tic
+		// after respawn (a fresh pawn has GripClaim* at GRIPSUBJ_None, so
+		// "hand is free" is true) and tries to seat it. Only the pointers are
+		// touched -- the claim protocol itself is the grip arbiter's, not
+		// this pass's.
+		ensurePouchPrevious();
+		pouchPreviousMain[i] = null;
+		pouchPreviousOff[i] = null;
+
+		// The matching "did WE claim it" bookkeeping. Left true across a
+		// respawn, updatePouchClaim's exit branch would fire once against the
+		// new pawn and clear a GripClaim* value that a completely different
+		// system may by then have set -- which is precisely the stomp the
+		// pouchClaimed* flags exist to prevent.
+		pouchClaimedMain[i] = false;
+		pouchClaimedOff[i] = false;
+	}
+
+	// Destroy this player's props and markers. updateProps respawns any that
+	// are null the next time it runs for a live player, so this is safe to
+	// call on a player who might come back.
+	private void despawnPlayerActors(int i)
+	{
+		if (i < 0 || i >= MAXPLAYERS)
+			return;
+
+		for (int h = 0; h < HOLSTER_COUNT; ++h)
+		{
+			int pi = (i * HOLSTER_COUNT) + h;
+			if (pi < props.Size() && props[pi] != null)
+			{
+				props[pi].Destroy();
+				props[pi] = null;
+			}
+			if (pi < markers.Size() && markers[pi] != null)
+			{
+				markers[pi].Destroy();
+				markers[pi] = null;
+			}
+		}
+	}
+
+	// Pull a saved profile in on level load, quietly.
+	//
+	// STANDING FIRST, then seated, and that order is switchProfile's own
+	// convention rather than a new decision: activeProfile starts empty every
+	// level (it is a per-level field like everything else here), and
+	// switchProfile already documents that an empty activeProfile falls to
+	// the standing branch. Loading standing therefore leaves the toggle
+	// exactly where a player who has not touched it expects it. A seated
+	// player presses SWITCH once per map, which is strictly better than the
+	// old behaviour of losing the whole tuned table every map.
+	//
+	// The two-step (test with the native, then go through loadProfile) is
+	// there so a player who has never saved a profile does not get a red "no
+	// profile on disk" line -- twice -- on every single map change for the
+	// rest of the run. level.JSONProfileLoad is idempotent (it clears its
+	// buffer and re-parses the same file), so the retry costs one extra read
+	// of a file measured in hundreds of bytes and buys the ordinary case a
+	// silent no-op. Going through loadProfile rather than reading keys here
+	// keeps ONE copy of the per-field GetHolster fallback logic, and lets it
+	// set activeProfile the same way every other load does.
+	private void autoLoadProfile()
+	{
+		ensureEdit();
+		if (level.JSONProfileLoad("holster_standing"))
+		{
+			loadProfile("holster_standing");
+			return;
+		}
+		if (level.JSONProfileLoad("holster_seated"))
+			loadProfile("holster_seated");
+	}
+
 	// One-shot sample of standing eye height. Retried rather than taken
 	// immediately because the pawn can still be mid-drop on its first tics,
 	// and because HmdPos reads as a zero vector until the VR backend has
@@ -440,8 +693,14 @@ class RS_HolsterManager : EventHandler
 		if (edInit)
 			return;
 		edInit = true;
-		grabbedMain = -1;
-		grabbedOff = -1;
+		// -1 for every player, not just the console one: int arrays default
+		// to 0, which is holster 0, so an unseeded entry reads as "this hand
+		// is dragging HipLeft" the first time updateGrabs looks at it.
+		for (int p = 0; p < MAXPLAYERS; ++p)
+		{
+			grabbedMain[p] = -1;
+			grabbedOff[p] = -1;
+		}
 		for (int h = 0; h < HOLSTER_COUNT; ++h)
 		{
 			string hsName; double hsFwd, hsSide, hsFrac, hsRadius, hsPitch, hsYaw, hsRoll;
@@ -667,16 +926,27 @@ class RS_HolsterManager : EventHandler
 	// While a holster is grabbed, it simply lives wherever that hand is.
 	private void updateGrabs(int i, PlayerPawn pawn)
 	{
+		// FIRST, before either array is read. grabbedMain/grabbedOff are int
+		// arrays, so their zero-default is holster 0 rather than "nothing" --
+		// see their declaration. WorldTick calls this BEFORE updateClaims,
+		// which is the only other thing that reaches ensureEdit (via
+		// anchorPos), so without this the very first calibrated tic dragged
+		// HipLeft to wherever the main hand was.
+		ensureEdit();
+
+		int gm = grabbedMain[i];
+		int go = grabbedOff[i];
+
 		// Position AND orientation follow the hand, so a holster is placed the
 		// way you would actually place one: hold your hand where the gun goes,
 		// angled how the gun should sit, and let go.
-		if (grabbedMain >= 0)
+		if (gm >= 0)
 		{
-			if (isHandAnchored(grabbedMain))
+			if (isHandAnchored(gm))
 			{
 				// Position always updates -- this is what lets you drag a
 				// forearm/wrist sphere to a new spot on your arm either way.
-				worldToHand(pawn, grabbedMain, pawn.AttackPos, edFwd[grabbedMain], edSide[grabbedMain], edFrac[grabbedMain]);
+				worldToHand(pawn, gm, pawn.AttackPos, edFwd[gm], edSide[gm], edFrac[gm]);
 
 				// Orientation trim is captured RELATIVE to the off hand's
 				// own basis pose (handBasisPose), same idea as edYaw being
@@ -684,22 +954,22 @@ class RS_HolsterManager : EventHandler
 				// dragging hand (main) and the basis hand (off) are always
 				// different hands here, so this delta is always meaningful.
 				double bAng, bPit, bRol;
-				handBasisPose(pawn, grabbedMain, bAng, bPit, bRol);
-				edYaw[grabbedMain]   = normalizeDeg(pawn.AttackAngle - bAng);
-				edPitch[grabbedMain] = normalizeDeg(pawn.AttackPitch - bPit);
-				edRoll[grabbedMain]  = normalizeDeg(pawn.AttackRoll  - bRol);
+				handBasisPose(pawn, gm, bAng, bPit, bRol);
+				edYaw[gm]   = normalizeDeg(pawn.AttackAngle - bAng);
+				edPitch[gm] = normalizeDeg(pawn.AttackPitch - bPit);
+				edRoll[gm]  = normalizeDeg(pawn.AttackRoll  - bRol);
 			}
 			else
 			{
-				worldToBody(i, pawn, pawn.AttackPos, edFwd[grabbedMain], edSide[grabbedMain], edFrac[grabbedMain]);
-				edPitch[grabbedMain] = pawn.AttackPitch;
-				edRoll[grabbedMain]  = pawn.AttackRoll;
+				worldToBody(i, pawn, pawn.AttackPos, edFwd[gm], edSide[gm], edFrac[gm]);
+				edPitch[gm] = pawn.AttackPitch;
+				edRoll[gm]  = pawn.AttackRoll;
 				// yaw relative to the BODY, not the world, or the stored angle
 				// would only be right while facing the direction you set it in
-				edYaw[grabbedMain] = normalizeDeg(pawn.AttackAngle - bodyYaw[i]);
+				edYaw[gm] = normalizeDeg(pawn.AttackAngle - bodyYaw[i]);
 			}
 		}
-		if (grabbedOff >= 0)
+		if (go >= 0)
 		{
 			// No hand-anchored branch here: updateClaims never lets the off
 			// hand claim its own hand-anchored gear (see there for why), so
@@ -708,10 +978,10 @@ class RS_HolsterManager : EventHandler
 			// own origin is pawn.OffhandPos, so "drag a wrist sphere with
 			// the same hand it's mounted on" has no meaningful answer to
 			// give it anyway.
-			worldToBody(i, pawn, pawn.OffhandPos, edFwd[grabbedOff], edSide[grabbedOff], edFrac[grabbedOff]);
-			edPitch[grabbedOff] = pawn.OffhandPitch;
-			edRoll[grabbedOff]  = pawn.OffhandRoll;
-			edYaw[grabbedOff] = normalizeDeg(pawn.OffhandAngle - bodyYaw[i]);
+			worldToBody(i, pawn, pawn.OffhandPos, edFwd[go], edSide[go], edFrac[go]);
+			edPitch[go] = pawn.OffhandPitch;
+			edRoll[go]  = pawn.OffhandRoll;
+			edYaw[go] = normalizeDeg(pawn.OffhandAngle - bodyYaw[i]);
 		}
 	}
 
@@ -937,16 +1207,26 @@ class RS_HolsterManager : EventHandler
 
 		// Edge-logged rather than per-tic: this is the signal that the whole
 		// chain works, and it should be visible without being a spam source.
+		//
+		// GATED BEHIND rs_holster_verbose AS OF 2026-08-26. "Edge-logged, not
+		// a spam source" was true only relative to a per-tic print: a hand
+		// working across nine overlapping anchors crosses these edges
+		// constantly, and a shipped build should not narrate that. The HAPTIC
+		// is deliberately OUTSIDE the gate -- it is the player-facing
+		// feedback, not instrumentation, and turning the console lines off
+		// must not also turn off the thing that tells you where a holster is.
 		if (mainClaimed != pawn.HolsterClaimMain)
 		{
-			Console.Printf("RS_HOLSTER: main hand %s holster range", mainClaimed ? "ENTERED" : "left");
+			if (verboseDiag())
+				Console.Printf("RS_HOLSTER: main hand %s holster range", mainClaimed ? "ENTERED" : "left");
 			// A short, light tap on ENTER only -- a real holster does not buzz
 			// your hand when you pull away from it, only when you find it.
 			if (mainClaimed) level.VRHaptic(0, 0.35, 25.0);
 		}
 		if (offClaimed != pawn.HolsterClaimOff)
 		{
-			Console.Printf("RS_HOLSTER: off hand %s holster range", offClaimed ? "ENTERED" : "left");
+			if (verboseDiag())
+				Console.Printf("RS_HOLSTER: off hand %s holster range", offClaimed ? "ENTERED" : "left");
 			if (offClaimed) level.VRHaptic(1, 0.35, 25.0);
 		}
 
@@ -1056,7 +1336,25 @@ class RS_HolsterManager : EventHandler
 	// move with the player's head every frame and there is nothing to parent to.
 	private void updateProps(int i, PlayerPawn pawn)
 	{
-		if (!showProps())
+		// TWO INDEPENDENT SWITCHES as of 2026-08-26. The markers (wireframe
+		// rings showing WHERE a holster is) and the props (the stored weapon's
+		// model) are separate actor arrays, and they used to share one cvar
+		// under a menu row labelled "Show holster spheres".
+		//
+		// That row was wrong twice. It did not only hide spheres -- the default
+		// marker shape is the bracket reticle -- and it did not hide the markers
+		// AT ALL: the early return below only ever touched props[], while every
+		// line that positions markers[] sits after it. Switching it off hid your
+		// stored weapons and left the rings visible and FROZEN in world space,
+		// no longer following you.
+		//
+		// Now: markers and stored weapons toggle independently, which is the
+		// case worth having -- once the anchors are learned by feel the rings
+		// are clutter, but the guns parked in them are still worth seeing.
+		bool wantProps   = showProps();
+		bool wantMarkers = showMarkers();
+
+		if (!wantProps || !wantMarkers)
 		{
 			// Setting invisible rather than destroying: the player can toggle
 			// this mid-session, and respawning six actors on every toggle is
@@ -1064,10 +1362,17 @@ class RS_HolsterManager : EventHandler
 			for (int h = 0; h < HOLSTER_COUNT; ++h)
 			{
 				int pi = (i * HOLSTER_COUNT) + h;
-				if (pi < props.Size() && props[pi] != null)
+				if (!wantProps && pi < props.Size() && props[pi] != null)
 					props[pi].SetVisible(false);
+				if (!wantMarkers && pi < markers.Size() && markers[pi] != null)
+					markers[pi].SetVisible(false);
 			}
-			return;
+
+			// Only bail entirely when there is nothing left to draw. With one
+			// of the two still on, the loop below must run so that one keeps
+			// tracking the player.
+			if (!wantProps && !wantMarkers)
+				return;
 		}
 
 		ensureContents();
@@ -1164,7 +1469,7 @@ class RS_HolsterManager : EventHandler
 
 			if (markers[pi] != null)
 			{
-				markers[pi].SetVisible(true);
+				markers[pi].SetVisible(wantMarkers);
 				markers[pi].SetOrigin(at, true);
 				markers[pi].SetHot(hot);
 
@@ -1278,7 +1583,14 @@ class RS_HolsterManager : EventHandler
 			// a wrist-mounted flashlight should read as compact gear, not a
 			// full holstered sidearm.
 			double propScale = isHandAnchored(h) ? RS_HolsterProp.holsterPropScaleArm() : RS_HolsterProp.holsterPropScale();
-			p.ShowWeapon(stored, propScale, hsRadius);
+
+			// Passing null is the existing "this holster is empty" path --
+			// ShowWeapon sets pendingClear and fades the model out. Reusing it
+			// for "stored weapons are switched off" means the hide is the same
+			// well-tested route rather than a second way to make a prop
+			// invisible, and it comes back correctly when switched on again.
+			Weapon toShow = wantProps ? stored : null;
+			p.ShowWeapon(toShow, propScale, hsRadius);
 
 			// Face the same way the BODY does (not the head), so a holstered
 			// gun stays put on the hip when you look around, plus a tunable
@@ -1374,7 +1686,7 @@ class RS_HolsterManager : EventHandler
 	{
 		ensureEdit();
 
-		int held = mainHand ? grabbedMain : grabbedOff;
+		int held = mainHand ? grabbedMain[i] : grabbedOff[i];
 		if (held >= 0)
 		{
 			string hsName; double hsFwd, hsSide, hsFrac, hsRadius, hsPitch, hsYaw, hsRoll;
@@ -1382,7 +1694,7 @@ class RS_HolsterManager : EventHandler
 			Console.Printf("RS_HOLSTER: dropped %s at fwd %.2f  side %.2f  frac %.3f",
 				hsName, edFwd[held], edSide[held], edFrac[held]);
 			level.VRHaptic(mainHand ? 0 : 1, 0.6, 15.0);
-			if (mainHand) { grabbedMain = -1; } else { grabbedOff = -1; }
+			if (mainHand) { grabbedMain[i] = -1; } else { grabbedOff[i] = -1; }
 			return;
 		}
 
@@ -1401,7 +1713,7 @@ class RS_HolsterManager : EventHandler
 		GetHolster(want, hsName2, f2, s2, fr2, r2, p2, y2, rl2);
 		Console.Printf("RS_HOLSTER: grabbed %s -- move your hand, press again to drop", hsName2);
 		level.VRHaptic(mainHand ? 0 : 1, 0.35, 25.0);
-		if (mainHand) { grabbedMain = want; } else { grabbedOff = want; }
+		if (mainHand) { grabbedMain[i] = want; } else { grabbedOff[i] = want; }
 	}
 
 	// Whatever this player's melee weapon actually is. Walks inventory rather
@@ -1457,9 +1769,19 @@ class RS_HolsterManager : EventHandler
 			markers.Push(null);
 	}
 
+	// The STORED WEAPON models parked in occupied holsters.
 	private bool showProps() const
 	{
 		let cv = CVar.GetCVar("rs_holster_props", players[consoleplayer]);
+		return (cv != null) ? cv.GetBool() : true;
+	}
+
+	// The WIREFRAME MARKERS showing where each holster is. Separate actors from
+	// the props and, since 2026-08-26, a separate switch -- see updateProps for
+	// why they used to share one and what that broke.
+	private bool showMarkers() const
+	{
+		let cv = CVar.GetCVar("rs_holster_markers", players[consoleplayer]);
 		return (cv != null) ? cv.GetBool() : true;
 	}
 
@@ -1514,6 +1836,33 @@ class RS_HolsterManager : EventHandler
 		return (cv != null) ? cv.GetBool() : true;
 	}
 
+	// Developer instrumentation gate, added 2026-08-26. Until then this mod
+	// shipped a permanent instrumentation layer switched ON in the default
+	// build: a seven-line orientation dump after EVERY store, a console line
+	// on every hand-enters/leaves-range transition, and (in
+	// RS_HolsterFlashlight) a pose printf at roughly 3.5 lines a second for
+	// as long as the flashlight was held.
+	//
+	// GATED, NOT DELETED. Every one of those exists because a specific
+	// question was open and is still open -- the same reasoning that kept
+	// RS_HardPoints' wrist-pitch dump alive when it got this treatment
+	// (rs_hardpoint_wristdump). Turn this on for a tuning session and they
+	// all come back at once.
+	//
+	// What is deliberately NOT behind it: the range-entry HAPTIC (player
+	// feedback, not instrumentation), the one-line store/draw confirmation,
+	// every error line, and the MANUAL dump on netevent rs-holster-debug --
+	// asking for that one is the whole gesture.
+	//
+	// NAMED _verbose, NOT _debug: KEYCONF binds an ALIAS called
+	// rs_holster_debug, and a cvar sharing that name would collide in the
+	// console namespace. Same trap, same resolution, as _wristdump.
+	private bool verboseDiag() const
+	{
+		let cv = CVar.GetCVar("rs_holster_verbose", players[consoleplayer]);
+		return (cv != null) ? cv.GetBool() : false;
+	}
+
 	private int swapCooldown() const
 	{
 		return instantSwitchEnabled() ? FAST_SWAP_COOLDOWN : SLOW_SWAP_COOLDOWN;
@@ -1540,10 +1889,10 @@ class RS_HolsterManager : EventHandler
 		if (evt.name == "rs-holster-edit")
 		{
 			ensureEdit();
-			editMode = !editMode;
-			grabbedMain = -1;
-			grabbedOff = -1;
-			if (editMode)
+			editMode[evt.player] = !editMode[evt.player];
+			grabbedMain[evt.player] = -1;
+			grabbedOff[evt.player] = -1;
+			if (editMode[evt.player])
 			{
 				Console.Printf("\c[Gold]RS_HOLSTER: EDIT MODE ON");
 				Console.Printf("  put a hand in a sphere and press its holster key to GRAB it");
@@ -1599,19 +1948,28 @@ class RS_HolsterManager : EventHandler
 		//
 		// So both mods bind their own alias name (no KEYCONF collision) and
 		// both aliases fire the SAME "rs-vrhp-grab-*" netevent, which every
-		// handler receives. Arbitration then needs no coordination at all,
-		// because it already exists: doSwap's first line returns immediately
-		// when the hand is not inside one of THIS mod's own anchors. The hand
-		// is in exactly one place, so exactly one mod acts.
+		// handler receives. doSwap's first line then returns immediately when
+		// the hand is not inside one of THIS mod's own anchors.
+		//
+		// THAT IS NOT ARBITRATION, and this comment used to claim it was
+		// ("the hand is in exactly one place, so exactly one mod acts"). It
+		// stops being true the moment an anchor here overlaps one of
+		// RS_HardPoints' -- a hip holster sits on the body, a wrist mount
+		// rides the forearm, and one reach can be inside both. Both handlers
+		// get the netevent, both find a claim, and BOTH swap on a single
+		// press. What keeps that from happening today is where the anchors
+		// happen to sit, not anything in this code. The real fix is the grip
+		// arbiter being built separately; DO NOT "tidy" this dispatch in the
+		// meantime, it will collide with that work.
 		if (evt.name == "rs-holster-grab-main" || evt.name == "rs-vrhp-grab-main")
 		{
-			if (editMode) { toggleGrab(evt.player, true); }
-			else          { doSwap(evt.player, pawn, nearMain[evt.player], false); }
+			if (editMode[evt.player]) { toggleGrab(evt.player, true); }
+			else                      { doSwap(evt.player, pawn, nearMain[evt.player], false); }
 		}
 		else if (evt.name == "rs-holster-grab-off" || evt.name == "rs-vrhp-grab-off")
 		{
-			if (editMode) { toggleGrab(evt.player, false); }
-			else          { doSwap(evt.player, pawn, nearOff[evt.player], true); }
+			if (editMode[evt.player]) { toggleGrab(evt.player, false); }
+			else                      { doSwap(evt.player, pawn, nearOff[evt.player], true); }
 		}
 	}
 
@@ -1867,16 +2225,24 @@ class RS_HolsterManager : EventHandler
 
 		// Diegetic confirm, fired from the HOLSTER's own position rather than
 		// the player -- a sound with a place in the world, not a UI blip
-		// glued to your head. Two choices, both borrowed from RS_Main's own
-		// SNDINFO rather than new assets: rs_fx_holster (a $random 3-variant
-		// clunk that sat unused until now) or rs_allclear_ready (the
-		// ready-to-fire cadence beep, freed up for this now that
-		// rs_allclear_enable defaults off).
+		// glued to your head.
+		//
+		// NAMES CHANGED 2026-08-26, and the old ones were the bug. This asked
+		// for "rs_fx_holster" / "rs_allclear_ready", which are defined in
+		// exactly one place on disk: RS_Main's SNDINFO. RS_Main is not part of
+		// this family and is not a declared dependency of this pk3 -- this
+		// file's own header is explicit that the mod must work with any weapon
+		// pack and name none -- and GZDoom resolves an undefined sound to
+		// SILENCE rather than to an error. So this cue had simply never played
+		// for anybody running these mods without RS_Main, with a cvar, a menu
+		// row and a style selector all wired to it and nothing reporting a
+		// thing. The audio now ships here under this pk3's own logical and
+		// lump names; see SNDINFO.txt.
 		let sndCv = CVar.GetCVar("rs_holster_sound", pawn.player);
 		if (sndCv == null || sndCv.GetBool())
 		{
 			let styleCv = CVar.GetCVar("rs_holster_sound_style", pawn.player);
-			string sndName = (styleCv != null && styleCv.GetInt() == 1) ? "rs_allclear_ready" : "rs_fx_holster";
+			string sndName = (styleCv != null && styleCv.GetInt() == 1) ? "rs_holster_fx_ready" : "rs_holster_fx_store";
 
 			if (slot < props.Size() && props[slot] != null)
 				props[slot].A_StartSound(sndName, CHAN_AUTO, CHANF_DEFAULT, 0.7);
@@ -1904,7 +2270,15 @@ class RS_HolsterManager : EventHandler
 		// This is what makes "record as I play" true -- store a gun and the
 		// full orientation/offset breakdown lands in the log on its own, no
 		// menu, no netevent, nothing to remember mid-session.
-		if (contents[slot] != null)
+		//
+		// GATED BEHIND rs_holster_verbose AS OF 2026-08-26. "Record as I
+		// play" is a tuning session's want, not a shipped build's: every
+		// single store printed a seven-line orientation breakdown into the
+		// player's console. Gated at the SOURCE rather than at WorldTick's
+		// consumption point so nothing is queued in the first place -- the
+		// manual dump (netevent rs-holster-debug) is untouched and still
+		// prints the same numbers on demand.
+		if (contents[slot] != null && verboseDiag())
 			pendingDump[i] = holsterIdx;
 	}
 

@@ -18,8 +18,11 @@
 
 class HS_Marker : Actor
 {
-	// The engine resolves handedness itself (vr_control_scheme), so this is the
-	// weapon hand whichever way round the player is holding things.
+	// The engine resolves handedness itself (vr_control_scheme), so these are the
+	// weapon hand whichever way round the player is holding things. Same two
+	// values the engine uses everywhere else -- what `Weapon.bOffhandWeapon`
+	// resolves to, and what `Level.VRHaptic` takes as its hand argument -- so
+	// HS_Handler reads them from here rather than keeping a second copy.
 	const HS_HAND_MAIN = 0;
 	const HS_HAND_OFF  = 1;
 
@@ -27,7 +30,13 @@ class HS_Marker : Actor
 	// the point on the head that was actually struck, not the victim's origin —
 	// the marker is the only readout of *where* you hit, so putting it at the
 	// actor centre throws away the information it exists to show.
-	static void Confirm(Actor victim, Vector3 hitPos, Actor shooter)
+	//
+	// `hand` is the hand that fired, HS_HAND_MAIN or HS_HAND_OFF, and it decides
+	// which controller buzzes. The caller resolves it (HS_Handler.FiringWeapon);
+	// on a dual-wield engine the confirm has to arrive in the hand that earned
+	// it, or it reads as the other gun having gone off. Defaulted so a future
+	// detection layer that does not yet track handedness still calls cleanly.
+	static void Confirm(Actor victim, Vector3 hitPos, Actor shooter, int hand = HS_HAND_MAIN)
 	{
 		if (!victim)
 			return;
@@ -42,7 +51,7 @@ class HS_Marker : Actor
 
 		// Only the local player gets buzzed, and only for their own shots.
 		if (shooter && shooter.player && shooter.player == players[consoleplayer])
-			victim.Level.VRHaptic(HS_HAND_MAIN, 0.55, 45);
+			victim.Level.VRHaptic(hand, 0.55, 45);
 	}
 
 	default

@@ -52,12 +52,28 @@ class RS_Cone play
 		Actor best = null;
 		double bestScore = -2.0;
 
+		// WHAT IS ALREADY IN A HAND IS NOT IN THE CONE, and the near path has had
+		// this guard from the start (RS_Reach.Best). Without it the cone will
+		// happily pick the object in your OTHER fist -- it is a legal grab
+		// candidate, it is within reach, and it is usually the thing you are
+		// looking straight at -- and then a flick tears it out of that hand and
+		// throws it across the room at this one. There is no gesture for "yank it
+		// out of my own grip", so there is nothing this could have meant.
+		//
+		// Broader than the near guard on purpose. The near path deliberately
+		// keeps the other hand's object as a target, because closing on it there
+		// means a second hand joining or a hand-to-hand pass, and RS_Held.Take
+		// handles both. Nothing on the flight path does: RS_Pull.Start would
+		// simply take it.
+		let held = RS_Held.Get();
+
 		BlockThingsIterator it =
 			BlockThingsIterator.CreateFromPos(origin.x, origin.y, origin.z, reach, reach, false);
 		while (it.Next())
 		{
 			Actor a = it.thing;
 			if (!a || a == pmo) continue;
+			if (held && held.IsHeld(a)) continue;
 			if (!pol.Decide(a, pmo, p)) continue;
 
 			// The MIDDLE of the thing, not its origin. A Doom actor's origin is
@@ -114,6 +130,8 @@ class RS_Pull : EventHandler
 	// back one line before the handover, so the state Take saves is the truth.
 	private bool flySavedSpecial[2];
 	private bool flySavedNoGrav[2];
+	// THE THIRD ONE, and the barrel is why -- see the note in Start.
+	private bool flySavedThruActors[2];
 
 	// THE LOCK -- grabbed, and still across the room.
 	//
@@ -152,6 +170,11 @@ class RS_Pull : EventHandler
 		if (flyActor[hand]) return false;
 		let held = RS_Held.Get();
 		if (held && held.HandIsFull(hand)) return false;
+		// Not something a hand already has hold of -- see the note in
+		// RS_Cone.Best. Refused here as well as filtered there because the cone
+		// is not the only thing that can name a target, and this is the door the
+		// object actually leaves through.
+		if (held && held.IsHeld(a)) return false;
 		lockActor[hand] = a;
 		if (RS_Reach.Flag("rs_hold_debug", p, true))
 			Console.Printf("[RSPULL] hand %d LOCKED %s -- flick to pull it", hand, a.GetClassName());
@@ -199,6 +222,9 @@ class RS_Pull : EventHandler
 
 		let held = RS_Held.Get();
 		if (!held || held.HandIsFull(hand)) return false;
+		// Nor out of the other hand. Same reason as Lock: this is the call that
+		// would actually launch it.
+		if (held.IsHeld(a)) return false;
 
 		// FLIGHT TIME COMES FROM THE DISTANCE, so near and far pulls travel at
 		// the same SPEED. A fixed tic count meant a thing across the room moved
@@ -222,8 +248,9 @@ class RS_Pull : EventHandler
 		flyStart[hand] = mid0;
 		flyDist[hand]  = dist;
 
-		flySavedSpecial[hand] = a.bSPECIAL;
-		flySavedNoGrav[hand]  = a.bNOGRAVITY;
+		flySavedSpecial[hand]    = a.bSPECIAL;
+		flySavedNoGrav[hand]     = a.bNOGRAVITY;
+		flySavedThruActors[hand] = a.bTHRUACTORS;
 
 		// SPECIAL IS LEFT ALONE, and that is the whole design in one line.
 		//
@@ -238,6 +265,24 @@ class RS_Pull : EventHandler
 		// NOGRAVITY still goes on: the arc is authored, and gravity fighting it
 		// mid-flight would drag every pull into the floor.
 		a.bNOGRAVITY = true;
+
+		// AND THRUACTORS, FOR THE LAST FEW TICS OF THE ARC.
+		//
+		// The flight is driven with TryMove (see the note there), and the arc
+		// homes to your PALM -- so every pull ends with the object crossing
+		// inside your own collision cylinder. A +SOLID thing, a barrel above all,
+		// is refused that move by PIT_CheckThing, and the blocked branch below
+		// reads a refusal as "it hit geometry" and aborts the pull. The barrel
+		// therefore dropped out of the air roughly an arm's length short, every
+		// single time, and the catch window never opened at all.
+		//
+		// The same flag and the same reasoning as RS_Held.SaveFlags, which is the
+		// point: an object handed from flight to a hand must not change what it
+		// is on the way. Cleared again one line before the handover in Catch, so
+		// what RS_Held records as the object's true state is the object's true
+		// state, and put back by Abort and Impact on every path that does not end
+		// in a hand.
+		a.bTHRUACTORS = true;
 		a.Vel = (0, 0, 0);
 		return true;
 	}
@@ -262,8 +307,9 @@ class RS_Pull : EventHandler
 		let rule = pol ? pol.Decide(a, pmo, p) : null;
 		if (!held || !rule) return false;
 
-		a.bSPECIAL   = flySavedSpecial[hand];
-		a.bNOGRAVITY = flySavedNoGrav[hand];
+		a.bSPECIAL    = flySavedSpecial[hand];
+		a.bNOGRAVITY  = flySavedNoGrav[hand];
+		a.bTHRUACTORS = flySavedThruActors[hand];
 
 		// Consumed on the way in -- a weapon that equipped, or a third copy that
 		// became ammo. There is nothing left to hold.
@@ -277,8 +323,10 @@ class RS_Pull : EventHandler
 		if (res == RS_Held.TAKE_REFUSED)
 		{
 			// Put flight's own flags back and keep flying. A refused catch must
-			// not leave the object half-owned by nobody.
-			a.bNOGRAVITY = true;
+			// not leave the object half-owned by nobody -- and that includes
+			// THRUACTORS, or the rest of the arc runs into you and aborts.
+			a.bNOGRAVITY  = true;
+			a.bTHRUACTORS = true;
 			return false;
 		}
 
@@ -297,8 +345,11 @@ class RS_Pull : EventHandler
 		if (hand != 0 && hand != 1) return null;
 		Actor a = flyActor[hand];
 		if (!a) return null;
+		// ScoreAt with the centre we already have. Score would derive it a second
+		// time, and deriving it walks the thinker list for the hand actor -- twice
+		// per hand per tic for one number that cannot have changed in between.
 		Vector3 c = RS_Reach.Centre(pmo, p, hand);
-		return (RS_Reach.Score(pmo, p, hand, RS_Reach.ClosestOn(a, c)) <= 1.0) ? a : null;
+		return (RS_Reach.ScoreAt(pmo, p, hand, RS_Reach.ClosestOn(a, c), c) <= 1.0) ? a : null;
 	}
 
 	// Put the object back the way it was found and forget it. Not a drop and not
@@ -308,8 +359,9 @@ class RS_Pull : EventHandler
 		Actor a = flyActor[hand];
 		if (a)
 		{
-			a.bSPECIAL   = flySavedSpecial[hand];
-			a.bNOGRAVITY = flySavedNoGrav[hand];
+			a.bSPECIAL    = flySavedSpecial[hand];
+			a.bNOGRAVITY  = flySavedNoGrav[hand];
+			a.bTHRUACTORS = flySavedThruActors[hand];
 			a.Vel = (0, 0, 0);
 		}
 		flyActor[hand] = null;
@@ -464,8 +516,12 @@ class RS_Pull : EventHandler
 	private void Impact(Actor a, PlayerPawn pmo, PlayerInfo p, int h)
 	{
 		flyActor[h] = null;
-		a.bSPECIAL   = flySavedSpecial[h];
-		a.bNOGRAVITY = flySavedNoGrav[h];
+		a.bSPECIAL    = flySavedSpecial[h];
+		a.bNOGRAVITY  = flySavedNoGrav[h];
+		// Put back BEFORE the resolve below. Impact is where a missed pull
+		// becomes a pickup or a hit, and both of those are ordinary Doom
+		// interactions that have to happen to an ordinary Doom actor.
+		a.bTHRUACTORS = flySavedThruActors[h];
 		a.Vel = (0, 0, 0);
 
 		bool dbg = RS_Reach.Flag("rs_hold_debug", p, true);
