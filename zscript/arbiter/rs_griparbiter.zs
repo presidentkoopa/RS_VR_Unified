@@ -38,8 +38,10 @@
 // ServiceIterator.Find(String) (service.zs:154), which takes a plain String and
 // whose Next() returns null when absent.
 //
-// So: load this pk3 and grip is arbitrated. Do not load it and every mod
-// behaves exactly as it does today. Neither side names the other.
+// So: whether this is loaded or not, every mod behaves exactly as it does
+// today, and neither side names the other. Loading it arbitrates NOTHING yet
+// -- see the section immediately below, which is not a caveat on this sentence
+// but a correction to what this sentence used to claim.
 //
 // ---------------------------------------------------------------------------
 // THIS IS VERSION 1 AND IT IS DELIBERATELY INERT.
