@@ -61,6 +61,7 @@ version "5.0.0"
 #include "zscript/reload/rr_point.zs"
 #include "zscript/reload/rr_feed.zs"
 #include "zscript/reload/rr_ammo.zs"
+#include "zscript/reload/rr_magazine.zs"
 #include "zscript/reload/rr_sequence.zs"
 
 // -- headshots: independent --------------------------------------------------

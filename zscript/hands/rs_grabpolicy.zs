@@ -19,6 +19,12 @@
 //
 // Rules are ordered and the FIRST MATCH WINS, so specific sits above general: a
 // rule for HealthBonus has to be able to overrule the rule for Inventory.
+//
+// The table answers TWO questions now, not one: whether a thing may be grabbed
+// at all, and -- when several things are in reach at once -- how hard it argues
+// for the hand. See the weight field below. That second answer is here for the
+// same reason as the first: it is per-class knowledge that cannot be derived
+// from an actor, and it gets tuned for years.
 
 class RS_GrabRule : Object
 {
@@ -29,6 +35,35 @@ class RS_GrabRule : Object
 	bool   twohand;    // can a second hand join, or does it take it away
 	Name   category;   // which menu switch governs this rule, 'None' for always
 	String why;        // named, so the log says WHICH rule decided
+	double weight;     // how hard this class competes for the hand. 1.0 = neutral
+
+	// WEIGHT IS A PREFERENCE, NOT A GATE, and the difference is the whole
+	// design.
+	//
+	// Everything the table allows used to compete on PURE DISTANCE TO PALM.
+	// After a firefight that means the room is full of things nearer your hand
+	// than the barrel you are reaching for -- corpses, spent medikits, shell
+	// boxes -- and the nearest one wins every time. The feature is grabbing
+	// barrels; the clutter was beating the feature in exactly the rooms where
+	// the feature is most wanted.
+	//
+	// The fix belongs HERE and not as a chain of class checks inside the code
+	// that picks a target, for the reason at the head of this file: this is the
+	// number that gets tuned for a year, and tuning it must stay one line in one
+	// place.
+	//
+	// The reach test still admits on RAW distance -- inside the volume or not --
+	// and only the RANKING among things already admitted is weighted. So NOTHING
+	// BECOMES UNGRABBABLE: reach at a medikit with nothing else in the volume
+	// and you get the medikit, whatever its weight says. Weight decides ties and
+	// near-ties and can never veto, which is what makes it safe to be blunt with
+	// the numbers.
+	//
+	// The scale is stated in RS_Reach.Best, which is the only thing that reads
+	// it: the score is a SQUARED normalised distance, so dividing it by the
+	// weight is the same ranking as dividing linear distance by sqrt(weight).
+	// Weight 4 means "counts as half as far away". Weight 0.25 means "counts as
+	// twice as far".
 
 	// SUBJECT AND POSE ARE SEPARATE, and that is not redundancy.
 	//
@@ -57,10 +92,12 @@ class RS_GrabPolicy : EventHandler
 	// every time, and "every time" here means per corpse per blockmap candidate
 	// per hand per tic, on a floor after a firefight, on Quest-class hardware.
 	//
-	// Nothing outlives the call. Every caller reads subject, pose, twohand and
-	// why straight out of it and is done; the one field that would make a shared
-	// instance wrong -- cls, which differs per corpse -- is read by nobody, and
-	// it is still filled in so that stays true rather than merely convenient.
+	// Nothing outlives the call. Every caller reads subject, pose, twohand,
+	// weight and why straight out of it and is done; the one field that would
+	// make a shared instance wrong -- cls, which differs per corpse -- is read
+	// by nobody, and it is still filled in so that stays true rather than merely
+	// convenient. Weight is safe to share for the opposite reason: every corpse
+	// carries the same one.
 	//
 	// Not built in Build() with the rest: a null pointer that comes back null
 	// from a savegame is refilled by the check at the point of use, which is the
@@ -97,8 +134,13 @@ class RS_GrabPolicy : EventHandler
 		return false;
 	}
 
+	// WEIGHT IS LAST AND DEFAULTED, so a line that does not care about priority
+	// is written exactly as it was before this went in -- neutral, pure
+	// distance, today's behaviour. A trailing default on a plain ZScript method
+	// is stock practice: A_SpriteOffset(double ox = 0.0, double oy = 0.0),
+	// wadsrc actions.zs:159.
 	private void Rule(Name clsName, bool allow, int subject, int pose,
-		bool twohand, Name category, String why)
+		bool twohand, Name category, String why, double weight = 1.0)
 	{
 		// A CLASS THAT DOES NOT EXIST IS NOT AN ERROR. This table names Doom
 		// classes and it loads under Heretic and Hexen too, where half of them
@@ -116,6 +158,11 @@ class RS_GrabPolicy : EventHandler
 		r.twohand  = twohand;
 		r.category = category;
 		r.why      = why;
+		// A zero or negative weight is a typo in a table line, not a request to
+		// divide by zero in the middle of a per-tic blockmap scan. Fall back to
+		// neutral, the same way SemiAxes handles a zeroed master scale
+		// (rs_grab.zs, `if (m <= 0) m = 1.0;`).
+		r.weight   = (weight > 0) ? weight : 1.0;
 		rules.Push(r);
 	}
 
@@ -165,38 +212,63 @@ class RS_GrabPolicy : EventHandler
 		// to pick up and put somewhere else. Two hands, because it is the size
 		// of a thing you would need two hands for -- and FOREND is the shape a
 		// hand makes round a fat cylinder.
+		//
+		// The heaviest weight in the table, because this is the thing the whole
+		// system is for. 4.0 -- it competes as though it were at half the
+		// distance -- so a shell box lying nearer your palm does not quietly win
+		// the barrel you were plainly reaching for.
 		Rule('ExplosiveBarrel', true, GRIPSUBJ_Magazine,
-			RS_HandWorldBase.POSE_HOLD_FOREND, true, 'Barrels', "a barrel");
+			RS_HandWorldBase.POSE_HOLD_FOREND, true, 'Barrels', "a barrel", 4.0);
 
 		// -- ALLOWED, general -------------------------------------------------
 
 		// Ammunition. Boxes, clips, shells, cells: objects, one hand each.
+		//
+		// Below neutral. Ammo is the most numerous thing on a cleared floor and
+		// the least interesting to have chosen for you; walking over it works
+		// and always has.
 		Rule('Ammo', true, GRIPSUBJ_Magazine,
-			RS_HandWorldBase.POSE_HOLD_MAG, false, 'None', "ammunition");
+			RS_HandWorldBase.POSE_HOLD_MAG, false, 'None', "ammunition", 0.6);
 
 		// Weapons on the floor. Held by the grip, one hand, and deliberately NOT
 		// two-handable here: a weapon in two hands is the stabilize and support
 		// system's business, not this one's. Defaults OFF -- picking a shotgun
 		// up by hand instead of walking over it is a whole interaction and it
 		// wants deciding on purpose.
+		//
+		// Weighted UP despite that, and because of it: the switch is off by
+		// default, so having it on is an explicit statement that you want to
+		// take guns off the ground by hand. Having done that, the gun should not
+		// lose to the clip lying next to it.
 		Rule('Weapon', true, GRIPSUBJ_Grip,
-			RS_HandWorldBase.POSE_POINT, false, 'Weapons', "a weapon on the floor");
+			RS_HandWorldBase.POSE_POINT, false, 'Weapons', "a weapon on the floor", 2.0);
 
 		// Health and armour, the real ones -- the bonuses were denied above.
+		// Below neutral for the same reason as ammo: numerous, and picked up
+		// perfectly well by walking.
 		Rule('Health', true, GRIPSUBJ_Magazine,
-			RS_HandWorldBase.POSE_HOLD_MAG, false, 'None', "a health item");
+			RS_HandWorldBase.POSE_HOLD_MAG, false, 'None', "a health item", 0.6);
 		Rule('Armor', true, GRIPSUBJ_Magazine,
-			RS_HandWorldBase.POSE_HOLD_MAG, false, 'None', "armour");
+			RS_HandWorldBase.POSE_HOLD_MAG, false, 'None', "armour", 0.6);
 
 		// Keys. Small, and a key held in your hand and offered to a lock is one
 		// of the few genuinely new things hands make possible.
+		//
+		// Above neutral. There are never many of them, reaching for one is
+		// always deliberate, and a keycard is small enough that something duller
+		// is easily nearer the palm than it is.
 		Rule('Key', true, GRIPSUBJ_Round,
-			RS_HandWorldBase.POSE_HOLD_ROUND, false, 'None', "a key");
+			RS_HandWorldBase.POSE_HOLD_ROUND, false, 'None', "a key", 2.0);
 
 		// The catch-all for anything else a mod leaves in the world. LAST, so
 		// every rule above overrules it.
+		//
+		// NEUTRAL, deliberately, and it is the only line where neutral is the
+		// considered answer rather than the absence of one: this rule fires when
+		// we do not know what the object is, and pure distance is the honest
+		// answer to that. A mod that wants better says so with its own line.
 		Rule('Inventory', true, GRIPSUBJ_Magazine,
-			RS_HandWorldBase.POSE_HOLD_MAG, false, 'None', "a pickup in the world");
+			RS_HandWorldBase.POSE_HOLD_MAG, false, 'None', "a pickup in the world", 1.0);
 	}
 
 	override void OnRegister()
@@ -316,7 +388,12 @@ class RS_GrabPolicy : EventHandler
 	{
 		if (cat == 'Barrels') return Flag("rs_grab_barrels", p, true);
 		if (cat == 'Weapons') return Flag("rs_grab_weapons", p, false);
-		if (cat == 'Corpses') return Flag("rs_grab_corpses", p, true);
+		// FALSE, and it must match CVARINFO. This fallback is what runs when the
+		// cvar cannot be found at all, and a fallback that disagrees with the
+		// shipped default is a system that behaves differently depending on
+		// whether a lookup succeeded -- the worst kind of intermittent. See
+		// CVARINFO for why corpses are off: the novelty was beating the feature.
+		if (cat == 'Corpses') return Flag("rs_grab_corpses", p, false);
 		return true;
 	}
 
@@ -462,6 +539,15 @@ class RS_GrabPolicy : EventHandler
 			corpseRule.twohand  = true;                   // it is a body
 			corpseRule.category = 'Corpses';
 			corpseRule.why      = "a corpse";
+			// THE LOWEST WEIGHT IN THE SYSTEM, and the reason the switch above
+			// it now defaults off. A corpse is a large collision cylinder lying
+			// exactly where the fighting was, which is exactly where you are
+			// standing when you reach for something -- so on pure distance a
+			// body wins over almost anything worth having. 0.25: it competes as
+			// though it were at twice the distance. Turn corpses on and you can
+			// still drag one about; you just have to reach for the body rather
+			// than for the barrel behind it.
+			corpseRule.weight   = 0.25;
 			return corpseRule;
 		}
 

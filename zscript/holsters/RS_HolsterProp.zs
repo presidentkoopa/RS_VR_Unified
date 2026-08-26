@@ -167,6 +167,41 @@ class RS_HolsterMarker : Actor
 		proximity01 = (t < 0.0) ? 0.0 : (t > 1.0) ? 1.0 : t;
 	}
 
+	// AMMO-DRIVEN GLOW. 0 = this marker wants to be invisible, 1 = it wants
+	// its full authored alpha. Added 2026-08-26 for the chest ammo pouch
+	// (AMMO_POUCH_IDX) and fed ONLY for that index -- see
+	// RS_Holsters.zs pouchGlow()/pouchAmmoCurve().
+	//
+	// ammoDriven is the opt-in, and it is what keeps the other eight
+	// holsters byte-for-byte unchanged. A marker that is never fed leaves it
+	// false and Tick() below never touches its alpha at all; a zero-default
+	// glow with no flag would instead read as "wants to be invisible" and
+	// silently blank every torso holster on the first tic. No field
+	// initializer to say otherwise -- there is no precedent for one anywhere
+	// in this codebase (same reasoning as lastShape above), so the flag is
+	// how the "not fed yet" state gets told apart from a real 0.0.
+	//
+	// NOT carried across the color-class respawn the way fadeAlpha is, and
+	// that is a judgement, not an oversight: the fade carry exists because a
+	// fresh marker would spend EIGHT tics fading back in, which is visible.
+	// This one costs at most a single tic at the old brightness before the
+	// manager feeds it again on the very next pass -- and the respawn only
+	// happens on a hot/cold transition, i.e. with a hand already at the
+	// pouch, which is the one moment the marker is meant to be lit anyway.
+	// Not worth another pair of carry fields on every marker in the rig.
+	private double ammoGlow01;
+	private bool   ammoDriven;
+
+	void SetAmmoGlow(double g)
+	{
+		ammoDriven = true;
+		// Same nested-ternary clamp SetProximity uses. No bare clamp() here
+		// for the same reason the manager's proximity feed gives for min():
+		// the two files agree on plain comparisons and there is no
+		// test-compile to settle it otherwise.
+		ammoGlow01 = (g < 0.0) ? 0.0 : (g > 1.0) ? 1.0 : g;
+	}
+
 	// Read/write the fade state directly, for RS_HolsterManager to carry
 	// across a color-class respawn (updateProps) when hot/cold toggles pick
 	// different subclasses. Without this, every hand-enter/leave would
@@ -234,6 +269,30 @@ class RS_HolsterMarker : Actor
 		// Multiplied by fadeAlpha, not replaced by it, so the pulse and the
 		// fade compose instead of one clobbering the other mid-transition.
 		double baseAlpha = isHot ? (0.70 + 0.25 * sin(360.0 * ((level.time % 70) / 70.0))) : 0.85;
+
+		// The ammo glow COMBINES with proximity rather than replacing it,
+		// and the combination is a MAX, not a product. A product would mean
+		// a full pouch stays invisible even with a hand inside it -- you
+		// could not find the thing, aim at it, or confirm it was reacting,
+		// which is exactly the "empty holster is invisible and the player
+		// has nothing to aim a hand at" complaint the marker system exists
+		// to answer in the first place (see this class's header comment).
+		//
+		// Reading it as "whichever reason to be visible is stronger right
+		// now wins": low ammo lights it from across the room, a hand
+		// reaching for it lights it regardless of how much ammo you have.
+		// proximity01 is already 1.0 at the anchor and 0 at the edge of the
+		// sense range, so a hand at the pouch always restores full alpha.
+		//
+		// This is also why the pulse is left alone: the hot pulse only ever
+		// runs when a hand IS in range, which is precisely when proximity01
+		// is near 1 and this multiplier is near 1 too.
+		if (ammoDriven)
+		{
+			double lit = (ammoGlow01 > proximity01) ? ammoGlow01 : proximity01;
+			baseAlpha *= lit;
+		}
+
 		Alpha = fadeAlpha * baseAlpha;
 	}
 }

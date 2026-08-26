@@ -87,12 +87,35 @@ $zsE  = $z.Entries | Where-Object { $_.FullName -eq 'zscript.txt' }
 $sr   = New-Object System.IO.StreamReader($zsE.Open())
 $zstxt = $sr.ReadToEnd(); $sr.Close()
 $inc = 0; $incMiss = 0
+$included = @{}
 foreach ($line in ($zstxt -split "`n")) {
     if ($line -match '^\s*#include\s+"([^"]+)"') {
         $inc++
+        $included[$matches[1].ToLower()] = $true
         if (-not $names.ContainsKey($matches[1].ToLower())) {
             Write-Warning "unresolved #include: $($matches[1])"; $incMiss++; $fail++
         }
+    }
+}
+
+# 3b. THE OTHER DIRECTION, and it is the one that got us. A .zs that is PACKED
+#     but never #included compiles to nothing, so every class in it is silently
+#     absent -- and the first symptom is "Unknown identifier" in whichever OTHER
+#     file used it, pointing at a line that is perfectly correct.
+#
+#     This is not hypothetical. stage.ps1 copies the working TREE, so the moment
+#     a source repo gains a file, that file lands here; but zscript.txt is
+#     hand-maintained, so it does not gain the include. rr_magazine.zs arrived
+#     exactly this way and took the whole merge down, while check 3 above
+#     reported "23 checked, 0 unresolved" and the build said VERIFIED OK.
+#
+#     Check 3 asks "does every include have a file". This asks "does every file
+#     have an include". Both are needed; neither implies the other.
+$orphan = 0
+foreach ($e in $z.Entries) {
+    if ($e.FullName -match '(?i)\.zs$' -and -not $included.ContainsKey($e.FullName.ToLower())) {
+        Write-Warning "packed but never #included (its classes will not exist): $($e.FullName)"
+        $orphan++; $fail++
     }
 }
 
@@ -139,7 +162,7 @@ Write-Host ""
 Write-Host "RS_VR_Unified.pk3  --  $n entries, $kb KB"
 Write-Host "  backslash entries : $bad"
 Write-Host "  stray files       : $($stray.Count)"
-Write-Host "  #includes         : $inc checked, $incMiss unresolved"
+Write-Host "  #includes         : $inc checked, $incMiss unresolved, $orphan orphaned"
 Write-Host "  event handlers    : $($handlers.Count) registered, $hMiss undefined"
 Write-Host "  classes           : $($declared.Count) declared, $($dupes.Count) duplicated"
 if ($fail -gt 0) { throw "package verification failed ($fail problems)" }

@@ -359,11 +359,36 @@ class RS_Reach play
     // says you could grab it, while a squeeze would in fact let go of it: the
     // one thing the drawn volume is not allowed to do is disagree with what the
     // squeeze will actually do.
+    //
+    // ADMISSION AND RANKING ARE TWO SEPARATE TESTS, and they used to be one.
+    //
+    // The old loop kept a single running best that started at 1.0 -- the
+    // ellipsoid surface -- so "is this in reach" and "is this the best thing in
+    // reach" were decided by the same compare against the same number. Which
+    // means the winner was PURE DISTANCE TO PALM with no idea what anything was:
+    // on a floor after a firefight, the corpse a few units nearer your hand beat
+    // the barrel you were plainly reaching for, every single time.
+    //
+    // Splitting them lets the table's weight steer the choice without ever being
+    // able to remove anything from the game:
+    //
+    //   admission  raw score against the surface, exactly as before. Unweighted,
+    //              so reaching at a medikit with nothing else in the volume
+    //              still gets you the medikit however lightly it is weighted.
+    //              NOTHING CAN BECOME UNGRABBABLE by tuning the table.
+    //   ranking    score divided by weight, among things already admitted.
+    //
+    // The score is a SQUARED normalised distance (see ScoreAt), so dividing it
+    // by the weight ranks identically to dividing linear distance by
+    // sqrt(weight): weight 4 competes as though at half the distance, weight
+    // 0.25 as though at twice. Blunt on purpose, and safe to be blunt because a
+    // weight can only ever lose to something else in the volume, never to
+    // nothing.
     static Actor Best(PlayerPawn pmo, PlayerInfo p, int hand)
     {
         Vector3 c = Centre(pmo, p, hand);
         Actor best = null;
-        double bestScore = 1.0;                            // 1.0 is the surface
+        double bestAdj = 0;
         // Both looked up ONCE. Best runs every tic for both hands from the
         // gauge as well as on a squeeze, and asking the handler registry per
         // candidate actor in the blockmap query is pure waste.
@@ -375,12 +400,54 @@ class RS_Reach play
         {
             Actor a = it.thing;
             if (held && held.HeldBy(hand) == a) continue;
-            if (!pol.Decide(a, pmo, p)) continue;
+            // The RULE, not just its yes/no. The weight is per-class data and
+            // this is the one place that reads it; asking Decide twice -- once
+            // for the answer and once for the number -- would be the same
+            // blockmap-rate walk down the table run twice.
+            //
+            // Read within this iteration and never kept: a corpse's rule is a
+            // single shared instance that Decide refills per call (see the field
+            // note in RS_GrabPolicy), so `r` is only valid until the next one.
+            let r = pol.Decide(a, pmo, p);
+            if (!r) continue;
             // ScoreAt, not Score, and `c` is why: Score would re-derive this
             // exact centre per candidate, and deriving it walks every thinker in
             // the level looking for the hand actor.
             double sc = ScoreAt(pmo, p, hand, ClosestOn(a, c), c);
-            if (sc <= bestScore) { bestScore = sc; best = a; }
+            if (sc > 1.0) continue;                        // 1.0 is the surface
+
+            double w = r.weight;
+            if (w <= 0) w = 1.0;        // a bad table line must not divide by 0
+
+            // AN OBJECT ALREADY IN THE OTHER FIST IS INTENT, NOT CLUTTER.
+            //
+            // Best skips only THIS hand's own object, four lines up. Leaving the
+            // OTHER hand's object as a candidate is deliberate and documented at
+            // :356-362 -- it is the entire mechanism by which a second hand
+            // joins a two-handed carry, and by which a thing is passed from hand
+            // to hand.
+            //
+            // Weighting broke that without meaning to. A corpse being dragged is
+            // 0.25 in the table and a barrel is 4.0, so a barrel anywhere in the
+            // joining hand's volume beat the corpse unless the corpse was four
+            // times nearer the palm -- and CVARINFO advertises exactly that
+            // route as working ("turn it on and drag a body about").
+            //
+            // Floor weight rather than exempt from weighting: a reach that lands
+            // on something already held is a reach AT it, so it should win ties
+            // against clutter, but a genuinely better candidate at point-blank
+            // range should still be allowed to. IsHeld is used this way already
+            // at rs_grabpolicy.zs:308 and rs_distance.zs:76.
+            if (held && held.IsHeld(a) && w < 4.0) w = 4.0;
+
+            double adj = sc / w;
+
+            // `!best ||` rather than a sentinel start value: there is no
+            // meaningful "worse than anything" number once the score is divided
+            // by an open-ended weight, and "have I picked one yet" is the thing
+            // actually being asked. `<=` keeps the old tie behaviour, where the
+            // later candidate wins.
+            if (!best || adj <= bestAdj) { bestAdj = adj; best = a; }
         }
         return best;
     }

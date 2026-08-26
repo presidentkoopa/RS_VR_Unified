@@ -63,83 +63,281 @@ class RR_Feed play
 	//
 	// The menu writes overrides into rr_len_* / rr_grip_* (see MENUDEF).
 
-	static const double ARCH_LEN[] =
-	{
-		 8,   // pistol
-		 9,   // revolver
-		14,   // smg
-		24,   // rifle
-		30,   // sniper
-		26,   // shotgun
-		18,   // ssg
-		26,   // chaingun
-		30,   // railgun
-		26,   // rocket
-		18,   // grenade launcher
-		24,   // plasma
-		30,   // bfg
-		18,   // unmaker
-		 0    // melee
-	};
 
 	// How far FORWARD of AttackPos the firing grip sits. The controller origin
 	// is at the wrist and the gun is held in the palm, so this absorbs that gap
 	// as well as the model's own forward bias -- one number instead of a palm
 	// bone lookup, which is the thing fifteen attempts died on.
-	static const double ARCH_GRIP[] =
-	{
-		2, 2, 3, 4, 4, 4, 3, 4, 4, 5, 4, 4, 6, 4, 0
-	};
 
 	// ---- archetype -> default feed ----------------------------------------
-	static const int ARCH_FEED[] =
-	{
-		RR_F_BOX,    // pistol
-		RR_F_BREAK,  // revolver -- swing the cylinder out, speedloader in
-		RR_F_BOX,    // smg
-		RR_F_BOX,    // rifle
-		RR_F_BOLT,   // sniper
-		RR_F_PUMP,   // shotgun
-		RR_F_BREAK,  // ssg
-		RR_F_BELT,   // chaingun
-		RR_F_BOLT,   // railgun
-		RR_F_POD,    // rocket
-		RR_F_POD,    // grenade launcher
-		RR_F_CELL,   // plasma
-		RR_F_CELL,   // bfg
-		RR_F_CELL,   // unmaker
-		RR_F_NONE    // melee
-	};
 
 	// Cvar suffixes, so a MENUDEF row reads "rr_len_pistol" and not "rr_len_0".
 	// A slider you cannot identify is a slider nobody tunes.
-	static const string ARCH_NAME[] =
-	{
-		"pistol", "revolver", "smg", "rifle", "sniper", "shotgun", "ssg",
-		"chaingun", "railgun", "rocket", "grenade", "plasma", "bfg",
-		"unmaker", "melee"
-	};
 
 	// The cvar is the source of truth; the const arrays above are the fallback
 	// for a load where CVARINFO is absent or a name got renamed. A missing cvar
 	// otherwise reads as a zero-length gun -- every point collapsing onto the
 	// grip -- and an absent cvar looks exactly like a zeroed one, with nothing
 	// in the log either way.
+
+	// SWITCHES, NOT `static const` ARRAYS -- and this is not a style choice.
+	//
+	// THE ARRAYS WERE FINE. THE READERS WERE `static`, AND THAT IS THE WHOLE
+	// FAULT. A `static const T NAME[] = {...}` at CLASS scope parses and
+	// compiles: CompileArrays turns it into a VARF_Static|VARF_ReadOnly PField
+	// in the class symbol table (zcc_compile.cpp:1288-1347). Reading it back is
+	// what fails. FxIdentifier::Resolve finds that PField in the owning class
+	// and can only reach a field through the `SelfClass != nullptr` branch
+	// (codegen.cpp:6744) -- which a static function skips by design, since a
+	// static function has no self: zcc_compile.cpp:2585 strips VARF_Method from
+	// every `static`, and symbols.cpp:95 nulls SelfClass whenever VARF_Method is
+	// absent. The name then falls through to globals, to cvars, and out the
+	// bottom as "Unknown identifier" (codegen.cpp:6850). Every accessor in this
+	// class is static, so all four tables were invisible to every one of them.
+	//
+	// This is why wadsrc puts all 32 of its static const arrays INSIDE a
+	// function body and not one at class scope (actor.zs:1397,
+	// statusbar.zs:848). A function-local one resolves through the
+	// EFX_StaticArray path at codegen.cpp:6659, where self never enters into it.
+	// Either shape works -- in-function arrays, or these accessors. What does
+	// not work is a class-scope table read by a static method.
+	//
+	// AND THE CASCADE IS WHY THIS READ AS TWELVE FAULTS INSTEAD OF FOUR. A
+	// failed initializer does not leave a mistyped local, it leaves NO local:
+	// `let c` and the explicitly-typed `double v` and `int f2` all came back
+	// "Unknown identifier" on their own lines. RS_Hands' rs_grab.zs:53 documents
+	// the same shape. Read the FIRST name on the list; the rest is noise.
+	//
+	// RS_Holsters reached the switch from the other direction -- its holster
+	// table is an indexed accessor "because ZScript dynamic arrays only accept
+	// integral and object types" (RS_Holsters.zs:18-21), and GetHolster
+	// (RS_Holsters.zs:111) is a static method switching over a constant index,
+	// string cases and all, exactly like these. A switch over a compile-time
+	// constant costs nothing and allocates nothing.
+	//
+	// One behaviour change and it is in the safe direction: ARCH_FEED[a2] was
+	// indexed by the unclamped `rr_force_arch` cvar, so typing a number above 14
+	// into the console was an out-of-bounds VM abort. ArchFeed returns RR_F_BOX.
+
+	// Map units. A Doom player is 56 tall. These are the ONLY per-gun numbers in
+	// the system and there are fourteen of them, not two per weapon -- tuning
+	// `pistol` sizes every pistol in every mod that will ever load.
+	static double ArchLen(int a)
+	{
+		switch (a)
+		{
+		case RR_A_PISTOL:   return  8;
+		case RR_A_REVOLVER: return  9;
+		case RR_A_SMG:      return 14;
+		case RR_A_RIFLE:    return 24;
+		case RR_A_SNIPER:   return 30;
+		case RR_A_SHOTGUN:  return 26;
+		case RR_A_SSG:      return 18;
+		case RR_A_CHAINGUN: return 26;
+		case RR_A_RAILGUN:  return 30;
+		case RR_A_ROCKET:   return 26;
+		case RR_A_GRENADE:  return 18;
+		case RR_A_PLASMA:   return 24;
+		case RR_A_BFG:      return 30;
+		case RR_A_UNMAKER:  return 18;
+		}
+		return 0;
+	}
+
+	// How far FORWARD of the hand the firing grip sits. Absorbs the wrist-to-palm
+	// gap as well as the model's own forward bias.
+	static double ArchGrip(int a)
+	{
+		switch (a)
+		{
+		case RR_A_PISTOL: case RR_A_REVOLVER: return 2;
+		case RR_A_SMG:    case RR_A_SSG:      return 3;
+		case RR_A_ROCKET:                     return 5;
+		case RR_A_BFG:                        return 6;
+		case RR_A_MELEE:                      return 0;
+		}
+		return 4;
+	}
+
+	static int ArchFeed(int a)
+	{
+		switch (a)
+		{
+		case RR_A_REVOLVER: case RR_A_SSG:      return RR_F_BREAK;
+		case RR_A_SNIPER:   case RR_A_RAILGUN:  return RR_F_BOLT;
+		case RR_A_SHOTGUN:                      return RR_F_PUMP;
+		case RR_A_CHAINGUN:                     return RR_F_BELT;
+		case RR_A_ROCKET:   case RR_A_GRENADE:  return RR_F_POD;
+		case RR_A_PLASMA:   case RR_A_BFG: case RR_A_UNMAKER: return RR_F_CELL;
+		case RR_A_MELEE:                        return RR_F_NONE;
+		}
+		return RR_F_BOX;
+	}
+
+	// Cvar suffix, so a MENUDEF row reads "rr_len_pistol" and not "rr_len_0".
+	// A slider you cannot identify is a slider nobody tunes.
+	static string ArchName(int a)
+	{
+		switch (a)
+		{
+		case RR_A_PISTOL:   return "pistol";
+		case RR_A_REVOLVER: return "revolver";
+		case RR_A_SMG:      return "smg";
+		case RR_A_RIFLE:    return "rifle";
+		case RR_A_SNIPER:   return "sniper";
+		case RR_A_SHOTGUN:  return "shotgun";
+		case RR_A_SSG:      return "ssg";
+		case RR_A_CHAINGUN: return "chaingun";
+		case RR_A_RAILGUN:  return "railgun";
+		case RR_A_ROCKET:   return "rocket";
+		case RR_A_GRENADE:  return "grenade";
+		case RR_A_PLASMA:   return "plasma";
+		case RR_A_BFG:      return "bfg";
+		case RR_A_UNMAKER:  return "unmaker";
+		}
+		return "melee";
+	}
+
 	static double LenOf(int arch, PlayerInfo p)
 	{
 		if (arch < 0 || arch >= RR_A_MAX) return 0;
-		let c = CVar.GetCVar("rr_len_" .. ARCH_NAME[arch], p);
-		if (!c) return ARCH_LEN[arch];
+		let c = CVar.GetCVar("rr_len_" .. ArchName(arch), p);
+		if (!c) return ArchLen(arch);
 		double v = c.GetFloat();
-		return (v > 0) ? v : ARCH_LEN[arch];
+		return (v > 0) ? v : ArchLen(arch);
 	}
 
 	static double GripOf(int arch, PlayerInfo p)
 	{
 		if (arch < 0 || arch >= RR_A_MAX) return 0;
-		let c = CVar.GetCVar("rr_grip_" .. ARCH_NAME[arch], p);
-		if (!c) return ARCH_GRIP[arch];
+		let c = CVar.GetCVar("rr_grip_" .. ArchName(arch), p);
+		if (!c) return ArchGrip(arch);
 		return c.GetFloat();
+	}
+
+	// ---- archetype -> magazine capacity ------------------------------------
+	//
+	// COUNTED IN SHOTS, NOT IN ROUNDS, and that one decision does most of the
+	// work. Rounds are shots * AmmoUse1, read off the DEFAULT for the same
+	// reason every other read in this file is (the engine rewrites a live
+	// weapon's AmmoUse1 for multi-attack weapons, weapons.zs:92). What falls out
+	// of it for free:
+	//
+	//   * A DOUBLE BARREL HOLDS TWO SHELLS. One shot, two shells a shot
+	//     (weaponssg.zs:31), so 1 * 2 = 2 and nobody had to write "2" anywhere.
+	//   * A BFG MAGAZINE IS ONE SHOT. Forty cells a shot (weaponbfg.zs:32), so
+	//     1 * 40 = 40 -- while a plasma rifle on the same ammo class gets 40 * 1
+	//     = 40 cells and forty shots out of it. Same number of cells, completely
+	//     different guns, no special case.
+	//   * NO WEAPON CAN EVER BE BUILT DEAD. A capacity counted in rounds can
+	//     land below AmmoUse1 -- a BFG with a twelve-round magazine can never
+	//     fire, ever, and would read as the mod having broken the gun. Counted
+	//     in shots the capacity is a multiple of the cost by construction, and
+	//     the floor of one shot below is what holds that even at the lowest
+	//     rr_mag_scale.
+	//
+	// AmmoGive1 is NOT read here, and it is the obvious thing to reach for. It
+	// is a POOL-size signal, not a magazine one -- see the cell branch of
+	// InferArch for what trusting it cost last time: Doom's plasma rifle and BFG
+	// both give 40 and the plasma rifle came out a BFG.
+	static int ArchShots(int a)
+	{
+		switch (a)
+		{
+		case RR_A_PISTOL:   return  12;
+		case RR_A_REVOLVER: return   6;
+		case RR_A_SMG:      return  30;
+		case RR_A_RIFLE:    return  30;
+		case RR_A_SNIPER:   return   5;
+		case RR_A_SHOTGUN:  return   8;   // a tube, filled one shell at a time
+		case RR_A_SSG:      return   1;   // one shot, both barrels
+		case RR_A_CHAINGUN: return 100;
+		case RR_A_RAILGUN:  return   5;
+		case RR_A_ROCKET:   return   1;
+		case RR_A_GRENADE:  return   6;
+		case RR_A_PLASMA:   return  40;
+		case RR_A_BFG:      return   1;
+		case RR_A_UNMAKER:  return  40;
+		}
+		return 0;   // melee, and anything unknown -- no magazine, nothing to fill
+	}
+
+	// HOW MUCH ONE SEATING PUTS IN, in shots. 0 means "fill it", which is what a
+	// magazine, a cell pack and a speedloader all are: one trip, one insertion,
+	// gun full.
+	//
+	// SHOTGUNS ARE THE EXCEPTION AND THE REASON THIS FUNCTION EXISTS. A shell
+	// goes into the port one at a time and each one is COMMITTED THE MOMENT IT
+	// IS SEATED, so eight shells is eight trips to the pouch and stopping after
+	// three leaves you with three and a partial tube. Interrupted is not wasted,
+	// only incomplete.
+	//
+	// SSG is here at 1 SHOT rather than "2", which for a double barrel is both
+	// shells at once because its shot costs two. Writing 2 would have been the
+	// same number for Doom's SSG and wrong for any break-action a mod ships that
+	// spends a different amount.
+	//
+	// A REVOLVER IS NOT ON THIS LIST although it feeds RR_F_BREAK alongside the
+	// SSG. Feed sets the sequence; this is about the gun, and a revolver is
+	// reloaded with a speedloader in one motion. That split is the whole reason
+	// archetype and feed are separate axes.
+	static int ArchSeat(int a)
+	{
+		switch (a)
+		{
+		case RR_A_SHOTGUN: return 1;
+		case RR_A_SSG:     return 1;
+		}
+		return 0;
+	}
+
+	// Rounds, not shots -- the two callers both want rounds and neither should
+	// have to remember to multiply.
+	//
+	// ONE GLOBAL SLIDER AND NOT FOURTEEN, unlike len/grip above, and that is a
+	// deliberate difference rather than an oversight. Length and grip are
+	// MEASUREMENTS of somebody's model and have to be tuned per family or they
+	// are wrong per family. Magazine size is a BALANCE number where the whole
+	// table moves together -- "reloading too often" is one complaint about all
+	// fourteen. Fourteen more cvars, fourteen more CVARINFO lines and fourteen
+	// more menu rows is a lot of surface to add on a change nobody has been able
+	// to compile yet, and per-archetype rows can be split out later without
+	// moving anything already written here.
+	static int CapOf(int arch, Weapon w, PlayerInfo p)
+	{
+		if (!w) return 0;
+		if (arch < 0 || arch >= RR_A_MAX) return 0;
+
+		int shots = ArchShots(arch);
+		if (shots <= 0) return 0;
+
+		let c = CVar.GetCVar("rr_mag_scale", p);
+		double s = c ? c.GetFloat() : 1.0;
+		if (s <= 0) s = 1.0;
+
+		int n = int(double(shots) * s);
+		if (n < 1) n = 1;          // never scale a gun down to no magazine at all
+
+		return n * ShotCost(w);
+	}
+
+	static int SeatOf(int arch, Weapon w)
+	{
+		if (!w) return 0;
+		if (arch < 0 || arch >= RR_A_MAX) return 0;
+
+		int n = ArchSeat(arch);
+		if (n <= 0) return 0;      // 0 stays 0 -- one seating fills the magazine
+		return n * ShotCost(w);
+	}
+
+	// What one shot costs, floored at one. A weapon with AmmoUse1 0 fires for
+	// free and would otherwise turn every capacity above into zero.
+	static int ShotCost(Weapon w)
+	{
+		if (!w) return 1;
+		int use = w.default.AmmoUse1;
+		return (use > 0) ? use : 1;
 	}
 
 	// ---- feed -> where the ammunition goes in ------------------------------
@@ -231,18 +429,18 @@ class RR_Feed play
 		if (ff >= 0 || fa >= 0)
 		{
 			int a2 = (fa >= 0) ? fa : InferArch(w);
-			int f2 = (ff >= 0) ? ff : ARCH_FEED[a2];
+			int f2 = (ff >= 0) ? ff : ArchFeed(a2);
 			return f2, a2;
 		}
 
 		// 1. Tagged -- our own table, one rr_compat_<mod>.zs per mod.
 		int tf, ta;
 		[tf, ta] = RR_Tags.Lookup(cn);
-		if (ta >= 0) return (tf >= 0) ? tf : ARCH_FEED[ta], ta;
+		if (ta >= 0) return (tf >= 0) ? tf : ArchFeed(ta), ta;
 
 		// 2. Inferred.
 		int arch = InferArch(w);
-		return ARCH_FEED[arch], arch;
+		return ArchFeed(arch), arch;
 	}
 
 	// SHOTGUN OR DOUBLE BARREL, and AmmoUse1 answers it without asking anyone to

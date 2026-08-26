@@ -1504,6 +1504,17 @@ class RS_HolsterManager : EventHandler
 				if (norm < 0.0) norm = 0.0;
 				if (norm > 1.0) norm = 1.0;
 				markers[pi].SetProximity(1.0 - norm);
+
+				// --- ammo-driven glow, THE POUCH AND NOTHING ELSE ---
+				// Gated on the index rather than fed to every marker with a
+				// neutral value, because "never fed" is a real state the
+				// marker relies on: SetAmmoGlow latches ammoDriven true, and
+				// a marker that never latches it keeps the exact alpha it
+				// had before this feature existed (RS_HolsterProp.zs Tick).
+				// So the eight torso holsters are not merely unchanged in
+				// effect -- they never enter the code path at all.
+				if (h == AMMO_POUCH_IDX)
+					markers[pi].SetAmmoGlow(pouchGlow(i, pawn));
 			}
 
 			// --- the stored weapon's model, when there is one ---
@@ -1828,6 +1839,221 @@ class RS_HolsterManager : EventHandler
 	{
 		let cv = CVar.GetCVar("rs_holster_pouch_enabled", players[consoleplayer]);
 		return (cv != null) ? cv.GetBool() : true;
+	}
+
+	// =====================================================================
+	// AMMO-DRIVEN POUCH GLOW (2026-08-26). THE POUCH ONLY -- AMMO_POUCH_IDX
+	// and nothing else. The eight torso holsters are untouched by every line
+	// below, on purpose: the curve is being proven in a headset before the
+	// idea is allowed to spread to anything else.
+	//
+	// What it is for, in order of how much it matters:
+	//   1. It TEACHES. Nothing else in this mod tells a new player the pouch
+	//      exists; a marker that lights itself the first time you run low is
+	//      the only thing that ever points at it unprompted.
+	//   2. It answers "am I about to run dry" without a HUD number, which is
+	//      the only way to answer it in VR without something pinned to your
+	//      face.
+	//   3. It stays out of the way when you are stocked, which is what earns
+	//      it the right to be loud when you are not.
+	// =====================================================================
+
+	private bool pouchGlowEnabled() const
+	{
+		let cv = CVar.GetCVar("rs_holster_pouch_glow", players[consoleplayer]);
+		return (cv != null) ? cv.GetBool() : true;
+	}
+
+	// Where the curve reaches zero. NOT one of the owner's numbers -- theirs
+	// start at 20% -- and it is called out separately for exactly that
+	// reason, so a re-tune knows which values are the spec and which one is
+	// the joinery.
+	//
+	// It exists because "invisible when you are full" cannot be read as
+	// "zero only at frac == 1.0". MaxAmount for a Doom clip is 200 (400 with
+	// a backpack) and almost nobody is ever AT it, so a ramp anchored at 1.0
+	// would leave the pouch faintly lit essentially forever -- and a cue
+	// that is always slightly on is a cue the player stops seeing. 0.25 sits
+	// just above the owner's first data point, which gives the glow a 5%
+	// window to fade in over instead of popping on at exactly 20%.
+	const POUCH_GLOW_KNEE = 0.25;
+
+	// THE CURVE. One function, deliberately, so it can be re-tuned without
+	// hunting for pieces of it.
+	//
+	// THE OWNER'S THREE DATA POINTS, which are the actual specification:
+	//
+	//     20% ammo left  ->  20% visible
+	//     10% ammo left  ->  50% visible
+	//      1% ammo left  ->  90% visible
+	//
+	// Non-linear ON PURPOSE. Quiet until it matters, then it shouts. Linear
+	// would put 10% ammo at 10% brightness -- the moment you most need to be
+	// told is the moment it would be whispering.
+	//
+	// Two more points close the ends, and neither is the owner's:
+	//     >= POUCH_GLOW_KNEE (25%) -> 0% visible   (see that const)
+	//      0% ammo                 -> 100% visible (dry is the loudest case
+	//                                 there is; stopping at the 1%/90% row
+	//                                 would make empty look the same as
+	//                                 nearly-empty)
+	//
+	// Straight lines between the five, which is what makes it re-tunable:
+	// move a row, and only the two segments touching it change.
+	//
+	// Takes a NEGATIVE frac to mean "nothing measurable in either hand" and
+	// returns 0 for it -- see handAmmoFraction() for why that is not the
+	// same as being empty.
+	//
+	// Not static, even though it is pure arithmetic on a double and reads
+	// like it wants to be: it references POUCH_GLOW_KNEE, and a STATIC
+	// method reading a class-level const has no precedent anywhere in the
+	// five mods or in wadsrc (searched for exactly that pattern). An
+	// ordinary private method reading one has precedent all over this class
+	// -- activeCount() falls back to HOLSTER_COUNT, holsterActive() compares
+	// against AMMO_POUCH_IDX -- so that is the form used.
+	private double pouchAmmoCurve(double frac)
+	{
+		if (frac < 0.0)              return 0.0;   // nothing to measure -> silent
+		if (frac >= POUCH_GLOW_KNEE) return 0.0;
+		if (frac <= 0.0)             return 1.0;   // bone dry
+
+		if (frac >= 0.20)
+		{
+			// KNEE..20%: 0.00 -> 0.20, the fade-in.
+			// Guarded because the span is the one denominator here that a
+			// re-tune can zero out -- drop POUCH_GLOW_KNEE to 0.20 and the
+			// fade-in window disappears, which should mean "pop straight to
+			// the 20% row", not a divide by zero.
+			double span = POUCH_GLOW_KNEE - 0.20;
+			if (span <= 0.0) return 0.20;
+			return 0.20 * ((POUCH_GLOW_KNEE - frac) / span);
+		}
+		if (frac >= 0.10)
+		{
+			// 20%..10%: 0.20 -> 0.50
+			return 0.20 + (0.30 * ((0.20 - frac) / 0.10));
+		}
+		if (frac >= 0.01)
+		{
+			// 10%..1%: 0.50 -> 0.90
+			return 0.50 + (0.40 * ((0.10 - frac) / 0.09));
+		}
+		// 1%..0%: 0.90 -> 1.00
+		return 0.90 + (0.10 * ((0.01 - frac) / 0.01));
+	}
+
+	// Fold one hand's weapon into the running worst-case fraction. Returns
+	// `worst` unchanged for every hand that has nothing measurable in it, so
+	// a skipped hand can never drag the answer down.
+	//
+	// EVERY ONE OF THESE GUARDS IS A REAL CASE, and getting any of them
+	// wrong makes the pouch scream permanently at a player who is in no
+	// trouble at all -- which is worse than the feature not existing, since
+	// a cue that is always on teaches the player to ignore it:
+	//
+	//   w == null           an empty hand. Normal: this mod's own pouch
+	//                       claim swaps a fist in while a hand is reaching
+	//                       into the pouch (see updatePouchClaim), so a null
+	//                       or fist hand is the EXPECTED state at the exact
+	//                       moment the glow is being looked at.
+	//   !w.AmmoType1        a fist. Precedent for testing this field's
+	//                       truthiness rather than == null: RS_Reload's
+	//                       rr_feed.zs:325, "if (!w.AmmoType1) return
+	//                       RR_A_MELEE;" -- the same question, asked the
+	//                       same way, one repo over.
+	//   w.Ammo1 == null     the ammo item was never attached. Read as
+	//                       UNKNOWN, not as zero: the weapon declares an
+	//                       ammo type but there is no instance to measure,
+	//                       and a guess of "empty" here would be a
+	//                       permanent full-brightness pouch. wadsrc does the
+	//                       same null-test before every read of this field
+	//                       (weapons.zs:1113, "count1 = (Ammo1 != null) ?
+	//                       Ammo1.Amount : 0").
+	//   MaxAmount <= 0      a weapon whose ammo has no ceiling to be a
+	//                       fraction OF -- and the divide-by-zero guard.
+	private double mergeAmmoFraction(double worst, Weapon w)
+	{
+		if (w == null)              return worst;
+		if (!w.AmmoType1)           return worst;
+		if (w.Ammo1 == null)        return worst;
+		if (w.Ammo1.MaxAmount <= 0) return worst;
+
+		// (int * 1.0) rather than a double(...) cast, which is this repo's
+		// established idiom for float promotion and carries its own
+		// explanation at RS_HolsterProp.zs' popMult.
+		double f = (w.Ammo1.Amount * 1.0) / w.Ammo1.MaxAmount;
+		if (f < 0.0) f = 0.0;
+		// Clamped at the top because MaxAmount is not a hard ceiling: a
+		// backpack RAISES it (ammo.zs BackpackMaxAmount), and there are
+		// windows where Amount is above the value being divided by.
+		if (f > 1.0) f = 1.0;
+
+		if (worst < 0.0) return f;      // first measurable hand
+		return (f < worst) ? f : worst; // plain compare, no min() -- matches
+		                                // the proximity feed's reasoning in
+		                                // updateProps
+	}
+
+	// The ammo fraction the glow is driven from, or a NEGATIVE number for
+	// "nothing measurable in either hand". Negative rather than 0.0 because
+	// those two mean opposite things: 0.0 is "you are dry, panic", and a
+	// bare fist or a chainsaw must read as "not low" instead.
+	//
+	// DUAL WIELD -- WHICH HAND WINS. This engine has ReadyWeapon AND
+	// OffhandWeapon and, in this mod's own framing, a gun in EVERY hand is
+	// the baseline (see the pouchClaimed* fields: there is no hand that
+	// starts out free). So "the gun in your hand" has two answers, and the
+	// choice here is the WORST of the two, not the main hand:
+	//
+	//   - The pouch is ONE cue for a shared resource. If either gun is about
+	//     to run dry, that is the fact worth knowing, and it is the fact the
+	//     player is about to act on by reaching into this exact pouch.
+	//   - Taking the main hand alone would go quiet while the off hand sat
+	//     empty, which is the failure the feature exists to prevent.
+	//   - Taking the BRIGHTER-of/fuller-of would be worse still: it would
+	//     stay dark specifically because one gun is fine, at the moment the
+	//     other one is not.
+	//   - In the ordinary case the two hands share an ammo pool anyway (two
+	//     pistols, one Clip), and worst == best == the single answer the
+	//     owner described.
+	//
+	// Both hands null (dead, or mid-switch with nothing raised) falls
+	// straight through to the negative return -- silent, which is right.
+	private double handAmmoFraction(PlayerPawn pawn)
+	{
+		if (pawn == null || pawn.player == null)
+			return -1.0;
+
+		double worst = -1.0;
+		worst = mergeAmmoFraction(worst, pawn.player.ReadyWeapon);
+		worst = mergeAmmoFraction(worst, pawn.player.OffhandWeapon);
+		return worst;
+	}
+
+	// The glow value handed to the pouch marker every tic. Split out of
+	// updateProps so the two overrides that force it fully lit sit next to
+	// each other instead of being scattered through the marker loop.
+	private double pouchGlow(int i, PlayerPawn pawn)
+	{
+		// OFF means "look exactly the way this marker looked before the
+		// feature existed", and that is FULL brightness, not zero. The
+		// marker latches ammoDriven true the first time it is fed
+		// (RS_HolsterProp.zs) and there is no un-feeding it mid-session, so
+		// handing it 1.0 is what actually makes toggling the cvar back off
+		// restore the old look instead of leaving the pouch frozen at
+		// whatever the last computed glow happened to be.
+		if (!pouchGlowEnabled())
+			return 1.0;
+
+		// Edit mode positions a holster by GRABBING ITS MARKER. A pouch
+		// faded to nothing is a pouch you cannot grab, so without this the
+		// only way to tune the pouch's position would be to shoot yourself
+		// down to 10% ammo first.
+		if (i >= 0 && i < MAXPLAYERS && editMode[i])
+			return 1.0;
+
+		return pouchAmmoCurve(handAmmoFraction(pawn));
 	}
 
 	private bool instantSwitchEnabled() const

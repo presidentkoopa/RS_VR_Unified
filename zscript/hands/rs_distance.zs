@@ -133,6 +133,25 @@ class RS_Pull : EventHandler
 	// THE THIRD ONE, and the barrel is why -- see the note in Start.
 	private bool flySavedThruActors[2];
 
+	// THE TUMBLE, saved under exactly the same discipline and for exactly the
+	// same reason. See SaveTumble.
+	//
+	// The ORIGINAL values, not "off": +ROLLSPRITE is something an actor may
+	// legitimately ship with -- Heretic's phoenix rod flame does
+	// (wadsrc/static/zscript/actors/heretic/weaponphoenix.zs:381) -- and
+	// clearing it on arrival would permanently un-roll something that was never
+	// ours to change. Same argument as hSavedThruActors in RS_Held.
+	private bool   flySavedRollSprite[2];
+	private bool   flySavedRollCentre[2];
+	private bool   flySavedInterpAng[2];
+	private double flySavedRoll[2];
+
+	// Turns for THIS flight, read once at launch and not per tic. Read per tic
+	// and nudging the slider mid-flight would JUMP the barrel to a new angle
+	// rather than change the rate it is turning at, because the angle is the
+	// turn count times the progress.
+	private double flyTurns[2];
+
 	// THE LOCK -- grabbed, and still across the room.
 	//
 	// This is the state the system was missing, and its absence is why a squeeze
@@ -213,6 +232,75 @@ class RS_Pull : EventHandler
 		return flyActor[hand];
 	}
 
+	// ---- the tumble ------------------------------------------------------
+	//
+	// END OVER END, AND WHY IT TAKES THREE RENDERFLAGS TO GET THERE.
+	//
+	// A vanilla barrel is a BILLBOARD SPRITE, and a billboard ignores actor roll
+	// completely unless +ROLLSPRITE says otherwise -- hw_sprites.cpp:565 gates
+	// the entire rotation on that one flag. Without it the pull is a smooth
+	// translation with the object dead flat the whole way over, which is exactly
+	// what it was.
+	//
+	// +ROLLCENTER is the half that makes it a TUMBLE rather than a swing.
+	// hw_sprites.cpp:518 rotates about the sprite's MIDDLE when it is set and
+	// about the sprite's offset origin -- a barrel's FEET -- when it is not.
+	// Rolling a barrel about its feet is a thing pivoting on the floor; rolling
+	// it about its middle is a thing turning over in the air, which is the only
+	// reading of "end over end".
+	//
+	// +INTERPOLATEANGLES is the third and it is not optional either. Roll is
+	// written once per tic, 35 times a second, and hw_sprites.cpp:1187 only
+	// reaches for InterpolatedAngles -- the deltaangle lerp at
+	// actor.h:1567-1573, which smooths Yaw, Pitch AND Roll and takes the short
+	// way round the 0/360 wrap -- when this flag is on. Off, the tumble steps in
+	// whole tics and strobes. On, the renderer smooths it for free, and nothing
+	// in here has to hand-roll a second interpolator that could only ever
+	// disagree with the engine's. Setting roll in WorldTick is safe for that
+	// lerp because p_tick.cpp:465 takes every actor's PrevAngles snapshot BEFORE
+	// the WorldTick hook runs, so the previous tic's roll is still intact when
+	// this writes the new one.
+	//
+	// SET ONLY WHEN THE TUMBLE IS ACTUALLY ON, and that is why flyTurns is
+	// consulted here rather than just in the tic loop. +ROLLSPRITE is NOT inert
+	// at roll zero: hw_sprites.cpp:1409 applies a pixelstretch rescale to any
+	// actor carrying it, and +ROLLCENTER drops the sprite's own offsets
+	// (hw_sprites.cpp:575). Turning the feature off in the menu has to mean the
+	// object is drawn exactly as it would have been.
+	private void SaveTumble(int hand, Actor a, PlayerInfo p)
+	{
+		flySavedRollSprite[hand] = a.bROLLSPRITE;
+		flySavedRollCentre[hand] = a.bROLLCENTER;
+		flySavedInterpAng[hand]  = a.bINTERPOLATEANGLES;
+		flySavedRoll[hand]       = a.Roll;
+		flyTurns[hand]           = RS_Reach.Num("rs_dgrab_tumble", p, 2.0);
+		ArmTumble(hand, a);
+	}
+
+	// Put the flags back on without re-saving. Only the refused-catch path needs
+	// this: the object stays in the air, so it has to keep flying as a tumbling
+	// thing, but its true values were captured at launch and re-saving here
+	// would record the state flight itself imposed -- the same mistake the
+	// flySaved* trio above exists to prevent.
+	private void ArmTumble(int hand, Actor a)
+	{
+		if (flyTurns[hand] == 0) return;
+		a.bROLLSPRITE        = true;
+		a.bROLLCENTER        = true;
+		a.bINTERPOLATEANGLES = true;
+	}
+
+	// Every exit from the flight goes through here -- caught, aborted, or hit
+	// you. Roll included: without it a caught barrel sits in your hand cocked at
+	// whatever angle it happened to arrive at, forever.
+	private void RestoreTumble(int hand, Actor a)
+	{
+		a.bROLLSPRITE        = flySavedRollSprite[hand];
+		a.bROLLCENTER        = flySavedRollCentre[hand];
+		a.bINTERPOLATEANGLES = flySavedInterpAng[hand];
+		a.Roll               = flySavedRoll[hand];
+	}
+
 	// Begin a pull. Returns false if it could not start, so the caller can say
 	// so rather than silently doing nothing.
 	bool Start(int hand, Actor a, PlayerPawn pmo, PlayerInfo p)
@@ -283,6 +371,12 @@ class RS_Pull : EventHandler
 		// state, and put back by Abort and Impact on every path that does not end
 		// in a hand.
 		a.bTHRUACTORS = true;
+
+		// AND THE TUMBLE. Last, because it is the only one of the four that is
+		// purely cosmetic -- if it were ever to be dropped, nothing above it
+		// changes. See SaveTumble for what the three flags each do.
+		SaveTumble(hand, a, p);
+
 		a.Vel = (0, 0, 0);
 		return true;
 	}
@@ -310,6 +404,10 @@ class RS_Pull : EventHandler
 		a.bSPECIAL    = flySavedSpecial[hand];
 		a.bNOGRAVITY  = flySavedNoGrav[hand];
 		a.bTHRUACTORS = flySavedThruActors[hand];
+		// Before the handover for the same reason as the three above, plus one
+		// of its own: RS_Held.SaveFlags does not know about the roll flags, so
+		// if flight left them set they would never come off at all.
+		RestoreTumble(hand, a);
 
 		// Consumed on the way in -- a weapon that equipped, or a third copy that
 		// became ammo. There is nothing left to hold.
@@ -327,6 +425,11 @@ class RS_Pull : EventHandler
 			// THRUACTORS, or the rest of the arc runs into you and aborts.
 			a.bNOGRAVITY  = true;
 			a.bTHRUACTORS = true;
+			// And it must not stop tumbling either -- it is still in the air.
+			// Roll itself needs no repair: the tic loop writes it outright from
+			// the saved value and the progress, so the next tic puts it back
+			// where the arc says it should be.
+			ArmTumble(hand, a);
 			return false;
 		}
 
@@ -362,6 +465,7 @@ class RS_Pull : EventHandler
 			a.bSPECIAL    = flySavedSpecial[hand];
 			a.bNOGRAVITY  = flySavedNoGrav[hand];
 			a.bTHRUACTORS = flySavedThruActors[hand];
+			RestoreTumble(hand, a);
 			a.Vel = (0, 0, 0);
 		}
 		flyActor[hand] = null;
@@ -486,6 +590,28 @@ class RS_Pull : EventHandler
 				continue;
 			}
 
+			// END OVER END, and it is one line because the three renderflags set in
+			// Start did all the work -- see SaveTumble.
+			//
+			// KEYED ON t, NOT ON e, and that is the opposite choice from the arc
+			// height directly above. e is the travel curve and it ACCELERATES:
+			// roll on e and the barrel hangs almost still at launch and whips
+			// round at the end, which reads as the pull spinning it up. A thing
+			// tumbling through the air turns at a CONSTANT rate, and a constant
+			// rate is linear in TIME, which is what t is.
+			//
+			// Turns across the whole flight rather than turns per second, for the
+			// same reason the arc is a fraction of the distance rather than a
+			// number of units: near and far pulls then look like the same gesture
+			// instead of the long one reading as a lazy roll and the short one as
+			// a blur.
+			//
+			// Nothing smooths this and nothing should. +INTERPOLATEANGLES hands
+			// it to the renderer's own deltaangle lerp; a second smoother here
+			// would only ever disagree with it.
+			if (flyTurns[h] != 0)
+				a.Roll = flySavedRoll[h] + flyTurns[h] * 360.0 * t;
+
 			if (t < 1.0) continue;
 
 			// THE ARC RAN OUT AND YOU DID NOT CLOSE YOUR HAND. It hits you.
@@ -522,6 +648,10 @@ class RS_Pull : EventHandler
 		// becomes a pickup or a hit, and both of those are ordinary Doom
 		// interactions that have to happen to an ordinary Doom actor.
 		a.bTHRUACTORS = flySavedThruActors[h];
+		// And the same for the tumble, before the resolve. A barrel that survives
+		// the hit is an ordinary barrel again from here on, standing the way up
+		// it was standing before you pulled it.
+		RestoreTumble(h, a);
 		a.Vel = (0, 0, 0);
 
 		bool dbg = RS_Reach.Flag("rs_hold_debug", p, true);

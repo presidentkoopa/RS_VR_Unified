@@ -76,7 +76,40 @@ class RR_AmmoCell  : RR_AmmoInHand {}   // cell -- an energy pack
 class RR_AmmoPod   : RR_AmmoInHand {}   // pod -- a rocket or grenade
 class RR_AmmoBelt  : RR_AmmoInHand {}   // belt -- a linked belt
 
-class RR_Ammo
+// PLAY SCOPE, DECLARED -- and it belongs on the CLASS, not on the methods.
+//
+// This class went in with no scope keyword and no parent. A ZScript class that
+// names neither is plain data (zcc_compile.cpp:1006-1020), and every function in
+// it inherits that (zcc_compile.cpp:2551-2552 sets VARF_Play from the class's own
+// ScopeFlags; `static` at :2585 only clears VARF_Method, so static methods take
+// the class scope too). Meanwhile the body of Show() is a near-verbatim copy of
+// RS_Hands' hand-layer routine (rs_hands.zs:320-349) -- FindInventory,
+// GiveInventory, FindPSprite, FindState, SetPsprite, scale. That copy compiles
+// over there only because its container is `class RS_HandsAlwaysOn : EventHandler`
+// and EventHandler descends from `StaticEventHandler : Object native play`. The
+// code was lifted; the scope it depended on was not.
+//
+// ON THE CLASS and not on each method, for three reasons:
+//   * it is what the borrowed-from code actually has -- one container, play, and
+//     everything inside it inherits;
+//   * every function here is play or wants to be, so five `play` qualifiers would
+//     say the same thing five times and leave the sixth to be forgotten;
+//   * the precedent that actually PROVES the construct is stock, not local:
+//     `class ScriptUtil play` (E:\UZDXREMA\wadsrc\static\zscript\scriptutil\
+//     scriptutil.zs:20) is parentless, play-qualified, and its STATIC
+//     GiveInventory calls the play method activator.GiveInventory -- exactly
+//     this shape, shipping in the engine's own stdlib.
+//
+//     rr_point.zs:35 and rr_feed.zs:55 carry the same marker, but they are a
+//     HOUSE-STYLE note and not evidence: they live in a pk3 that had never
+//     compiled, so citing them to prove what the parser accepts is circular.
+//     That distinction is worth keeping -- this package has already been bitten
+//     by confident comments describing behaviour nobody had verified.
+//
+// SAFE FOR THE CALLERS. All three call sites -- rr_sequence.zs:164, :182, :501 --
+// are methods of `class RR_Reload : EventHandler`, which is play. Narrowing to
+// play cannot bar them. Nothing ui-side touches this class.
+class RR_Ammo play
 {
 	// ABOVE RS_Hands' OFF-HAND LAYER. 1900000 is what puts a layer on the other
 	// controller (it is >= PSprite.OFFHANDWEAPON); RS_Hands parks its off hand
@@ -117,6 +150,13 @@ class RR_Ammo
 	static void Show(PlayerInfo p, int feed, int hand)
 	{
 		Name cls = ClassFor(feed);
+		// GUARD p ITSELF, not just p.mo. Hide() has done this since it was
+		// written (`if (!p) return;`, below) and Show() never did -- so the same
+		// null PlayerInfo was a clean return through one door and a VM abort
+		// through the other. rr_sequence.zs:501 checks pmo.player before
+		// calling Hide, but the two Show call sites (:164, :182) pass p through
+		// unchecked, so the asymmetry was reachable rather than theoretical.
+		if (!p) return;
 		if (cls == 'None') { Hide(p, hand); return; }
 
 		let pmo = p.mo;
@@ -144,6 +184,25 @@ class RR_Ammo
 			if (!psp) return;
 		}
 
+		// "EXPRESSION MUST BE A MODIFIABLE VALUE" WAS THIS SAME SCOPE FAULT WEARING
+		// A DIFFERENT ERROR MESSAGE, and it is worth writing down because the
+		// message actively misleads.
+		//
+		// PSprite.scale is `native Vector2 scale` -- not readonly, and stock
+		// ZScript writes it (wadsrc weapons.zs:326-327). What blocked it was the
+		// WRITE BARRIER: PSprite is `Object native play` (player.zs:3075), so the
+		// field is play, and a play field is READABLE from data scope but not
+		// WRITABLE. The compiler does not say so, because
+		// FxStructMember::RequestAddress (codegen.cpp:7647-7666) reports a barred
+		// write by returning true with *writable = false, and FxAssign::Resolve
+		// (codegen.cpp:2845) prints its own generic message for that instead of
+		// the scopeBarrier.writeerror it just computed. So the same missing `play`
+		// on the class produced three "can't call play function" and one
+		// "modifiable value" -- one cause, two vocabularies.
+		//
+		// With the class play-scoped this is legal, and RS_Hands proves it: the
+		// identical line, on the identical field, from an EventHandler method --
+		// rs_hands.zs:349, `psp.scale = (s, s);`.
 		double s = Scale(p);
 		psp.scale = (s, s);
 	}
@@ -163,6 +222,10 @@ class RR_Ammo
 	//
 	// So the size is a slider rather than a guess. One number for all five,
 	// because they came out of the same file at the same scale.
+	// LIVE. rr_ammo_scale is a user cvar with a MENUDEF slider (CVARINFO.txt:38,
+	// MENUDEF.txt:68), and Show() reads it every call. It multiplies the measured
+	// per-mesh MODELDEF scale rather than replacing it -- the measurement is the
+	// baseline, this is the nudge on top.
 	static double Scale(PlayerInfo p)
 	{
 		let c = CVar.GetCVar("rr_ammo_scale", p);

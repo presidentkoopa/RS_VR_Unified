@@ -1,34 +1,49 @@
 // ARM-ANCHORED HARDPOINTS: anchor placement + grip-claim arbitration.
-// Six mount points riding the player's own off arm -- three along the forearm,
-// three around the wrist -- each holding one item you can reach over and grab.
+// Six mount points, THREE AROUND EACH WRIST -- one bank per arm -- each
+// holding one item the OPPOSITE hand can reach over and grab.
+//
+// RE-LAID OUT 2026-08-26 on the owner's re-spec. This rig used to be six
+// mounts on ONE arm: three along the forearm (indices 0-2) plus three around
+// the wrist (3-5). It is now three around the MAIN wrist (0-2) and three
+// around the OFF wrist (3-5). The COUNT is deliberately unchanged at six --
+// dual-arm arrives without adding anything new to learn -- and the FOREARM
+// tier is deferred, not cancelled; see the DEFERRED block on the constants
+// below for everything that was learned about it, so it does not have to be
+// re-derived when it comes back.
+//
+// TWO VERBS, and keeping them apart is the whole point of the split (owner,
+// 2026-08-26): HOLSTERS DRAW, WRISTS FIRE. A torso holster (RS_Holsters,
+// separate repo) puts a gun in your hand. A wrist mount fires its weapon IN
+// PLACE, palm-out, without ever drawing it -- see updateGestureArm/
+// fireGesture. Do not add drawing behaviour to a wrist mount; the two systems
+// stop competing precisely because they are different verbs.
 //
 // This is the part that actually DRIVES the engine's HardpointClaimMain/
 // HardpointClaimOff -- without this handler running, those fields stay false,
 // the native grip redirect never fires, and grip keeps its normal meaning
 // everywhere (see DoomXR vk_openxrdevice.cpp).
 //
-// ORIGIN AND BASIS ARE BOTH THE OFF HAND'S OWN LIVE POSE (OffhandPos/Angle/
-// Pitch/Roll), unconditionally -- it does not matter which hand is holding a
-// weapon, or whether either hand is holding one at all. This is the off-arm's
-// own hardpoint rig, not something that tracks a weapon.
+// ORIGIN AND BASIS BOTH COME FROM THE LIVE POSE OF THE ARM THAT WEARS THE
+// MOUNT -- AttackPos/Angle/Pitch/Roll for the main bank (0-2), OffhandPos/
+// Angle/Pitch/Roll for the off bank (3-5) -- unconditionally. It does not
+// matter which hand is holding a weapon, or whether either hand is holding one
+// at all. This is each arm's own hardpoint rig, not something that tracks a
+// weapon.
 //
-// REJECTED APPROACH, kept so it does not get re-tried: an earlier version had
-// Forearm1-3 track the MAIN hand's aim (AttackAngle/Pitch/Roll) instead, on
-// the theory that the off hand's own orientation would be unreliably canted by
-// gripping a foregrip. In headset testing this changed nothing visible and the
-// premise was rejected outright -- "it doesn't matter what hand i have a gun
-// in, just put three hardpoints on the offhand behind the controller
-// position." If forearm placement looks wrong in headset after a full game
-// restart (not just a rebuilt zip -- a real code change once appeared to do
-// nothing, and it was a stale loaded pk3), look for a sign/axis bug in
-// handAnchorPos's forward vector before reaching for a different-hand theory.
+// A HAND CANNOT CLAIM ITS OWN GEAR, and that is not a tuning choice: an anchor
+// here is a FIXED offset from its own arm's live pose, so the distance from
+// that hand to it is a constant every tic no matter how the player moves. It
+// would be a permanent self-claim or permanent dead code, never a proximity
+// test. THE OTHER HAND reaches over and uses the rig -- the main hand works
+// the off bank and the off hand works the main bank; see the guard in
+// updateClaims.
 //
-// THE OFF HAND CANNOT CLAIM ITS OWN GEAR, and that is not a tuning choice: an
-// anchor here is a FIXED offset from that same hand's own live pose, so the
-// distance from the off hand to it is a constant every tic no matter how the
-// player moves. It would be a permanent self-claim or permanent dead code,
-// never a proximity test. The MAIN hand reaches over and uses the rig; see the
-// guard in updateClaims.
+// THAT CROSS-REACH IS WHY nearOff STOPPED BEING DEAD. Before the re-layout
+// every index was off-arm-anchored, so the off hand was excluded from all six
+// and nearOff was pinned to -1 forever -- a complete dead path kept only
+// because the fork's other half (RS_Holsters) still used it. With a main-arm
+// bank to reach for, the off hand has real work again and every nearOff/
+// grabbedOff branch below is live. Do not "tidy" any of them away.
 //
 // SPLIT OUT OF RS_Holsters, which owns the 8 torso holsters (hip, head,
 // pectoral) and shares this same manager design. The two load together: see
@@ -40,13 +55,14 @@
 // object types -- Array<SomeStruct> does not compile. Since the table is
 // compile-time constant anyway, a switch costs nothing and allocates nothing.
 //
-// KNOWN v1 GAP: the basis is built from the off hand's yaw+pitch only, not
+// KNOWN v1 GAP: the basis is built from the wearing arm's yaw+pitch only, not
 // roll. A stored item's own orientation tracks live roll correctly; the ANCHOR
-// POSITION does not swing around the arm when the off hand rolls. Left unfixed
+// POSITION does not swing around the arm when that arm rolls. Left unfixed
 // deliberately rather than guessed at blind -- this file's rotation math has
 // been hand-derived wrongly twice before. The fix, if it reads wrong in
 // headset: rotate handAnchorPos/worldToHand's right/up vectors around forward
-// by the same roll handBasisPose already returns.
+// by the same roll handBasisPose already returns. The re-layout did not touch
+// this either way; it is the same gap on both arms now instead of on one.
 //
 // Names like GetHolster/holsterActive/HOLSTER_COUNT are inherited from that
 // shared origin and left alone: they are private to this pk3, referenced
@@ -57,10 +73,30 @@ class RS_HardPointManager : EventHandler
 {
 	const HOLSTER_COUNT = 6;
 
-	// EVERY index here is off-hand-anchored -- anchored to the OFF hand's own
-	// live pose (OffhandPos/Angle/Pitch/Roll) rather than to the head or a
-	// torso, because that is what a thing strapped to your own arm actually
-	// has to track. 0,1,2 are Forearm1-3; 3,4,5 are WristBelow/Knuckle/Joint.
+	// EVERY index here is arm-anchored -- anchored to the live pose of the arm
+	// that WEARS it (AttackPos/Angle/Pitch/Roll for the main bank,
+	// OffhandPos/Angle/Pitch/Roll for the off bank) rather than to the head or
+	// a torso, because that is what a thing strapped to your own arm actually
+	// has to track.
+	//
+	//   0,1,2  MainWristBelow / MainWristKnuckle / MainWristJoint
+	//   3,4,5  OffWristBelow  / OffWristKnuckle  / OffWristJoint
+	//
+	// TWO BANKS OF THREE, CLONED, not one bank with a hand argument threaded
+	// through every function. That was a deliberate call and the reasoning
+	// still holds: the one-bank pattern is proven, every consumer already
+	// takes a plain index, and a parameterised version would touch far more
+	// call sites for equivalent risk in a codebase with no test-compile. The
+	// clone costs one extra predicate (isMainArmAnchor) and three extra table
+	// rows; the parameterised version costs a signature change in anchorPos,
+	// worldToHand, handBasisPose, updateGrabs, updateClaims, updateProps,
+	// doSwap, fireGesture and every dump.
+	//
+	// The OFF bank kept indices 3-5 on purpose. Everything already hardcoded
+	// to those numbers -- the three gesture-fire netevents and their KEYCONF
+	// aliases, which the owner assigned per-button on 2026-08-25 -- keeps
+	// exactly its current meaning, and the new bank takes the indices whose
+	// old meaning (the forearm row) is going away anyway.
 	//
 	// HAND_HOLSTER_START is 0 rather than being deleted, and isHandAnchored()
 	// still exists and still always returns true: this file was split out of
@@ -72,35 +108,84 @@ class RS_HardPointManager : EventHandler
 	// placement, orientation, edit-mode dragging and claim arbitration.
 	// The torso branches those calls guard are now unreachable, deliberately.
 	const HAND_HOLSTER_START = 0;
-	const FOREARM_HOLSTER_END = 3;   // exclusive -- 0,1,2 are Forearm1-3
 
-	// Both Forearm1-3 (8-10) and WristBelow/Knuckle/Joint (11-13) are
-	// anchored the same way: origin AND basis both come from the OFF hand's
-	// own live pose (OffhandPos/Angle/Pitch/Roll), unconditionally -- it
-	// does not matter which hand is holding a weapon, or whether either
-	// hand is holding one at all. (A prior version of this tried deriving
-	// the forearm row's direction from the MAIN hand's aim instead, on the
-	// theory that the off hand's own orientation would be unreliably canted
-	// by gripping a foregrip. The owner rejected that in headset testing --
-	// simpler is correct here: it's the off-arm's own hardpoint rig, full
-	// stop, not a weapon-aim-tracking accessory rail. Reverted.)
+	// Where the OFF arm's bank starts, and how wide a bank is. These two
+	// replace FOREARM_HOLSTER_END, which used to be 3 as well but meant
+	// something completely different ("index of the first WRIST mount on the
+	// one and only arm"). Deleted rather than repurposed: a constant whose
+	// value stays the same while its meaning inverts is exactly the sort of
+	// thing that survives a refactor and then quietly reads backwards.
+	const OFF_WRIST_START = 3;
+	const WRIST_PER_ARM   = 3;
 
-	// Forearm1-3 alone get an extra yaw correction on top of the raw off
-	// hand angle -- empirically 90 degrees, determined in headset (a red
-	// reference line drawn across a screenshot showing where the row should
-	// trail vs. where it actually rendered). The negative hsFwd on those
-	// three cases already means "the reverse of forward" -- pointing back
-	// along the arm, per the owner's own framing: "if I were holding that
-	// SMG backwards, pointing 180, it would be pointing along my forearm."
-	// So this constant is NOT that 180 -- it corrects a separate mismatch
-	// between raw OffhandAngle and where the held weapon visually appears to
-	// point, which this mod has no way to introspect (that gap is owned by
-	// the engine's own VR weapon rendering, not by RS_HardPointProp's model
-	// binding, which only corrects HOLSTERED props via
-	// level.GetModelOrientationHint -- there is no equivalent hint for a
-	// weapon actively held in a hand). If this overshoots or undershoots,
-	// the fix is changing this one number, not re-deriving the geometry.
-	const FOREARM_YAW_CORRECTION = 90.0;
+	// ------------------------------------------------------------------
+	// DEFERRED: THE FOREARM TIER.
+	//
+	// Indices 0-2 used to be Forearm1/2/3 -- three mounts spaced back along
+	// the off forearm toward the elbow. The owner deferred that tier on
+	// 2026-08-26 (it was going to hold UTILITY items -- flares, shields,
+	// usable inventory -- not weapons, and its content model is not built:
+	// see CLAUDE.md on contents[] being Array<Weapon> and a CustomInventory
+	// flare having no Ready state for the prop to bind a model from). Its
+	// menu rows are gone so they stop cluttering a menu they cannot serve.
+	//
+	// EVERYTHING LEARNED ABOUT IT IS PRESERVED HERE rather than deleted with
+	// the code, because all of it was paid for in headset time:
+	//
+	//  * DEFAULT TABLE, hand-tuned starting values, in the same units the
+	//    live table uses (hsFwd/hsSide/hsFrac in inches, hsRadius map units):
+	//        Forearm1  fwd  -4.0  side 0.0  frac 0.0  radius 2.0
+	//        Forearm2  fwd  -9.0  side 0.0  frac 0.0  radius 2.0
+	//        Forearm3  fwd -14.0  side 0.0  frac 0.0  radius 2.0
+	//    hsFwd negative means "back" along the arm's own aim vector; hsFrac
+	//    0.0 means "right on the aim line", since there is no IK to say where
+	//    the forearm's actual surface is. Radius 2.0 (a 4" catch volume) with
+	//    5-unit spacing leaves a 1" gap between neighbours.
+	//
+	//  * FOREARM_YAW_CORRECTION = 90.0 DEGREES, determined empirically in
+	//    headset (a red reference line drawn across a screenshot showing
+	//    where the row should trail vs. where it actually rendered). The
+	//    negative hsFwd already means "the reverse of forward" -- pointing
+	//    back along the arm, per the owner's own framing: "if I were holding
+	//    that SMG backwards, pointing 180, it would be pointing along my
+	//    forearm." So the 90 is NOT that 180 -- it corrects a separate
+	//    mismatch between the raw hand angle and where the held weapon
+	//    visually appears to point, which this mod has no way to introspect
+	//    (that gap is owned by the engine's own VR weapon rendering, not by
+	//    RS_HardPointProp's model binding, which only corrects HOLSTERED
+	//    props via level.GetModelOrientationHint -- there is no equivalent
+	//    hint for a weapon actively held in a hand). If it ever overshoots or
+	//    undershoots, the fix is changing that one number, not re-deriving
+	//    the geometry.
+	//
+	//  * FOREARM PITCH WAS FORCED TO 0, not read live, and that is a
+	//    confirmed headset finding, not a simplification. Tilting the hand's
+	//    gun down swung Forearm1-3 the WRONG way (up, mirrored) instead of
+	//    leaving them roughly put, because a pure 180-degree reversal of a
+	//    downward-tilted vector points backward-and-UP -- mathematically
+	//    correct for "the exact reverse of wherever the controller points
+	//    this instant", physically wrong for "my forearm", which does not
+	//    flip upside down just because I flex my wrist. With no elbow
+	//    tracking there is no real forearm direction to use, so the stand-in
+	//    was: forearm mounts follow the arm's YAW only and ignore wrist
+	//    PITCH entirely, for both position and the stored item's own
+	//    orientation. A forearm-mounted item should sit level and stay level.
+	//
+	//  * REJECTED APPROACH, kept so it does not get re-tried: an earlier
+	//    version had Forearm1-3 track the MAIN hand's aim instead of the arm
+	//    they sit on, on the theory that the wearing hand's own orientation
+	//    would be unreliably canted by gripping a foregrip. In headset
+	//    testing this changed nothing visible and the premise was rejected
+	//    outright -- "it doesn't matter what hand i have a gun in, just put
+	//    three hardpoints on the offhand behind the controller position."
+	//    It is the arm's own rig, full stop, not a weapon-aim-tracking
+	//    accessory rail.
+	//
+	// The WRIST mounts never wanted any of that: they sit at the hand, not
+	// back along a limb the tracker cannot see, so they read live pitch and
+	// take no yaw correction -- which is why handBasisPose is now a plain
+	// per-arm pose read with no special case in it at all.
+	// ------------------------------------------------------------------
 
 	// Doom's player scale puts a map unit at roughly one real inch (player
 	// radius 16 ~ a person's half shoulder width), so these read as inches.
@@ -137,11 +222,12 @@ class RS_HardPointManager : EventHandler
 	// angle. One shared set of angles cannot serve both, so pitch/yaw/roll ride
 	// in the table alongside position and are captured the same way -- from
 	// your hand, in edit mode.
-	// hsFwd/hsSide/hsFrac are raw map-unit (inch) offsets, always from
-	// OffhandPos and along the OFF HAND's own live forward/right/up axes --
-	// see handBasisPose/handAnchorPos -- and hsPitch/hsYaw/hsRoll are TRIMS
-	// added on top of that basis, not absolute angles (see updateProps'
-	// baseAngle/basePitch/baseRoll).
+	// hsFwd/hsSide/hsFrac are raw map-unit (inch) offsets, always from the
+	// WEARING hand's own position (AttackPos for the main bank, OffhandPos
+	// for the off bank) and along that same hand's own live forward/right/up
+	// axes -- see handBasisPose/handAnchorPos/handOrigin -- and
+	// hsPitch/hsYaw/hsRoll are TRIMS added on top of that basis, not absolute
+	// angles (see updateProps' baseAngle/basePitch/baseRoll).
 	//
 	// Doom's player scale puts a map unit at roughly one real inch (player
 	// radius 16 ~ a person's half shoulder width), so these read as inches.
@@ -153,41 +239,55 @@ class RS_HardPointManager : EventHandler
 		// every hardpoint off the arm it is supposed to be strapped to.
 		hsPitch = 0.0; hsYaw = 0.0; hsRoll = 0.0;
 
+		// TWO BANKS OF THREE WRIST MOUNTS, one per arm. Identical shape,
+		// identical numbers except for the hsSide mirror -- see below.
+		//
+		// hsFrac here is local "up" inches (negative = below), not a
+		// fraction of anything. (The fraction-of-eye-height reading only
+		// ever applied to the torso branch of anchorPos, which is
+		// unreachable in this fork.)
+		//
+		// Owner's own reference pose: hand outstretched holding a pistol,
+		// pistol at the top of the hand. Below/Knuckle/Joint aren't
+		// symmetric -- Knuckle sits slightly FORWARD (toward the fingers,
+		// +hsFwd) and Joint sits slightly BACK (toward the actual wrist
+		// joint, -hsFwd), not just mirrored left/right at the same depth.
+		//
+		// Left/right sign is HAND-LOCAL (edSide rides the rx/ry basis in
+		// handAnchorPos, built from that hand's own yaw), so which physical
+		// side each name lands on depends on that hand's own resting yaw.
+		// The main bank's hsSide is the NEGATIVE of the off bank's for
+		// exactly that reason: with both hands pointing the same way, the
+		// two banks' local right vectors point the same way in world space
+		// too, so identical hsSide would stack both banks on the same side
+		// of the body rather than mirroring them onto each arm's outer
+		// side the way a real pair of wrist rigs sits. That mirror is a
+		// STARTING GUESS about which side is "outer", not a measurement --
+		// same status as every other number in this table. Edit mode is
+		// what settles it; these just need to be in the right
+		// neighbourhood so there is something to grab and drag.
 		switch (idx)
 		{
-			// Forearm hardpoints: sitting behind the off-hand along its OWN
-			// aim vector and spaced toward the elbow -- hsFwd negative means
-			// "back", hsFrac 0.0 means "right on the aim line" since there
-			// is no IK yet to say where the forearm's actual surface is.
-			// Radius 2.0 (4" catch volume) and 5-unit spacing leave a 1" gap
-			// between neighbours. Placeholders meant to be dragged in edit
-			// mode, same as every other entry in this table.
+			// ---- MAIN arm (anchored to AttackPos and the main hand's own
+			// live angle/pitch/roll; reached by the OFF hand) ----
 			case 0:
-				hsName = "Forearm1"; hsFwd =  -4.0; hsSide = 0.0; hsFrac =  0.0; hsRadius = 2.0; break;
+				hsName = "MainWristBelow";   hsFwd =  0.0; hsSide =  0.0; hsFrac = -3.0; hsRadius = 2.0; break;
 			case 1:
-				hsName = "Forearm2"; hsFwd =  -9.0; hsSide = 0.0; hsFrac =  0.0; hsRadius = 2.0; break;
+				hsName = "MainWristKnuckle"; hsFwd =  2.5; hsSide =  3.0; hsFrac =  0.0; hsRadius = 2.0; break;
 			case 2:
-				hsName = "Forearm3"; hsFwd = -14.0; hsSide = 0.0; hsFrac =  0.0; hsRadius = 2.0; break;
+				hsName = "MainWristJoint";   hsFwd = -2.5; hsSide = -3.0; hsFrac =  0.0; hsRadius = 2.0; break;
 
-			// Wrist hardpoints: hsFrac here is local "up" inches (negative =
-			// below), not a fraction of anything.
-			//
-			// Owner's own reference pose: hand outstretched holding a
-			// pistol, pistol at the top of the hand. Below/Knuckle/Wrist
-			// aren't symmetric -- Knuckle sits slightly FORWARD (toward the
-			// fingers, +hsFwd) and Wrist sits slightly BACK (toward the
-			// actual wrist joint, -hsFwd), not just mirrored left/right at
-			// the same depth. Left/right sign is hand-local (edSide's rx/ry
-			// basis in handAnchorPos), so which physical side each name
-			// lands on depends on the off-hand's own resting yaw -- exactly
-			// what edit-mode dragging is for; these starting numbers just
-			// need to be roughly in the right neighbourhood, not exact.
+			// ---- OFF arm (anchored to OffhandPos and the off hand's own
+			// live angle/pitch/roll; reached by the MAIN hand). These three
+			// keep the exact numbers the single-arm rig shipped with, and
+			// the exact indices the gesture-fire netevents are hardcoded to
+			// -- nothing about the off bank changed in the re-layout. ----
 			case 3:
-				hsName = "WristBelow";   hsFwd =  0.0; hsSide =  0.0; hsFrac = -3.0; hsRadius = 2.0; break;
+				hsName = "OffWristBelow";    hsFwd =  0.0; hsSide =  0.0; hsFrac = -3.0; hsRadius = 2.0; break;
 			case 4:
-				hsName = "WristKnuckle"; hsFwd =  2.5; hsSide = -3.0; hsFrac =  0.0; hsRadius = 2.0; break;
+				hsName = "OffWristKnuckle";  hsFwd =  2.5; hsSide = -3.0; hsFrac =  0.0; hsRadius = 2.0; break;
 			default: // case 5, and a defensive fallback for idx >= HOLSTER_COUNT
-				hsName = "WristJoint";   hsFwd = -2.5; hsSide =  3.0; hsFrac =  0.0; hsRadius = 2.0; break;
+				hsName = "OffWristJoint";    hsFwd = -2.5; hsSide =  3.0; hsFrac =  0.0; hsRadius = 2.0; break;
 		}
 	}
 
@@ -308,13 +408,21 @@ class RS_HardPointManager : EventHandler
 	double bodyYaw[MAXPLAYERS];
 	bool   bodyYawInit[MAXPLAYERS];
 
-	// GESTURE-CAST arming: off hand only, palm-out/open-palm pose (the wrist
-	// rolled away from a normal weapon grip). Roll only -- see
-	// updateGestureArm for why yaw/pitch/position play no part. Latched per
-	// player so the rising edge can get its own confirm haptic, the same
-	// "short tap on ENTER only" pattern updateClaims already uses for
-	// holster-range haptics.
-	bool gestureArmed[MAXPLAYERS];
+	// GESTURE-CAST arming: palm-out/open-palm pose (the wrist rolled away
+	// from a normal weapon grip). Roll only -- see updateGestureArm for why
+	// yaw/pitch/position play no part. Latched per player so the rising edge
+	// can get its own confirm haptic, the same "short tap on ENTER only"
+	// pattern updateClaims already uses for holster-range haptics.
+	//
+	// ONE PER ARM as of the 2026-08-26 re-layout, where there used to be one
+	// (off hand only). Each arm arms ITSELF for ITS OWN three mounts: the arm
+	// that wears a mount is the arm that rolls palm-out to fire it. That is
+	// the reverse of the STORE/DRAW direction, where a hand can only ever
+	// reach the OTHER arm's bank -- and it is not a contradiction, it is the
+	// two verbs: HOLSTERS DRAW, WRISTS FIRE. You reach across to load a
+	// mount; you roll your own wrist to shoot it.
+	bool gestureArmed[MAXPLAYERS];      // OFF arm, mounts 3-5
+	bool gestureArmedMain[MAXPLAYERS];  // MAIN arm, mounts 0-2
 
 	// What the off hand held BEFORE the first gesture-fire of this armed
 	// stretch, null when nothing is currently gesture-seated. Captured once
@@ -346,6 +454,21 @@ class RS_HardPointManager : EventHandler
 	// arbiter work in progress. This is a different fact about a different
 	// weapon, so it gets its own storage rather than overloading that one.
 	Array<Weapon> gestureSeatedOff;
+
+	// The MAIN arm's pair of the two arrays above, added with the 2026-08-26
+	// re-layout so the main bank (mounts 0-2) can fire in place the same way
+	// the off bank always could. Every word of the two comments above applies
+	// unchanged, with ReadyWeapon substituted for OffhandWeapon and PSP_WEAPON
+	// for PSP_OFFHANDWEAPON.
+	//
+	// SEPARATE ARRAYS, NOT one array indexed by hand: a hand index would have
+	// to be threaded through ensureGesture*, releasePlayer, updateProps'
+	// reconciliation exemption and both edges of updateGestureArm, and the
+	// flattened-array trap this file already documents twice (an int
+	// zero-default reading as a VALID index) is exactly what that invites.
+	// Two named arrays cannot be indexed with the wrong hand by accident.
+	Array<Weapon> gesturePreviousMain;
+	Array<Weapon> gestureSeatedMain;
 
 	// Last seen controller-turn total, to difference against. Tracked rather
 	// than read absolutely because only the CHANGE should move the body.
@@ -422,16 +545,17 @@ class RS_HardPointManager : EventHandler
 
 			updateBodyYaw(i, pawn);
 			updateGrabs(i, pawn);
-			// BEFORE updateClaims -- updateClaims' own HardpointClaimOff write
-			// ORs gestureArmed[i] in (see there), so the arm check has to have
-			// already run this tic.
+			// BEFORE updateClaims -- updateClaims' own HardpointClaim* writes
+			// OR the armed flags in (see there), so both arm checks have to
+			// have already run this tic.
 			updateGestureArm(i, pawn);
+			updateGestureArmMain(i, pawn);
 			updateClaims(i, pawn); // also repositions props, via updateProps
 
-			// Throttled live dump of raw off-hand pitch plus the resulting
-			// wrist anchor positions, gated on the arm rig actually being
-			// on. Built for one question: does WristBelow/Knuckle/Joint
-			// move the way a real tilt of the hand should, or backward?
+			// Throttled live dump of each arm's raw pitch plus the resulting
+			// wrist anchor positions, gated on that arm's bank actually being
+			// on. Built for one question: do the three mounts move the way a
+			// real tilt of the hand should, or backward?
 			// (GlowInTheDark's GITD_Flashlight hit OffhandPitch being
 			// stored negated at the engine level and documented it against
 			// real engine source -- see that file's ResolveMount.) Printed
@@ -445,19 +569,47 @@ class RS_HardPointManager : EventHandler
 			// a second -- into the player's console. The diagnostic is kept
 			// because the hypothesis it tests is still open; it just no longer
 			// runs by default.
-			int wristMode = armMode();
+			//
+			// PER ARM as of the re-layout, and printing BOTH is the point: the
+			// open question (handBasisPose reading pitch RAW while every other
+			// consumer in the family negates it) now has two independent
+			// witnesses on two controllers, so a sign error shows up as both
+			// banks being wrong the same way rather than as one ambiguous set
+			// of numbers.
 			let cWristDump = CVar.GetCVar("rs_hardpoint_wristdump", pawn.player);
 			bool wantDump = (cWristDump != null) && cWristDump.GetBool();
-			if (wantDump && (wristMode == 2 || wristMode == 3) && (level.time % 10) == 0)
+			if (wantDump && (level.time % 10) == 0)
 			{
-				Vector3 belowP = anchorPos(i, pawn, 3);
-				Vector3 knuckP = anchorPos(i, pawn, 4);
-				Vector3 jointP = anchorPos(i, pawn, 5);
-				Console.Printf("RS_HARDPOINT wrist-pitch: raw OffhandPitch=%.1f OffhandRoll=%.1f OffhandAngle=%.1f  gesture-armed=%d (target=%.1f tol=%.1f)",
-					pawn.OffhandPitch, pawn.OffhandRoll, pawn.OffhandAngle,
-					gestureArmed[i], gestureRollTarget(), gestureRollTolerance());
-				Console.Printf("  Below  %.1f,%.1f,%.1f   Knuckle %.1f,%.1f,%.1f   Joint %.1f,%.1f,%.1f",
-					belowP.X, belowP.Y, belowP.Z, knuckP.X, knuckP.Y, knuckP.Z, jointP.X, jointP.Y, jointP.Z);
+				if (wristTierLive(true))
+				{
+					Vector3 mBelowP = anchorPos(i, pawn, 0);
+					Vector3 mKnuckP = anchorPos(i, pawn, 1);
+					Vector3 mJointP = anchorPos(i, pawn, 2);
+					// MainHandRoll, not AttackRoll -- and this line matters more
+					// than the others, because it is the INSTRUMENT the roll
+					// target is tuned with. AttackRoll is zeroed by the playsim
+					// every tic (p_user.cpp:134, inside P_PlayerThink, which
+					// p_tick.cpp:501 runs three lines before WorldTick at :504),
+					// so this dump printed a constant 0.0 no matter how the
+					// wrist was actually turned -- and any target value dialled
+					// in from it would have been wrong.
+					Console.Printf("RS_HARDPOINT wrist-pitch MAIN: raw AttackPitch=%.1f MainHandRoll=%.1f AttackAngle=%.1f  gesture-armed=%d (target=%.1f tol=%.1f)",
+						pawn.AttackPitch, pawn.MainHandRoll, pawn.AttackAngle,
+						gestureArmedMain[i], gestureRollTarget(), gestureRollTolerance());
+					Console.Printf("  Below  %.1f,%.1f,%.1f   Knuckle %.1f,%.1f,%.1f   Joint %.1f,%.1f,%.1f",
+						mBelowP.X, mBelowP.Y, mBelowP.Z, mKnuckP.X, mKnuckP.Y, mKnuckP.Z, mJointP.X, mJointP.Y, mJointP.Z);
+				}
+				if (wristTierLive(false))
+				{
+					Vector3 belowP = anchorPos(i, pawn, 3);
+					Vector3 knuckP = anchorPos(i, pawn, 4);
+					Vector3 jointP = anchorPos(i, pawn, 5);
+					Console.Printf("RS_HARDPOINT wrist-pitch OFF: raw OffhandPitch=%.1f OffhandRoll=%.1f OffhandAngle=%.1f  gesture-armed=%d (target=%.1f tol=%.1f)",
+						pawn.OffhandPitch, pawn.OffhandRoll, pawn.OffhandAngle,
+						gestureArmed[i], gestureRollTarget(), gestureRollTolerance());
+					Console.Printf("  Below  %.1f,%.1f,%.1f   Knuckle %.1f,%.1f,%.1f   Joint %.1f,%.1f,%.1f",
+						belowP.X, belowP.Y, belowP.Z, knuckP.X, knuckP.Y, knuckP.Z, jointP.X, jointP.Y, jointP.Z);
+				}
 			}
 
 			// Consume a dump queued by last tic's store, now that this tic's
@@ -620,28 +772,38 @@ class RS_HardPointManager : EventHandler
 		nearOff[i] = -1;
 		pendingDump[i] = -1;
 
-		// Gesture-cast state dies with the pawn too. gestureArmed staying
-		// true across a death would keep HardpointClaimOff pinned on the new
-		// pawn from its first tic, and gestureSeatedOff would still name a
-		// weapon on a body that no longer exists.
+		// Gesture-cast state dies with the pawn too. An armed flag staying
+		// true across a death would keep that hand's HardpointClaim pinned on
+		// the new pawn from its first tic, and the seated pointer would still
+		// name a weapon on a body that no longer exists.
+		//
+		// BOTH ARMS, as of the 2026-08-26 re-layout. Missing the main-arm
+		// pair here would be the same bug this block exists to prevent, just
+		// on the other controller -- and it would be invisible, because the
+		// off-arm half would still look correct.
 		gestureArmed[i] = false;
+		gestureArmedMain[i] = false;
 		ensureGestureSeatedOff();
+		ensureGestureSeatedMain();
 		gestureSeatedOff[i] = null;
+		gestureSeatedMain[i] = null;
 
-		// And the backup pointer. Clearing gestureArmed above means the
-		// falling edge in updateGestureArm can never fire for this player
-		// again (it needs a wasArmed -> !nowArmed transition, and wasArmed is
-		// now false), so anything left here would sit stale forever: the next
-		// armed stretch's FIRST fire would see a non-null capture, skip
-		// capturing the live weapon, and then "restore" a dead body's weapon
-		// into a living player's hand on disarm.
+		// And the backup pointers. Clearing the armed flags above means the
+		// falling edge in updateGestureArm/updateGestureArmMain can never fire
+		// for this player again (it needs a wasArmed -> !nowArmed transition,
+		// and wasArmed is now false), so anything left here would sit stale
+		// forever: the next armed stretch's FIRST fire would see a non-null
+		// capture, skip capturing the live weapon, and then "restore" a dead
+		// body's weapon into a living player's hand on disarm.
 		//
 		// SCOPE NOTE for whoever is building the grip arbiter: this nulls a
 		// stale pointer at the one moment the pawn it belongs to stops
 		// existing. It does not change how the capture/restore protocol
 		// works. Leave updateGestureArm's own restore branch alone.
 		ensureGesturePreviousOff();
+		ensureGesturePreviousMain();
 		gesturePreviousOff[i] = null;
+		gesturePreviousMain[i] = null;
 	}
 
 	// Destroy this player's six props and six markers. updateProps respawns
@@ -746,7 +908,7 @@ class RS_HardPointManager : EventHandler
 		edInit = true;
 		// -1 for every player, not just the console one: int arrays default
 		// to 0, which is holster 0, so an unseeded entry reads as "this hand
-		// is dragging Forearm1" the first time updateGrabs looks at it.
+		// is dragging MainWristBelow" the first time updateGrabs looks at it.
 		for (int p = 0; p < MAXPLAYERS; ++p)
 		{
 			grabbedMain[p] = -1;
@@ -821,9 +983,9 @@ class RS_HardPointManager : EventHandler
 	{
 		ensureEdit();
 
-		// Forearm/wrist hardpoints track the off-hand's own live pose, not
-		// the torso -- a completely different basis, so it is its own
-		// function rather than a few more branches folded into this one.
+		// Wrist hardpoints track the WEARING hand's own live pose, not the
+		// torso -- a completely different basis, so it is its own function
+		// rather than a few more branches folded into this one.
 		if (isHandAnchored(idx))
 			return handAnchorPos(pawn, idx);
 
@@ -864,54 +1026,93 @@ class RS_HardPointManager : EventHandler
 		oFrac = (eyeHeight[i] != 0) ? ((world.Z - floorZ) / eyeHeight[i]) : 0.0;
 	}
 
-	// The live angle/pitch/roll every hand-anchored holster's basis is built
-	// from: the OFF hand's own live pose, unconditionally, for both position
-	// (handAnchorPos/worldToHand, which only read ang/pit -- position
+	// Is this anchor mounted on the MAIN arm? The one predicate the whole
+	// two-bank clone turns on -- position, basis, origin, which hand may
+	// claim it, which hand arms it, and which half of the saved layout it
+	// belongs to all branch here and nowhere else.
+	//
+	// const, because holsterActive() is const and calls it. A const method may
+	// only call const methods (the 4.15.1 SafeConst rule this repo's methods
+	// were checked against); the holsterActive -> armMode pair this replaced
+	// was already that exact shape, and holsterActive -> wristCount still is.
+	private bool isMainArmAnchor(int idx) const
+	{
+		return idx < OFF_WRIST_START;
+	}
+
+	// Which hand's live position an anchor hangs off. Split out rather than
+	// written inline at its two call sites (handAnchorPos and its inverse
+	// worldToHand) so "which arm wears this mount" is answered in exactly one
+	// place -- the same reasoning handBasisPose was factored out under, one
+	// function below, and the same reason the two of them must always agree:
+	// a mount positioned from one hand and oriented from the other would look
+	// almost right and drift wrong.
+	//
+	// This exact function already exists in the family and is the shape
+	// copied here: RS_Reload/zscript/rr_point.zs:71-73,
+	//     static Vector3 HandPos(PlayerPawn pmo, int hand)
+	//     { return (hand == 0) ? pmo.AttackPos : pmo.OffhandPos; }
+	// -- so both halves of what looked risky (a method returning a Vector3
+	// FIELD rather than a constructed vector, and a ternary whose arms are
+	// Vector3) are proven, not assumed. Kept as its own predicate-driven
+	// version rather than a call into RS_Reload because this pk3 does not
+	// depend on that one and must not start.
+	private Vector3 handOrigin(PlayerPawn pawn, int idx)
+	{
+		return isMainArmAnchor(idx) ? pawn.AttackPos : pawn.OffhandPos;
+	}
+
+	// The live angle/pitch/roll an arm-anchored holster's basis is built
+	// from: the WEARING hand's own live pose, unconditionally, for both
+	// position (handAnchorPos/worldToHand, which only read ang/pit -- position
 	// deliberately ignores roll, see handAnchorPos' own comment) and
 	// orientation (updateProps/dumpOneHolsterProp/updateGrabs, which need
 	// all three). A single small function rather than reading
-	// pawn.OffhandAngle/Pitch/Roll inline at every call site so there is one
-	// place to touch if that ever needs to change again. Forearm indices
-	// (8-10) get FOREARM_YAW_CORRECTION added on top -- see its own comment
-	// up top for why -- and their pitch is forced to 0 rather than read
-	// live. Confirmed in headset: tilting the off hand's gun down swung
-	// Forearm1-3 the WRONG way (up, mirrored) instead of leaving them
-	// roughly put, because a pure 180-degree reversal of a downward-tilted
-	// vector points backward-and-UP -- mathematically correct for "the
-	// exact reverse of wherever the controller points this instant," but
-	// physically wrong for "my forearm," which does not flip upside down
-	// just because I flex my wrist. There is no elbow tracking to give a
-	// real forearm direction (see the IK note elsewhere in this file), so
-	// this is the stand-in: forearm hardpoints follow the arm's YAW only
-	// (turning left/right) and ignore wrist PITCH (tilting up/down)
-	// entirely, for both position (this function feeds handAnchorPos) and
-	// the stored item's own orientation (this function also feeds
-	// updateProps' basePitch) -- a forearm-mounted item should sit level
-	// and stay level, not wobble with every wrist flex.
+	// pawn.AttackAngle/Pitch/Roll or pawn.OffhandAngle/Pitch/Roll inline at
+	// every call site so there is one place to touch if that ever needs to
+	// change again.
+	//
+	// NO SPECIAL CASE LEFT IN IT as of the 2026-08-26 re-layout. This used to
+	// branch on `idx < FOREARM_HOLSTER_END` to add FOREARM_YAW_CORRECTION and
+	// force pitch to 0 for the forearm row. Every mount is a WRIST mount now,
+	// and a wrist mount sits at the hand rather than back along a limb the
+	// tracker cannot see -- so it reads live pitch and takes no yaw
+	// correction, which is what the wrist trio always did. The forearm
+	// findings (the 90 degrees, and WHY pitch had to be forced flat) are
+	// preserved verbatim in the DEFERRED block on the constants at the top of
+	// this class; they were expensive to get and this tier is coming back.
 	private void handBasisPose(PlayerPawn pawn, int idx, out double ang, out double pit, out double rol)
 	{
-		ang = pawn.OffhandAngle;
-		if (idx < FOREARM_HOLSTER_END)
+		if (isMainArmAnchor(idx))
 		{
-			ang = normalizeDeg(ang + FOREARM_YAW_CORRECTION);
-			pit = 0.0;
+			ang = pawn.AttackAngle;
+			pit = pawn.AttackPitch;
+			// MainHandRoll, not AttackRoll. The playsim zeroes AttackRoll every
+			// tic (p_user.cpp:134) and does it in P_PlayerThink, which
+			// p_tick.cpp:501 runs three lines before WorldTick at :504 -- so
+			// script always reads a hard zero from it. The engine documents
+			// exactly this at actor.zs:378-383: it "left script believing the
+			// wrist was level while the held model rolled with it."
+			rol = pawn.MainHandRoll;
 		}
 		else
 		{
+			ang = pawn.OffhandAngle;
 			pit = pawn.OffhandPitch;
+			rol = pawn.OffhandRoll;
 		}
-		rol = pawn.OffhandRoll;
 	}
 
-	// World-space position of one HAND-anchored holster (idx 8-13): the
-	// off-hand-relative counterpart to anchorPos, above. ORIGIN is always
-	// OffhandPos -- these are physically on your off-arm -- but the
-	// forward/right/up BASIS also comes from handBasisPose -- the off hand's
-	// own live angle/pitch. Same local-basis shape already proven in
-	// updateProps' trim-slider math (localFwdX/localUpX/rightX there) and in
-	// RS_Main's RS_GrenadeThrower.Throw (positive pitch looks DOWN in this
-	// engine, hence the negated Z on forward/up), just re-sourced here.
-	// Deliberately yaw+pitch only, NOT roll -- rolling the off hand will
+	// World-space position of one ARM-anchored holster (every index in this
+	// fork): the hand-relative counterpart to anchorPos, above. ORIGIN is the
+	// wearing hand's own position via handOrigin -- these are physically ON
+	// that arm -- and the forward/right/up BASIS comes from handBasisPose,
+	// the same hand's own live angle/pitch. Same local-basis shape already
+	// proven in updateProps' trim-slider math (localFwdX/localUpX/rightX
+	// there) and in RS_Main's RS_GrenadeThrower.Throw (positive pitch looks
+	// DOWN in this engine, hence the negated Z on forward/up), just
+	// re-sourced here.
+	// Deliberately yaw+pitch only, NOT roll -- rolling the wearing hand will
 	// visibly rotate whatever is mounted here (updateProps carries roll into
 	// orientation) but will not swing the ANCHOR POSITION around the arm.
 	// Known v1 gap, not an oversight: this is the #1 thing to look at in
@@ -940,19 +1141,26 @@ class RS_HardPointManager : EventHandler
 		double upy = sin(ang) * sin(pit);
 		double upz = cos(pit);
 
+		// ORIGIN is the WEARING hand's own position -- AttackPos for the main
+		// bank, OffhandPos for the off bank. Read through handOrigin rather
+		// than pawn.OffhandPos directly, which is what this line used to say
+		// back when every mount rode one arm.
+		Vector3 org = handOrigin(pawn, idx);
+
 		return (
-			pawn.OffhandPos.X + (edFwd[idx] * fx) + (edSide[idx] * rx) + (edFrac[idx] * upx),
-			pawn.OffhandPos.Y + (edFwd[idx] * fy) + (edSide[idx] * ry) + (edFrac[idx] * upy),
-			pawn.OffhandPos.Z + (edFwd[idx] * fz)                      + (edFrac[idx] * upz)
+			org.X + (edFwd[idx] * fx) + (edSide[idx] * rx) + (edFrac[idx] * upx),
+			org.Y + (edFwd[idx] * fy) + (edSide[idx] * ry) + (edFrac[idx] * upy),
+			org.Z + (edFwd[idx] * fz)                      + (edFrac[idx] * upz)
 		);
 	}
 
 	// The inverse of handAnchorPos, mirroring how worldToBody inverts
-	// anchorPos -- what makes edit mode able to drag a forearm/wrist sphere
-	// and read hand-local offsets straight back out. oUp takes the third
-	// out-param name (not oFrac) because it is a raw inch offset here, never
-	// a fraction of anything. Takes idx now (not just to index ed* arrays --
-	// handBasisPose needs it too, for the forearm yaw correction).
+	// anchorPos -- what makes edit mode able to drag a wrist sphere and read
+	// hand-local offsets straight back out. oUp takes the third out-param
+	// name (not oFrac) because it is a raw inch offset here, never a fraction
+	// of anything. Takes idx not just to index the ed* arrays --
+	// handBasisPose and handOrigin both need it too, to know which arm this
+	// mount rides.
 	private void worldToHand(PlayerPawn pawn, int idx, Vector3 world, out double oFwd, out double oSide, out double oUp)
 	{
 		double ang, pit, unusedRoll;
@@ -965,9 +1173,14 @@ class RS_HardPointManager : EventHandler
 		// prop-trim basis.
 		double upx = cos(ang) * sin(pit), upy = sin(ang) * sin(pit), upz = cos(pit);
 
-		double dx = world.X - pawn.OffhandPos.X;
-		double dy = world.Y - pawn.OffhandPos.Y;
-		double dz = world.Z - pawn.OffhandPos.Z;
+		// Same per-arm origin handAnchorPos uses. Mixing the two would put a
+		// dragged sphere somewhere other than the hand that dropped it -- the
+		// hand-anchored twin of the bodyYaw-vs-HmdYaw warning on worldToBody.
+		Vector3 org = handOrigin(pawn, idx);
+
+		double dx = world.X - org.X;
+		double dy = world.Y - org.Y;
+		double dz = world.Z - org.Z;
 
 		oFwd  = (dx * fx)  + (dy * fy)  + (dz * fz);
 		oSide = (dx * rx)  + (dy * ry);
@@ -982,7 +1195,7 @@ class RS_HardPointManager : EventHandler
 		// see their declaration. WorldTick calls this BEFORE updateClaims,
 		// which is the only other thing that reaches ensureEdit (via
 		// anchorPos), so without this the very first calibrated tic dragged
-		// Forearm1 to wherever the main hand was.
+		// holster 0 to wherever the main hand was.
 		ensureEdit();
 
 		int gm = grabbedMain[i];
@@ -991,30 +1204,45 @@ class RS_HardPointManager : EventHandler
 		// Position AND orientation follow the hand, so a holster is placed the
 		// way you would actually place one: hold your hand where the gun goes,
 		// angled how the gun should sit, and let go.
+		// BOTH BRANCHES ARE LIVE as of the 2026-08-26 re-layout, where the
+		// off-hand one was structurally unreachable. updateClaims lets a hand
+		// claim only the OTHER arm's bank, so:
+		//   grabbedMain can only ever hold an OFF-arm index  (3-5)
+		//   grabbedOff  can only ever hold a  MAIN-arm index (0-2)
+		// -- which is precisely what makes each drag meaningful: the dragging
+		// hand and the basis hand are always different hands, so the captured
+		// orientation delta says something.
 		if (gm >= 0)
 		{
 			if (isHandAnchored(gm))
 			{
 				// Position always updates -- this is what lets you drag a
-				// forearm/wrist sphere to a new spot on your arm either way.
+				// wrist sphere to a new spot on the other arm either way.
 				worldToHand(pawn, gm, pawn.AttackPos, edFwd[gm], edSide[gm], edFrac[gm]);
 
-				// Orientation trim is captured RELATIVE to the off hand's
+				// Orientation trim is captured RELATIVE to the WEARING hand's
 				// own basis pose (handBasisPose), same idea as edYaw being
 				// relative to bodyYaw for the torso case below -- the
-				// dragging hand (main) and the basis hand (off) are always
-				// different hands here, so this delta is always meaningful.
+				// dragging hand (main) and the basis hand (off, since gm is
+				// always an off-arm index here) are always different hands,
+				// so this delta is always meaningful.
 				double bAng, bPit, bRol;
 				handBasisPose(pawn, gm, bAng, bPit, bRol);
 				edYaw[gm]   = normalizeDeg(pawn.AttackAngle - bAng);
 				edPitch[gm] = normalizeDeg(pawn.AttackPitch - bPit);
-				edRoll[gm]  = normalizeDeg(pawn.AttackRoll  - bRol);
+				// MainHandRoll -- AttackRoll is a playsim-zeroed constant in
+				// script (see handBasisPose), so this captured -bRol rather
+				// than the wrist angle the mount was actually dragged to.
+				edRoll[gm]  = normalizeDeg(pawn.MainHandRoll - bRol);
 			}
 			else
 			{
 				worldToBody(i, pawn, pawn.AttackPos, edFwd[gm], edSide[gm], edFrac[gm]);
 				edPitch[gm] = pawn.AttackPitch;
-				edRoll[gm]  = pawn.AttackRoll;
+				// MainHandRoll, same reason as the branch above -- AttackRoll
+				// reads zero in script, so this stored 0 for every main-arm
+				// mount no matter how the wrist was held while placing it.
+				edRoll[gm]  = pawn.MainHandRoll;
 				// yaw relative to the BODY, not the world, or the stored angle
 				// would only be right while facing the direction you set it in
 				edYaw[gm] = normalizeDeg(pawn.AttackAngle - bodyYaw[i]);
@@ -1022,17 +1250,36 @@ class RS_HardPointManager : EventHandler
 		}
 		if (go >= 0)
 		{
-			// No hand-anchored branch here: updateClaims never lets the off
-			// hand claim its own hand-anchored gear (see there for why), so
-			// grabbedOff can never actually BE a hand-anchored index -- this
-			// is structurally unreachable, not just untested. worldToHand's
-			// own origin is pawn.OffhandPos, so "drag a wrist sphere with
-			// the same hand it's mounted on" has no meaningful answer to
-			// give it anyway.
-			worldToBody(i, pawn, pawn.OffhandPos, edFwd[go], edSide[go], edFrac[go]);
-			edPitch[go] = pawn.OffhandPitch;
-			edRoll[go]  = pawn.OffhandRoll;
-			edYaw[go] = normalizeDeg(pawn.OffhandAngle - bodyYaw[i]);
+			// THIS BRANCH USED TO NOT EXIST, and the comment that stood here
+			// explained why: with every mount on the off arm, updateClaims
+			// never let the off hand claim any of them, so grabbedOff could
+			// never be a hand-anchored index and worldToHand -- whose origin
+			// was hardcoded to pawn.OffhandPos -- had no meaningful answer
+			// for "drag a wrist sphere with the hand it is mounted on".
+			//
+			// Both halves of that changed together. There is now a MAIN-arm
+			// bank for the off hand to reach, and handOrigin makes
+			// worldToHand's origin the wearing hand's, so dragging a main-arm
+			// sphere with the off hand is exactly the mirror of the branch
+			// above and is measured against the main hand's own pose. Adding
+			// it back was the point of the re-layout, not an incidental tidy.
+			if (isHandAnchored(go))
+			{
+				worldToHand(pawn, go, pawn.OffhandPos, edFwd[go], edSide[go], edFrac[go]);
+
+				double bAngO, bPitO, bRolO;
+				handBasisPose(pawn, go, bAngO, bPitO, bRolO);
+				edYaw[go]   = normalizeDeg(pawn.OffhandAngle - bAngO);
+				edPitch[go] = normalizeDeg(pawn.OffhandPitch - bPitO);
+				edRoll[go]  = normalizeDeg(pawn.OffhandRoll  - bRolO);
+			}
+			else
+			{
+				worldToBody(i, pawn, pawn.OffhandPos, edFwd[go], edSide[go], edFrac[go]);
+				edPitch[go] = pawn.OffhandPitch;
+				edRoll[go]  = pawn.OffhandRoll;
+				edYaw[go] = normalizeDeg(pawn.OffhandAngle - bodyYaw[i]);
+			}
 		}
 	}
 
@@ -1057,9 +1304,36 @@ class RS_HardPointManager : EventHandler
 		}
 	}
 
+	// ONE KEY PREFIX PER MOUNT, ARM-TAGGED: "m0_".."m2_" for the main arm's
+	// three wrist mounts, "o0_".."o2_" for the off arm's.
+	//
+	// EACH ARM NEEDS ITS OWN SAVED LAYOUT -- the mounts sit relative to
+	// whichever controller wears them, so one shared table cannot serve both.
+	// The two banks are already separate indices in the ed* arrays, so what
+	// this function really buys is that the KEY can never be ambiguous about
+	// which arm it describes, and specifically that the OLD flat schema
+	// ("h0_".."h5_", one bank of six where 0-2 meant the FOREARM row) cannot
+	// be silently mistaken for the new one.
+	//
+	// That last part is not hypothetical. loadProfile falls back PER FIELD to
+	// GetHolster's defaults rather than erroring, so a stale "h0_fwd = -4.0"
+	// from the forearm era would have loaded straight into MainWristBelow and
+	// parked it four inches back up the arm, with nothing printed to say why.
+	// Under the new prefixes an old profile simply has no matching keys, every
+	// field falls back to the new default, and the layout reads as "never
+	// tuned" -- which is the honest description of it.
+	//
+	// String.Format("%d") with a plain int, matching the schema this replaced.
+	private string profileKey(int h)
+	{
+		if (isMainArmAnchor(h))
+			return String.Format("m%d_", h);
+		return String.Format("o%d_", h - OFF_WRIST_START);
+	}
+
 	// Real persistence, replacing "read the console dump, hand-paste it into
 	// GetHolster's switch, recompile". A profile is a flat JSON document keyed
-	// "h<index>_<field>" -- level.JSONProfile* (E:\UZDXREMA
+	// "<arm><slot>_<field>" (see profileKey) -- level.JSONProfile* (E:\UZDXREMA
 	// src\scripting\vmthunks.cpp) is the ONLY file I/O ZScript has; it does not
 	// parse JSON on the script side, so a flat key/double shape is what the
 	// native protocol supports, not a design choice made here.
@@ -1073,7 +1347,7 @@ class RS_HardPointManager : EventHandler
 		level.JSONProfileBegin();
 		for (int h = 0; h < HOLSTER_COUNT; ++h)
 		{
-			string key = String.Format("h%d_", h);
+			string key = profileKey(h);
 			level.JSONProfileSetDouble(key .. "fwd",   edFwd[h]);
 			level.JSONProfileSetDouble(key .. "side",  edSide[h]);
 			level.JSONProfileSetDouble(key .. "frac",  edFrac[h]);
@@ -1105,11 +1379,15 @@ class RS_HardPointManager : EventHandler
 		{
 			// GetHolster's own defaults are the fallback per field, not 0 --
 			// a profile saved before a 7th holster existed (hypothetically)
-			// should not zero-pitch a field it never wrote.
+			// should not zero-pitch a field it never wrote. That same
+			// per-field fallback is why the key schema had to change with the
+			// re-layout rather than being reused: it never errors, so a stale
+			// key that still MATCHES would be loaded in silence. See
+			// profileKey.
 			string hsName; double hsFwd, hsSide, hsFrac, hsRadius, hsPitch, hsYaw, hsRoll;
 			GetHolster(h, hsName, hsFwd, hsSide, hsFrac, hsRadius, hsPitch, hsYaw, hsRoll);
 
-			string key = String.Format("h%d_", h);
+			string key = profileKey(h);
 			edFwd[h]   = level.JSONProfileGetDouble(key .. "fwd",   hsFwd);
 			edSide[h]  = level.JSONProfileGetDouble(key .. "side",  hsSide);
 			edFrac[h]  = level.JSONProfileGetDouble(key .. "frac",  hsFrac);
@@ -1147,7 +1425,16 @@ class RS_HardPointManager : EventHandler
 		// own widened test has to run and win BEFORE any other index gets a
 		// chance to, not merely get a bigger number when its own turn comes
 		// up in a scan that may never reach it.
-		if (prevMain >= 0 && holsterActive(prevMain))
+		//
+		// THE SELF-CLAIM EXCLUSION RIDES THESE TWO TESTS TOO, and it has to:
+		// the widened re-test is the one place a claim can be kept without
+		// the scan below ever looking at it, so a hand excluded from an index
+		// down there but not up here would hold that index forever. Before
+		// the re-layout that read `!isHandAnchored(prevOff)` -- always false,
+		// because every index was off-arm gear. Now it is per bank: a hand may
+		// keep only what it could have claimed in the first place, which is
+		// the OTHER arm's bank.
+		if (prevMain >= 0 && holsterActive(prevMain) && !isMainArmAnchor(prevMain))
 		{
 			string hsNameM; double hsFwdM, hsSideM, hsFracM, hsRadiusM, hsPitchM, hsYawM, hsRollM;
 			GetHolster(prevMain, hsNameM, hsFwdM, hsSideM, hsFracM, hsRadiusM, hsPitchM, hsYawM, hsRollM);
@@ -1158,7 +1445,7 @@ class RS_HardPointManager : EventHandler
 				nearMain[i] = prevMain;
 			}
 		}
-		if (prevOff >= 0 && holsterActive(prevOff) && !isHandAnchored(prevOff))
+		if (prevOff >= 0 && holsterActive(prevOff) && isMainArmAnchor(prevOff))
 		{
 			string hsNameO; double hsFwdO, hsSideO, hsFracO, hsRadiusO, hsPitchO, hsYawO, hsRollO;
 			GetHolster(prevOff, hsNameO, hsFwdO, hsSideO, hsFracO, hsRadiusO, hsPitchO, hsYawO, hsRollO);
@@ -1172,10 +1459,10 @@ class RS_HardPointManager : EventHandler
 
 		for (int h = 0; h < HOLSTER_COUNT; ++h)
 		{
-			// An inactive holster (active count dialed below 8) is not
-			// visible and must not be claimable either -- a hand should
-			// never be able to trigger a store/draw on a holster it cannot
-			// see, hysteresis-held or not.
+			// An inactive mount (its arm's bank switched off, or its count
+			// dialed below this slot) is not visible and must not be
+			// claimable either -- a hand should never be able to trigger a
+			// store/draw on a mount it cannot see, hysteresis-held or not.
 			if (!holsterActive(h))
 				continue;
 
@@ -1193,38 +1480,53 @@ class RS_HardPointManager : EventHandler
 			double mainR = hsRadius;
 			double offR  = hsRadius;
 
-			if (!mainClaimed && (pawn.AttackPos - anchor).Length() < mainR)
+			// A HAND CAN NEVER CLAIM ITS OWN ARM'S GEAR, and that is a
+			// structural fact rather than a tuning choice. For any index,
+			// anchor is that arm's own hand position plus a rotation of that
+			// SAME hand's own live basis, so |that hand - anchor| is the
+			// constant sqrt(edFwd^2+edSide^2+edFrac^2) every tic, no matter
+			// how the player moves -- never a meaningful "did the hand reach
+			// it" test. Depending on tuned offsets that constant would land
+			// either permanently inside the radius (the hand stuck claiming
+			// its own wrist forever) or permanently outside (dead code) --
+			// excluding the test outright is the only correct fix, not
+			// something radius tuning could paper over.
+			//
+			// So each bank is reachable by exactly ONE hand: the other one.
+			// This used to exclude only the off hand, because every index was
+			// off-arm gear; the exclusion is now symmetric, which is what
+			// gives nearOff real work for the first time.
+			bool wornOnMain = isMainArmAnchor(h);
+
+			if (!wornOnMain && !mainClaimed && (pawn.AttackPos - anchor).Length() < mainR)
 			{
 				mainClaimed = true;
 				nearMain[i] = h;
 			}
 
-			// The off hand can never claim its OWN hand-anchored gear. For
-			// a hand-anchored index, anchor is OffhandPos plus a rotation of
-			// that SAME hand's own live basis, so |OffhandPos - anchor| is
-			// the constant sqrt(edFwd^2+edSide^2+edFrac^2) every tic, no
-			// matter how the player moves -- never a meaningful "did the
-			// hand reach it" test. Depending on tuned offsets that constant
-			// would land either permanently inside the radius (the off hand
-			// stuck claiming its own wrist forever) or permanently outside
-			// (dead code) -- excluding the test outright is the only
-			// correct fix, not something radius tuning could paper over.
-			if (!isHandAnchored(h) && !offClaimed && (pawn.OffhandPos - anchor).Length() < offR)
+			if (wornOnMain && !offClaimed && (pawn.OffhandPos - anchor).Length() < offR)
 			{
 				offClaimed = true;
 				nearOff[i] = h;
 			}
 		}
 
-		// GESTURE-CAST folds in here too: while armed, the off hand reads to
-		// the engine's grip arbiter exactly like a real proximity claim would
+		// GESTURE-CAST folds in here too: while armed, that hand reads to the
+		// engine's grip arbiter exactly like a real proximity claim would
 		// (GRIPCTX_Hardpoint -> GRIPSUBJ_Holster -> rs_hands' POSE_REACH,
 		// same pipeline hardpointHere already drives for a physical reach --
 		// see that mod's rs_hands.zs, "case GRIPSUBJ_Holster: return
-		// POSE_REACH"). No new engine work needed: gesture-cast is off hand
-		// only, so only HardpointClaimOff gets the OR; a real proximity claim
-		// on the MAIN hand (reaching to store/draw) is untouched.
-		bool offClaimedFinal = offClaimed || gestureArmed[i];
+		// POSE_REACH"). No new engine work needed; both claim fields already
+		// exist and each is written by exactly one system.
+		//
+		// BOTH HANDS NOW, where this was off-hand only. Note the deliberate
+		// asymmetry with the loop above: a hand REACHES for the other arm's
+		// bank (proximity) but ARMS its own (gesture). Both facts land on the
+		// same claim field because both mean the same thing to the arbiter --
+		// "this hand is doing hardpoint work, do not give grip its normal
+		// meaning" -- and rs_hands wants POSE_REACH either way.
+		bool mainClaimedFinal = mainClaimed || gestureArmedMain[i];
+		bool offClaimedFinal  = offClaimed  || gestureArmed[i];
 
 		// Edge-logged rather than per-tic: this is the signal that the whole
 		// chain works, and it should be visible without being a spam source.
@@ -1236,13 +1538,18 @@ class RS_HardPointManager : EventHandler
 		// HAPTIC is deliberately OUTSIDE the gate -- it is the player-facing
 		// feedback, not instrumentation, and turning the console lines off
 		// must not also turn off the thing that tells you where the mount is.
-		if (mainClaimed != pawn.HardpointClaimMain)
+		// mainClaimedFinal, not mainClaimed -- the edge test has to watch the
+		// SAME value that gets written to the field two blocks down, or the
+		// two disagree on every gesture-armed tic and the edge fires forever.
+		// The off-hand half below already had this right; the main half only
+		// looked right because nothing ever ORed anything into it.
+		if (mainClaimedFinal != pawn.HardpointClaimMain)
 		{
 			if (verboseDiag())
-				Console.Printf("RS_HARDPOINT: main hand %s hardpoint range", mainClaimed ? "ENTERED" : "left");
+				Console.Printf("RS_HARDPOINT: main hand %s hardpoint range", mainClaimedFinal ? "ENTERED" : "left");
 			// A short, light tap on ENTER only -- a real holster does not buzz
 			// your hand when you pull away from it, only when you find it.
-			if (mainClaimed) level.VRHaptic(0, 0.35, 25.0);
+			if (mainClaimedFinal) level.VRHaptic(0, 0.35, 25.0);
 		}
 		if (offClaimedFinal != pawn.HardpointClaimOff)
 		{
@@ -1263,7 +1570,7 @@ class RS_HardPointManager : EventHandler
 		// write anyone else's. The engine arbitrates between them in one place,
 		// in priority order -- holster, then hardpoint, then a grab, then the
 		// grip modifier, then stabilize.
-		pawn.HardpointClaimMain = mainClaimed;
+		pawn.HardpointClaimMain = mainClaimedFinal;
 		pawn.HardpointClaimOff  = offClaimedFinal;
 
 		updateProps(i, pawn);
@@ -1316,8 +1623,8 @@ class RS_HardPointManager : EventHandler
 			int pi = (i * HOLSTER_COUNT) + h;
 
 			// Same "invisible, not destroyed" treatment showProps() already
-			// uses for the whole system -- dialing the active count down
-			// hides a holster without evacuating whatever might be stored in
+			// uses for the whole system -- dialing an arm's count down
+			// hides a mount without evacuating whatever might be stored in
 			// it, so raising the count back up later shows it exactly as it
 			// was left. updateClaims already refuses to claim an inactive
 			// index; this is what makes it actually disappear too.
@@ -1425,28 +1732,41 @@ class RS_HardPointManager : EventHandler
 				// a local declared inside a method body, and there is no way to
 				// test-compile before this ships to find out the hard way.
 				//
-				// WRIST markers (3-5) get a DIFFERENT feed: GESTURE-CAST's
-				// "not-yet-armed" visual. Nothing reaches for these -- the
-				// off hand's own wrist rolls into position -- so hand
-				// DISTANCE has no meaning here; ROLL distance from the
-				// arming target does. Same shape (1.0 at the target, fading
-				// out, wider than the hard armed cutoff so it visibly
+				// WITH GESTURE-CAST ON, every marker gets a DIFFERENT feed:
+				// the "not-yet-armed" visual. Firing a mount is not a reach
+				// -- the arm that WEARS it rolls into the palm-out pose -- so
+				// for that job hand DISTANCE has no meaning; ROLL distance
+				// from the arming target does. Same shape (1.0 at the target,
+				// fading out, wider than the hard armed cutoff so it visibly
 				// notices the wrist approaching the pose, not just arriving).
 				//
+				// The roll it watches is the WEARING arm's own, per bank --
+				// MainHandRoll for 0-2, OffhandRoll for 3-5 -- matching
+				// updateGestureArm/updateGestureArmMain exactly. Reading one
+				// hand's roll for all six would light up the other arm's
+				// reticles for a pose that arms nothing.
+				//
 				// ...but only while gesture-cast is actually switched on.
-				// With it off (the default now) there is no arming pose to
-				// approach, so a roll feed would just make the three wrist
-				// reticles pulse at whatever angle the wrist happens to be
-				// at, for no reason -- and it would hide the one feed that
-				// IS still meaningful for these mounts with gesture-cast
-				// off: the MAIN hand reaching over to store/draw from them,
-				// which is an ordinary distance test exactly like the
-				// forearm row's.
+				// With it off (the default) there is no arming pose to
+				// approach, so a roll feed would just make the reticles pulse
+				// at whatever angle the wrist happens to be at, for no reason
+				// -- and it would hide the one feed that IS still meaningful
+				// with gesture-cast off: the OTHER hand reaching over to
+				// store/draw, an ordinary distance test.
 				double proxValue;
-				if (h >= FOREARM_HOLSTER_END && gestureEnabled())
+				bool wornOnMainM = isMainArmAnchor(h);
+				if (gestureEnabled())
 				{
+					// MainHandRoll for the main arm, NOT AttackRoll. The comment
+					// above says this matches updateGestureArmMain -- and it
+					// does now, because that function was corrected to
+					// MainHandRoll in the same pass. AttackRoll is zeroed by
+					// the playsim before WorldTick runs, so this fed the
+					// reticle pulse a constant and the main-arm markers never
+					// reacted to the arming pose at all.
+					double armRoll = wornOnMainM ? pawn.MainHandRoll : pawn.OffhandRoll;
 					double rollSenseMult = 3.0;
-					double rollDelta = abs(normalizeDeg(pawn.OffhandRoll - gestureRollTarget()));
+					double rollDelta = abs(normalizeDeg(armRoll - gestureRollTarget()));
 					double rollSenseRange = gestureRollTolerance() * rollSenseMult;
 					double rollNorm = (rollSenseRange > 0.0) ? (rollDelta / rollSenseRange) : 1.0;
 					if (rollNorm < 0.0) rollNorm = 0.0;
@@ -1455,16 +1775,24 @@ class RS_HardPointManager : EventHandler
 				}
 				else
 				{
+					// ONE hand's distance, not the nearer of the two. This
+					// used to take min(dMain, dOff) because either hand could
+					// in principle be the one approaching; after the
+					// re-layout exactly one hand can ever claim a given mount
+					// (see updateClaims' self-claim exclusion), and the
+					// WEARING hand's distance to its own mount is a constant.
+					// Feeding that constant in through a min() would peg
+					// every reticle's proximity at a fixed non-zero value
+					// forever and the tighten effect would stop meaning
+					// anything at all.
 					double senseMult = 4.0;
-					double dMain = (pawn.AttackPos - at).Length();
-					double dOff  = (pawn.OffhandPos - at).Length();
-					// No bare Min()/Clamp() -- neither has any precedent as a
-					// builtin anywhere in this engine's own ZScript (only Max()
-					// does), and there is no way to test-compile before this
-					// ships, so plain comparisons it is.
-					double dNear = (dMain < dOff) ? dMain : dOff;
+					double dReach;
+					if (wornOnMainM)
+						dReach = (pawn.OffhandPos - at).Length();
+					else
+						dReach = (pawn.AttackPos - at).Length();
 					double senseRange = hsRadius * senseMult;
-					double norm = (senseRange > 0.0) ? (dNear / senseRange) : 1.0;
+					double norm = (senseRange > 0.0) ? (dReach / senseRange) : 1.0;
 					if (norm < 0.0) norm = 0.0;
 					if (norm > 1.0) norm = 1.0;
 					proxValue = 1.0 - norm;
@@ -1513,8 +1841,16 @@ class RS_HardPointManager : EventHandler
 			// (see that field), so this exempts that one weapon and nothing
 			// else -- an ammo-pickup re-arm of a DIFFERENT mount is still
 			// reconciled normally, in the same tic.
+			//
+			// BOTH ARMS' seated pointers are checked. Exempting only the off
+			// arm's would leave the main bank with exactly the bug this test
+			// exists to fix -- firing a main-arm mount would empty it on the
+			// next tic and strip its stow flags -- and it would look like a
+			// gesture-cast bug rather than a reconciliation one.
 			ensureGestureSeatedOff();
-			bool gestureHeld = (stored != null && stored == gestureSeatedOff[i]);
+			ensureGestureSeatedMain();
+			bool gestureHeld = (stored != null
+			    && (stored == gestureSeatedOff[i] || stored == gestureSeatedMain[i]));
 
 			if (stored != null && !gestureHeld && pawn.player.PendingWeapon == WP_NOCHANGE
 			    && level.time - Max(lastSwapTicMain[i], lastSwapTicOff[i]) >= swapCooldown())
@@ -1767,7 +2103,7 @@ class RS_HardPointManager : EventHandler
 		return (cv != null) ? cv.GetBool() : true;
 	}
 
-	// Always true -- every index in this mod is off-hand-anchored. Kept as a
+	// Always true -- every index in this mod is arm-anchored. Kept as a
 	// predicate rather than deleted; see the HAND_HOLSTER_START comment at
 	// the top of this class for why.
 	private bool isHandAnchored(int idx) const
@@ -1775,34 +2111,63 @@ class RS_HardPointManager : EventHandler
 		return idx >= HAND_HOLSTER_START;
 	}
 
-	// Which hardpoints are live: 0 off, 1 forearm only (0-2), 2 wrist only
-	// (3-5), 3 both (all six). A MODE, not a count -- the wrist trio can be
-	// enabled without the forearm, which a simple "first N indices" count
-	// could never express (wrist is 3-5, never the low end of the table).
-	// Clamped to a valid mode rather than trusted raw, since this cvar can
-	// be hand-edited in an ini to any int.
+	// How many of one arm's three wrist mounts are live: 0-3.
 	//
-	// Defaults to 1 (forearm only), not 0. In RS_Holsters, where this rig
-	// lived alongside 8 already-tuned torso holsters, OFF was right:
-	// turning on new unproven anchor math should never be a side effect of
-	// installing something else. Here it is the entire mod -- a default of
-	// 0 would mean loading this pk3 and seeing nothing at all.
-	private int armMode() const
+	// REPLACES armMode(), which was a single four-valued MODE across one
+	// six-mount bank (0 off / 1 forearm only / 2 wrist only / 3 both). That
+	// shape existed because the wrist trio sat at indices 3-5 and "first N
+	// active" could never express "the top half only". With two banks of
+	// three, each bank IS a low-to-high run, so a plain count works and the
+	// mode disappears -- which is what let the menu become the four controls
+	// the owner asked for (on/off and 1/2/3, per hand) instead of one
+	// combined dropdown.
+	//
+	// TWO CVARS PER ARM, not one 0-3 count, because that is the menu shape
+	// the owner specified: an on/off you can flick without losing your
+	// chosen count, and a count you can change without switching the arm on.
+	// Folding them into one value would make "off" and "one mount" adjacent
+	// positions on the same slider, which is exactly the fiddly thing the
+	// split avoids.
+	//
+	// Clamped rather than trusted raw -- these cvars can be hand-edited in
+	// an ini to any int.
+	//
+	// The cvar NAME is chosen with a ternary and passed as a string, which
+	// CVar.GetCVar takes as a Name (doombase.zs:155). Precedent for exactly
+	// this -- a string local holding a chosen cvar name, handed straight to
+	// GetCVar -- is RS_HardPointProp.zs:121-122.
+	private int wristCount(bool mainArm) const
 	{
-		let cv = CVar.GetCVar("rs_hardpoint_arm_active_count", players[consoleplayer]);
-		int n = (cv != null) ? cv.GetInt() : 1;
+		string enableName = mainArm ? "rs_hardpoint_wrist_main"       : "rs_hardpoint_wrist_off";
+		let en = CVar.GetCVar(enableName, players[consoleplayer]);
+		// Fallback TRUE, matching the declared default: an unrecognised cvar
+		// name (an old ini, a partial install) must not silently switch the
+		// whole mod off, which is the entire visible surface of this pk3.
+		if (en != null && !en.GetBool())
+			return 0;
+
+		string countName = mainArm ? "rs_hardpoint_wrist_main_count" : "rs_hardpoint_wrist_off_count";
+		let cv = CVar.GetCVar(countName, players[consoleplayer]);
+		int n = (cv != null) ? cv.GetInt() : WRIST_PER_ARM;
 		if (n <= 0) return 0;
-		if (n >= 3) return 3;
-		return n; // 1 or 2, already a valid mode
+		if (n >= WRIST_PER_ARM) return WRIST_PER_ARM;
+		return n;
+	}
+
+	// Does this arm have any live mounts at all? The gesture-cast tier gate
+	// and the wrist debug dump both want this and neither wants the number.
+	private bool wristTierLive(bool mainArm) const
+	{
+		return wristCount(mainArm) > 0;
 	}
 
 	private bool holsterActive(int h) const
 	{
-		int mode = armMode();
-		if (mode == 0) return false;
-		if (mode == 3) return true;
-		bool isWrist = (h >= FOREARM_HOLSTER_END);
-		return (mode == 2) ? isWrist : !isWrist; // 2 = wrist only, 1 = forearm only
+		bool mainArm = isMainArmAnchor(h);
+		// Slot within its own bank: 0,1,2 either way. The count then means
+		// the obvious thing -- 1 lights the first mount, 2 the first two.
+		int slot = mainArm ? h : (h - OFF_WRIST_START);
+		return slot < wristCount(mainArm);
 	}
 
 	private bool instantSwitchEnabled() const
@@ -1867,13 +2232,22 @@ class RS_HardPointManager : EventHandler
 		return (cv != null) ? cv.GetFloat() : 30.0;
 	}
 
-	// Palm-out/open-palm arming check for GESTURE-CAST. OFF HAND ONLY --
-	// this is the off-arm's own trick, not something the main hand does (see
-	// the CLAUDE.md framing: one weapon held in the main hand, three mounted
-	// around the off hand). Roll alone, no position/extension test: there is
-	// no elbow tracking to check "is the arm actually outstretched" against
-	// (same gap the forearm anchors already work around), and no precondition
-	// on anything else the player is doing -- the owner was explicit that an
+	// Palm-out/open-palm arming check for GESTURE-CAST, OFF ARM. Its main-arm
+	// twin is updateGestureArmMain, immediately below; read this one first,
+	// it carries the reasoning for both.
+	//
+	// AN ARM ARMS ITS OWN MOUNTS. This used to be "off hand only", back when
+	// there was only one bank and it rode the off arm. The re-layout did not
+	// change the rule, only how many arms it applies to: the arm wearing the
+	// three mounts is the arm that rolls palm-out to fire them. (That is the
+	// mirror image of store/draw, where a hand can only reach the OTHER arm's
+	// bank -- the two verbs, HOLSTERS DRAW / WRISTS FIRE, deliberately do not
+	// share a hand assignment.)
+	//
+	// Roll alone, no position/extension test: there is no elbow tracking to
+	// check "is the arm actually outstretched" against (the same gap the
+	// deferred forearm anchors worked around), and no precondition on
+	// anything else the player is doing -- the owner was explicit that an
 	// earlier "shoot first, then arm" framing was just an example, not a
 	// requirement. Haptic fires on the rising edge only, mirroring
 	// updateClaims' own "short tap on ENTER only" pattern.
@@ -1884,11 +2258,13 @@ class RS_HardPointManager : EventHandler
 	// state was "permanently armed, from the first tic, for everyone":
 	//
 	//  1. gestureEnabled() -- the master switch, defaulting OFF. See there.
-	//  2. The WRIST TIER has to actually be live. Gesture-cast fires wrist
-	//     indices 3-5 and nothing else; with armMode() on 0 or 1 those
-	//     mounts are invisible and unclaimable (holsterActive), so arming
-	//     for them would pin HardpointClaimOff true for a tier that is not
-	//     even on screen.
+	//  2. THIS ARM'S BANK has to actually be live. Gesture-cast fires the
+	//     three mounts on this arm and nothing else; with the bank switched
+	//     off (or its count at 0) those mounts are invisible and unclaimable
+	//     (holsterActive), so arming for them would pin HardpointClaimOff
+	//     true for a bank that is not even on screen. Per arm now, where it
+	//     used to be one shared armMode() test -- switching the main bank
+	//     off must not disarm the off arm, and vice versa.
 	//  3. NOT IN EDIT MODE. Placement and live fire must not coexist: edit
 	//     mode reassigns the grab keys to sphere-dragging, and an armed
 	//     off hand simultaneously holding HardpointClaimOff true means the
@@ -1903,9 +2279,7 @@ class RS_HardPointManager : EventHandler
 	{
 		bool wasArmed = gestureArmed[i];
 
-		int mode = armMode();
-		bool tierLive = (mode == 2 || mode == 3);   // wrist-only, or all six
-		bool allowed = gestureEnabled() && tierLive && !editMode[i];
+		bool allowed = gestureEnabled() && wristTierLive(false) && !editMode[i];
 
 		bool nowArmed = false;
 		if (allowed)
@@ -1973,6 +2347,90 @@ class RS_HardPointManager : EventHandler
 		}
 	}
 
+	// The MAIN arm's twin of updateGestureArm above. Every comment there
+	// applies here with the main hand substituted: MainHandRoll for
+	// OffhandRoll, haptic channel 0 for 1, hand 0 for hand 1 in the restore,
+	// ReadyWeapon for OffhandWeapon (fireGestureMain captures it), and
+	// wristTierLive(true) for the bank gate.
+	//
+	// A CLONE, NOT A PARAMETERISED VERSION, for the reason spelled out on the
+	// constants at the top of this class: the one-bank pattern is proven, and
+	// threading a hand argument through the arm/fire/restore trio would put
+	// an index nobody can see wrong in the middle of a weapon swap. Two
+	// functions that each read plainly beat one that has to be traced.
+	private void updateGestureArmMain(int i, PlayerPawn pawn)
+	{
+		bool wasArmed = gestureArmedMain[i];
+
+		bool allowed = gestureEnabled() && wristTierLive(true) && !editMode[i];
+
+		bool nowArmed = false;
+		if (allowed)
+		{
+			// MainHandRoll, NOT AttackRoll -- and this one is not a style
+			// preference, it is the difference between working and being
+			// permanently armed from the first tic.
+			//
+			// AttackRoll is dead in script. The playsim zeroes it outright
+			// every tic (p_user.cpp:134, inside UpdateCanonicalMainHandPose,
+			// which P_PlayerThink calls at :1781), and p_tick.cpp runs
+			// P_PlayerThink for every player BEFORE WorldTick() -- so by the
+			// time this handler looks, the field is always 0. The VR backends
+			// only rewrite it at render time (vk_openxrdevice.cpp:4396), long
+			// after we have read it. Reading it here made `delta` the
+			// constant abs(normalizeDeg(0.0 - target)): with the shipped
+			// default target of 0.0 that is 0, inside any tolerance, so the
+			// main arm armed on EVERY tic that the gate allowed. That ORs
+			// into mainClaimedFinal in updateClaims and pins
+			// HardpointClaimMain true forever -- rs_hands stuck in
+			// POSE_REACH, the main grip redirected permanently. It is the
+			// exact failure the gestureEnabled() comment above records
+			// fixing for the OFF hand, and no cvar value escapes it: a
+			// nonzero target makes arming impossible, a zero target makes
+			// disarming impossible.
+			//
+			// MainHandRoll is the same wrist angle kept somewhere the playsim
+			// will not clear it (actor.zs:384 -- "Use this for anything
+			// welded to the weapon"). The family is unanimous on the pairing:
+			// rr_point.zs:69, rs_grab.zs:217 and :304, rs_distance.zs:25 all
+			// read MainHandRoll for hand 0 and OffhandRoll for hand 1.
+			double delta = abs(normalizeDeg(pawn.MainHandRoll - gestureRollTarget()));
+			// Same hysteresis, same reason -- see updateGestureArm.
+			double tol = gestureRollTolerance();
+			double useTol = wasArmed ? (tol * GESTURE_ROLL_HYSTERESIS) : tol;
+			nowArmed = (delta <= useTol);
+		}
+
+		gestureArmedMain[i] = nowArmed;
+		if (nowArmed && !wasArmed)
+			level.VRHaptic(0, 0.35, 25.0);
+
+		if (!nowArmed && wasArmed)
+		{
+			ensureGesturePreviousMain();
+			ensureGestureSeatedMain();
+			Weapon restore = gesturePreviousMain[i];
+			if (restore != null)
+			{
+				moveWeaponInstant(pawn, restore, 0);
+				gesturePreviousMain[i] = null;
+
+				// Stow flags back on, and INSIDE this branch on purpose --
+				// see updateGestureArm for the full argument. Short version:
+				// with no real weapon to restore, the hardpoint weapon stays
+				// in the hand, and flagging a weapon the player is visibly
+				// holding would make it unable to fire.
+				Weapon seated = gestureSeatedMain[i];
+				if (seated != null)
+				{
+					seated.bNoAutoSwitchTo = true;
+					seated.bHolsterHidden = true;
+				}
+			}
+			gestureSeatedMain[i] = null;
+		}
+	}
+
 	private void ensureGestureSeatedOff()
 	{
 		while (gestureSeatedOff.Size() < MAXPLAYERS)
@@ -1983,6 +2441,18 @@ class RS_HardPointManager : EventHandler
 	{
 		while (gesturePreviousOff.Size() < MAXPLAYERS)
 			gesturePreviousOff.Push(null);
+	}
+
+	private void ensureGestureSeatedMain()
+	{
+		while (gestureSeatedMain.Size() < MAXPLAYERS)
+			gestureSeatedMain.Push(null);
+	}
+
+	private void ensureGesturePreviousMain()
+	{
+		while (gesturePreviousMain.Size() < MAXPLAYERS)
+			gesturePreviousMain.Push(null);
 	}
 
 	private int swapCooldown() const
@@ -2090,28 +2560,49 @@ class RS_HardPointManager : EventHandler
 			else                      { doSwap(evt.player, pawn, nearOff[evt.player], true); }
 		}
 
-		// GESTURE-CAST fire, one netevent per button, each hardcoded to the
-		// ONE wrist index the owner assigned it (2026-08-25): grip -> 3
-		// (WristBelow), pad/X -> 4 (WristKnuckle), trigger -> 5 (WristJoint).
-		// Not a hand-parameterized dispatch like grab-main/grab-off above --
-		// gesture-cast is off-hand only right now (see CLAUDE.md), so there
-		// is no second hand's version of these to share a netevent with.
+		// GESTURE-CAST fire, one netevent per button per arm, each hardcoded
+		// to the ONE wrist index the owner assigned it (2026-08-25):
+		// grip -> Below, pad/X -> Knuckle, trigger -> Joint.
+		//
+		// SIX NETEVENTS, not three with a hand argument, and the OFF trio
+		// kept its exact original names and indices (3/4/5) so every existing
+		// KEYCONF alias and every bind a player already made still means what
+		// it meant. Still not a hand-parameterized dispatch like
+		// grab-main/grab-off above: those two share a netevent with
+		// RS_Holsters and must, these do not exist anywhere else, and a
+		// mis-parameterised gesture-fire seats a weapon in the wrong hand
+		// rather than merely doing nothing.
+		//
 		// PLACEHOLDER BINDS: nothing in KEYCONF binds these to the real
 		// grip/trigger/pad keys yet, because doing that safely needs the
 		// engine-side context gating (in progress, owner's own lane) that
-		// stops a gesture-fire from ALSO firing whatever the off hand's own
+		// stops a gesture-fire from ALSO firing whatever that hand's own
 		// weapon does on the same physical button. Bind these to throwaway
 		// test keys for now; once the gated keys exist, rebind onto those.
-		else if (evt.name == "rs-hardpoint-gesture-grip")    { fireGesture(evt.player, pawn, 3); }
-		else if (evt.name == "rs-hardpoint-gesture-padx")    { fireGesture(evt.player, pawn, 4); }
-		else if (evt.name == "rs-hardpoint-gesture-trigger") { fireGesture(evt.player, pawn, 5); }
+		else if (evt.name == "rs-hardpoint-gesture-grip")         { fireGesture(evt.player, pawn, 3); }
+		else if (evt.name == "rs-hardpoint-gesture-padx")         { fireGesture(evt.player, pawn, 4); }
+		else if (evt.name == "rs-hardpoint-gesture-trigger")      { fireGesture(evt.player, pawn, 5); }
+		else if (evt.name == "rs-hardpoint-gesture-main-grip")    { fireGestureMain(evt.player, pawn, 0); }
+		else if (evt.name == "rs-hardpoint-gesture-main-padx")    { fireGestureMain(evt.player, pawn, 1); }
+		else if (evt.name == "rs-hardpoint-gesture-main-trigger") { fireGestureMain(evt.player, pawn, 2); }
 	}
 
-	// GESTURE-CAST fire, one hardpoint. Confirmed design (owner, 2026-08-25):
-	// palm-out hides the off-hand PSprite weapon model and holds rs_hands in
+	// GESTURE-CAST fire, one hardpoint, OFF arm (mounts 3-5). fireGestureMain
+	// is its twin for the main arm, immediately after it; this is the copy
+	// that carries the reasoning.
+	//
+	// Confirmed design (owner, 2026-08-25):
+	// palm-out hides that hand's PSprite weapon model and holds rs_hands in
 	// REACH pose (the "sorcerer" read), and MULTIPLE hardpoints can fire
 	// within the same press -- HP1/2/3 are independent, not mutually
 	// exclusive.
+	//
+	// THIS IS THE "WRISTS FIRE" HALF OF THE 2026-08-26 DESIGN RULE. A wrist
+	// mount fires its weapon IN PLACE, palm-out, and never draws it -- the
+	// weapon is seated invisibly and swapped straight back out. Drawing is
+	// the TORSO HOLSTERS' verb (RS_Holsters). Do not add a draw path here;
+	// the two systems stop competing precisely because they are different
+	// verbs.
 	//
 	// Hardpoints are weapon-agnostic, same as every torso holster --
 	// whatever is seated here is an ORDINARY Weapon from whatever pack is
@@ -2183,8 +2674,9 @@ class RS_HardPointManager : EventHandler
 
 		// Same rule updateClaims/updateProps already enforce for every other
 		// consumer of a holster index: a hand should never be able to
-		// trigger anything on a holster it cannot see. Dialing the wrist
-		// tier off (rs_hardpoint_arm_active_count) hides a hardpoint
+		// trigger anything on a holster it cannot see. Dialing the off
+		// bank's count down (rs_hardpoint_wrist_off_count), or switching the
+		// bank off entirely, hides a hardpoint
 		// WITHOUT evacuating whatever is stored in it (updateProps' own
 		// comment), so contents[] can stay non-null on an index that is
 		// currently invisible -- without this check, gesture-fire could
@@ -2217,11 +2709,41 @@ class RS_HardPointManager : EventHandler
 		// wrist mount deliberately -- but doSwap lets either hand fill any
 		// mount, so it is reachable.
 		//
-		// Gesture-cast is off hand only, so the comparison is against a
-		// constant true rather than doSwap's `offhand` parameter.
+		// This is the OFF-hand path, so the comparison is against a constant
+		// true rather than doSwap's `offhand` parameter. fireGestureMain
+		// carries the mirror of this test, inverted -- if you change one,
+		// change both, and check the polarity against MoveWeaponToHand's own
+		// line rather than against the other copy.
+		//
+		// -------------------------------------------------------------
+		// OPEN DESIGN COLLISION, surfaced (not caused) by the 2026-08-26
+		// re-layout, and NOT fixed here because fixing it is an owner call:
+		//
+		//   * A mount is FILLED by the OPPOSITE hand (updateClaims' self-claim
+		//     exclusion -- a hand cannot reach its own arm). doSwap stores
+		//     whatever THAT hand was holding, so an off-arm mount ends up
+		//     holding a MAIN-hand weapon.
+		//   * A mount is FIRED by the hand that WEARS it, because the arming
+		//     pose is that wrist rolling palm-out.
+		//   * Every weapon in this arsenal carries +WEAPON.NOHANDSWITCH, so
+		//     an instance is permanently bound to one hand and this guard
+		//     refuses it.
+		//
+		// Net: with a NOHANDSWITCH arsenal, the weapon a reach naturally puts
+		// on a mount is the one this guard will not fire. That was already
+		// true before the re-layout (nearOff was pinned to -1, so the main
+		// hand filled all six off-arm mounts) -- it has simply never been hit,
+		// because gesture-cast defaults OFF and its binds are placeholders.
+		//
+		// DO NOT "fix" it by deleting this guard. It is what stops the VM
+		// abort described above. The real fix is one of two owner decisions:
+		// let a hand arm the bank it can REACH rather than the one it wears,
+		// or give mounts their own hand-agnostic copy of the weapon. Both are
+		// design changes, not repairs.
+		// -------------------------------------------------------------
 		if (w.bNoHandSwitch && !w.bOffhandWeapon)
 		{
-			Console.Printf("\cgRS_HARDPOINT: %s belongs to the main hand, cannot gesture-fire", w.GetClassName());
+			Console.Printf("\cgRS_HARDPOINT: %s is a MAIN-hand weapon on an OFF-arm mount -- cannot gesture-fire (see fireGesture's hand-binding note)", w.GetClassName());
 			return;
 		}
 
@@ -2281,6 +2803,121 @@ class RS_HardPointManager : EventHandler
 			psp.NoDraw = true;
 
 		level.VRHaptic(1, 0.5, 20.0);
+	}
+
+	// GESTURE-CAST fire, MAIN arm -- the twin of fireGesture above, for
+	// mounts 0-2. Read that one first: every design note on it (why the
+	// weapon stays seated for the whole armed stretch instead of pulsing,
+	// why the psprite is hidden with NoDraw rather than not created, what
+	// multi-fire does, and the known ammo-check gap from jumping straight to
+	// Fire) applies here unchanged.
+	//
+	// THE SUBSTITUTIONS, all of them:
+	//   gestureArmedMain / gesturePreviousMain / gestureSeatedMain
+	//   ReadyWeapon instead of OffhandWeapon  (player.zs -- the main hand's)
+	//   hand 0 instead of hand 1 in moveWeaponInstant
+	//   PSP_WEAPON instead of PSP_OFFHANDWEAPON  (precedent: chicken.zs:119
+	//     for GetPSprite, weaponphoenix.zs:133 for SetPsprite)
+	//   haptic channel 0 instead of 1
+	//   the wrong-hand guard inverted -- see below.
+	//
+	// Hiding PSP_WEAPON hides the player's PRIMARY weapon model for as long
+	// as the main hand stays armed, which is the intended read: palm-out
+	// means the held weapon goes invisible and the hand drops to the reach
+	// pose while the mounts do the shooting. It is not a side effect.
+	private void fireGestureMain(int i, PlayerPawn pawn, int holsterIdx)
+	{
+		// Re-checked here rather than trusted from the last WorldTick, for
+		// the exact reason fireGesture spells out: a netevent can arrive
+		// between two tics, after the cvar was switched off or edit mode was
+		// entered but before updateGestureArmMain has recomputed anything.
+		if (!gestureEnabled() || editMode[i])
+			return;
+
+		if (!gestureArmedMain[i])
+			return;
+
+		// A hand must never be able to trigger anything on a mount it cannot
+		// see. Dialing the main bank's count down hides a mount WITHOUT
+		// evacuating what is stored in it (updateProps' own comment), so
+		// contents[] can stay non-null on an index that is currently
+		// invisible.
+		if (!holsterActive(holsterIdx))
+			return;
+
+		ensureContents();
+		int slot = (i * HOLSTER_COUNT) + holsterIdx;
+		Weapon w = contents[slot];
+		if (w == null)
+			return;
+
+		// THE WRONG-HAND GUARD, inverted from fireGesture's. MoveWeaponToHand's
+		// own first line is
+		//     if (weap.bNoHandSwitch && weap.bOffhandWeapon != (hand == 1)) return;
+		// (player.zs:2612) and it returns VOID and SILENTLY. With hand == 0
+		// that reduces to "refuse an OFF-hand weapon", where fireGesture's
+		// hand == 1 reduces to "refuse a MAIN-hand weapon" -- so the test
+		// here is bOffhandWeapon true, not false. Get this backwards and the
+		// SetPsprite below jumps the MAIN psprite to a Fire state belonging
+		// to a weapon that is not the main hand's weapon, and the VM kills
+		// the game the moment one of those state functions type-checks its
+		// owner ("Invalid class VR_Fist in function call to
+		// VR_SMG.StateFunction").
+		//
+		// The same OPEN DESIGN COLLISION fireGesture documents at length
+		// applies here mirrored: a main-arm mount is filled by the OFF hand,
+		// so it naturally ends up holding an off-hand weapon, which is
+		// exactly what this guard refuses. Read that note before touching
+		// either copy.
+		if (w.bNoHandSwitch && w.bOffhandWeapon)
+		{
+			Console.Printf("\cgRS_HARDPOINT: %s is an OFF-hand weapon on a MAIN-arm mount -- cannot gesture-fire (see fireGesture's hand-binding note)", w.GetClassName());
+			return;
+		}
+
+		State fireState = w.FindState('Fire');
+		if (fireState == null)
+		{
+			Console.Printf("\cgRS_HARDPOINT: %s has no Fire state, cannot gesture-fire", w.GetClassName());
+			return;
+		}
+
+		ensureGesturePreviousMain();
+		ensureGestureSeatedMain();
+
+		// FIRST fire of this armed stretch only -- see gesturePreviousOff's
+		// field comment for why a second or third fire must not overwrite it.
+		if (gesturePreviousMain[i] == null)
+			gesturePreviousMain[i] = pawn.player.ReadyWeapon;
+
+		// MULTI-FIRE housekeeping, same as fireGesture: the previously seated
+		// mount weapon is back on its own mount with its stow flags stripped,
+		// and nothing else would ever put them back.
+		Weapon prevSeated = gestureSeatedMain[i];
+		if (prevSeated != null && prevSeated != w)
+		{
+			prevSeated.bNoAutoSwitchTo = true;
+			prevSeated.bHolsterHidden = true;
+		}
+		gestureSeatedMain[i] = w;
+
+		// CheckAmmo gates FIRING on bHolsterHidden, unconditionally -- so a
+		// stowed weapon cannot fire until these come off. Restored by
+		// updateGestureArmMain's falling edge when it goes back.
+		w.bNoAutoSwitchTo = w.Default.bNoAutoSwitchTo;
+		w.bHolsterHidden = false;
+
+		moveWeaponInstant(pawn, w, 0);
+		pawn.player.SetPsprite(PSP_WEAPON, fireState);
+
+		// No hardpoint weapon model drawn. Stays hidden for as long as it
+		// stays seated -- there is no swap-back here; updateGestureArmMain's
+		// falling edge is what eventually restores gesturePreviousMain[i].
+		let psp = pawn.player.GetPSprite(PSP_WEAPON);
+		if (psp != null)
+			psp.NoDraw = true;
+
+		level.VRHaptic(0, 0.5, 20.0);
 	}
 
 	// Wraps MoveWeaponToHand with a transient CF_INSTANTWEAPSWITCH, restored
