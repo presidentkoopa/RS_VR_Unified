@@ -58,10 +58,25 @@
 
 class RS_GripArbiterService : Service
 {
-	// The protocol version this pk3 speaks. A consumer that ever needs to tell
-	// an old arbiter from a new one asks for "grip.version"; today they all
-	// speak 1. Bumped when the request vocabulary changes in a way a consumer
-	// could not survive, never for adding a request.
+	// TWO CONSTANTS, NOT ONE, AND THE SPLIT IS THE WHOLE POINT.
+	//
+	// IDENTITY is "are you the arbiter". It is frozen at 1 FOREVER and must
+	// never be bumped for any reason.
+	//
+	// PROTOCOL is "which arbiter are you". It gets bumped whenever the request
+	// vocabulary changes in a way a consumer could not survive.
+	//
+	// These were the same const, and both requests returned it. That is a trap
+	// with a fuse on it: consumers test IDENTITY for presence -- RS_Reload does
+	// `GetInt("grip.hello") != RR_ARB_PROTO` and treats a mismatch as ABSENT --
+	// so the very first time v2 bumped the shared const, every consumer would
+	// have decided the arbiter was missing and silently stopped arbitrating,
+	// with the pk3 sitting right there answering the call. You would be
+	// debugging a lookup that reports "absent" while the thing is loaded.
+	//
+	// Both files' comments already described hello as identity and version as
+	// version. One shared const meant that was not actually true.
+	const IDENTITY = 1;
 	const PROTOCOL = 1;
 
 	// An override takes NEITHER the scope keyword NOR the parameter defaults
@@ -88,8 +103,8 @@ class RS_GripArbiterService : Service
 		// identity, so a consumer must ask something only this class answers
 		// and check the answer. Anything else returns 0 through Service's own
 		// base GetInt and is correctly treated as "not the arbiter".
-		if (request == "grip.hello")   return PROTOCOL;
-		if (request == "grip.version") return PROTOCOL;
+		if (request == "grip.hello")   return IDENTITY;   // frozen at 1, never bump
+		if (request == "grip.version") return PROTOCOL;   // bump this one instead
 
 		// EVERY OTHER REQUEST RETURNS -1, NOT 0.
 		//

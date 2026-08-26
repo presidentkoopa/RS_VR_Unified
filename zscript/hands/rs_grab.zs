@@ -555,10 +555,38 @@ class RS_GrabHandler : EventHandler
         let p = players[consoleplayer];
         if (!p || !p.mo) return;
         let pmo = p.mo;
-        if (!RS_Reach.Flag("rs_grab", p, true)) return;
+
+        // EVERY EXIT BELOW MUST WITHDRAW THE CLAIM, NOT JUST SKIP RESTATING IT.
+        //
+        // GrabClaimMain/Off are written once, at the bottom of this function.
+        // NOTHING ELSE EVER CLEARS THEM: the engine only ever reads them
+        // (declared actor.h, consumed in the OpenXR device), so a claim left
+        // true stays true until something in here writes false.
+        //
+        // So the early exits used to leak. Reach at a barrel -- claim goes true
+        // -- then open the menu and switch rs_grab off: the `Flag("rs_grab")`
+        // exit below fires before the write, and the engine goes on believing
+        // that hand has something to take FOR THE REST OF THE LEVEL. The grip
+        // stops resolving as the shift layer, so every grip+button binding
+        // silently stops working, with nothing on screen to say why.
+        //
+        // RS_Held.ClearClaims already covers every one of its exits for
+        // GripClaim* for exactly this reason; this is the same discipline
+        // applied to the pair this handler owns.
+        if (!RS_Reach.Flag("rs_grab", p, true))
+        {
+            pmo.GrabClaimMain = false;
+            pmo.GrabClaimOff  = false;
+            return;
+        }
 
         let held = RS_Held.Get();
-        if (!held) return;
+        if (!held)
+        {
+            pmo.GrabClaimMain = false;
+            pmo.GrabClaimOff  = false;
+            return;
+        }
 
         bool toggle = RS_Reach.Flag("rs_hold_toggle", p, true);
         bool dbg    = RS_Reach.Flag("rs_hold_debug", p, true);

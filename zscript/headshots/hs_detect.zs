@@ -194,9 +194,26 @@ class HS_Handler : EventHandler
 		// Measured from the victim's own pos.z, not floorz -- see the file
 		// header on why that matters the moment a Cacodemon gains altitude.
 		double headBase = victim.pos.z + victim.height * (1.0 - HEAD_FRAC);
-		double headTop  = victim.pos.z + victim.height;
 
-		return hitPos.z >= headBase && hitPos.z <= headTop;
+		// NO UPPER BOUND, AND THAT IS DELIBERATE.
+		//
+		// This used to also test `hitPos.z <= victim.pos.z + victim.height`,
+		// which reads as obviously correct and was quietly throwing away good
+		// hits. The engine jitters every bullet puff vertically BEFORE that puff
+		// becomes the thing measured here -- p_mobj.cpp:7041 does
+		// `pos.Z += pr_spawnpuff.Random2() / 64.`, which is +/-4 units, and no
+		// Doom weapon suppresses it (GunShot in weaponpistol.zs:93 passes only
+		// LAF_ISOFFHAND).
+		//
+		// A Zombieman's head band is 11.2 units tall. So the wobble is a THIRD
+		// of the band, and a shot placed square on the top of the skull
+		// registered maybe half the time -- which in headset reads as your aim
+		// being off, not as a bug.
+		//
+		// Nothing can legitimately be above the top of a hitbox except a head
+		// hit, so the upper bound could only ever reject something that should
+		// have counted.
+		return hitPos.z >= headBase;
 	}
 
 	// The sight reaction, unlike the confirm, does care whether the thing is
@@ -223,7 +240,13 @@ class HS_Handler : EventHandler
 			hs_ConfirmedThisTic.Clear();
 		}
 
-		for (uint i = 0; i < hs_ConfirmedThisTic.Size(); i++)
+		// int, not uint: a dynamic array's Size() is a SIGNED int field
+		// (dynarrays.zs:154), so a uint counter emits a signed/unsigned
+		// comparison warning on every single load. Non-fatal -- only
+		// ErrorCounter aborts (thingdef.cpp:420-423) -- but this family's real
+		// failure mode is a FATAL script error printing in that same console,
+		// and a warning that is always present trains you to stop reading it.
+		for (int i = 0; i < hs_ConfirmedThisTic.Size(); i++)
 		{
 			if (hs_ConfirmedThisTic[i] == victim)
 				return true;

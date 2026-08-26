@@ -1299,7 +1299,30 @@ class RS_HolsterManager : EventHandler
 		bool handClaimed = (liveClaim != GRIPSUBJ_None);
 		int hand = isMain ? 0 : 1;
 
-		if (handClaimed && prev == null)
+		// ENTERING THE SWAP NEEDS THE POUCH. STAYING IN IT DOES NOT.
+		//
+		// The broad watch above is right about STAYING: once the swap is
+		// engaged, any mod's claim should hold it, so a reload that takes the
+		// claim over mid-transfer does not hand your gun back early.
+		//
+		// It was wrong about STARTING. `handClaimed` alone meant ANY non-zero
+		// GripClaim from ANY mod swapped your weapon for a fist -- and RS_Hands
+		// writes GRIPSUBJ_Magazine for Ammo, Health, Armor, Inventory and
+		// ExplosiveBarrel, while RS_Reload returns the same value as its default
+		// case. So picking a health pack up off the floor, nowhere near your
+		// chest, WITH THE POUCH SWITCHED OFF ENTIRELY, disarmed you.
+		//
+		// That is the single most-reported symptom in this family, and three
+		// separate audits reached it by three different routes -- one through
+		// RS_Hands leaking a claim, one through RS_Reload leaking one, one
+		// through here. This is the receiving end, and gating entry on the pouch
+		// stops the symptom no matter which writer caused it.
+		//
+		// nowInPouch already folds in holsterActive(AMMO_POUCH_IDX), so a
+		// disabled pouch can never start a swap.
+		bool pouchInvolved = nowInPouch || claimedByUs;
+
+		if (handClaimed && prev == null && pouchInvolved)
 		{
 			Weapon real = isMain ? pawn.player.ReadyWeapon : pawn.player.OffhandWeapon;
 			if (real != null && !isFistClass(real.GetClassName()))
