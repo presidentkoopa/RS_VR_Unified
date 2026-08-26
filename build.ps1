@@ -1,12 +1,16 @@
 # Build RS_VR_Unified.pk3  -- DRAFT, pending final layout from the design phase.
 #
-# Consolidates the three incompatible packers found across the five source repos:
+# Consolidates the incompatible packers found across the six source repos:
 #
 #   RS_Reload      .NET ZipFile, entry-by-entry, forward slashes  -> .pk3   (correct, no verification)
 #   RS_Holsters    7-Zip at a hardcoded absolute path             -> .zip   (external dep, leaks files)
 #   RS_HardPoints  same 7-Zip script                              -> .zip   (external dep, leaks README)
 #   RS_Hands       none at all -- pk3 committed with no script
 #   Headshots      none at all -- zip committed with no script
+#   RS_WeaponWheel .NET ZipFile, entry-by-entry, forward slashes  -> .pk3   (same approach as this one,
+#                  arrived at independently and for the same stated reason -- CreateFromDirectory writes
+#                  backslashes on Windows PowerShell. It also packs from a package SUBFOLDER, which is
+#                  why its lane in stage.ps1 points one level deeper than the others.)
 #
 # This takes RS_Reload's entry-by-entry .NET approach (no 7-Zip dependency, and
 # zip entries must use forward slashes -- Compress-Archive and CreateFromDirectory
@@ -32,7 +36,13 @@ $out  = Join-Path $root 'RS_VR_Unified.pk3'
 # a merged project silently missing its MAPINFO registers no event handlers at
 # all, which reads in-headset as "the whole mod does nothing."
 $requiredLumps = @('zscript.txt', 'MAPINFO.txt', 'CVARINFO.txt', 'MENUDEF.txt', 'KEYCONF')
-$optionalLumps = @('MODELDEF.txt', 'SNDINFO.txt', 'TEXTURES.txt', 'TRNSLATE.txt')
+# ANIMDEFS.txt arrived with RS_WeaponWheel and is not decorative: its twelve
+# canvastexture declarations ARE the mechanism behind the wheel's card faces,
+# because TexMan.GetCanvas() returns null for any name not declared there and
+# there is no allocate-on-demand. Leaving it off this list would not have been
+# an error -- it would have packed a wheel whose cards render blank, with
+# nothing in the log to say why.
+$optionalLumps = @('MODELDEF.txt', 'SNDINFO.txt', 'TEXTURES.txt', 'TRNSLATE.txt', 'ANIMDEFS.txt')
 $contentDirs   = @('zscript', 'models', 'graphics', 'sprites', 'sounds')
 
 $files = @()
@@ -128,6 +138,14 @@ elseif ($vers[0].Groups[1].Value -ne '5.0.0') { Write-Warning "version is $($ver
 #    the packed zscript. A handler named but not defined is a load-blocking
 #    error; a handler defined but never named is silence, which reads in-headset
 #    as the feature simply not existing. Both have bitten this codebase.
+#
+#    ONLY THE FIRST DIRECTION FAILS THE BUILD. Until RS_WeaponWheel arrived the
+#    second direction was described here but never actually implemented, which
+#    made this comment false -- and the wheel is precisely the case it was
+#    written about: it ships three EventHandlers and registers one, on purpose
+#    (see MAPINFO.txt). So 5b below REPORTS the second direction and does not
+#    count it as a problem, because "defined but not registered" is a legitimate
+#    choice as often as it is a mistake. Read the notes before acting on it.
 $miE = $z.Entries | Where-Object { $_.FullName -eq 'MAPINFO.txt' }
 $sr2 = New-Object System.IO.StreamReader($miE.Open())
 $mitxt = $sr2.ReadToEnd(); $sr2.Close()
@@ -148,6 +166,14 @@ foreach ($h in $handlers) {
     if ($declared -notcontains $h.ToLower()) { Write-Warning "MAPINFO registers undefined handler: $h"; $hMiss++; $fail++ }
 }
 
+# 5b. The other direction, informational only -- see the note above.
+$hUnreg = @()
+foreach ($m in [regex]::Matches($allZs, '(?im)^\s*class\s+([A-Za-z0-9_]+)\s*:\s*(?:Static)?EventHandler\b')) {
+    $hn = $m.Groups[1].Value
+    if ($handlers -notcontains $hn) { $hUnreg += $hn }
+}
+foreach ($hn in $hUnreg) { Write-Host "  note: EventHandler defined but not registered in MAPINFO: $hn" }
+
 # 6. No duplicate class name. Two classes of one name is a fatal compile error,
 #    and it is the specific failure a stale entry in an incrementally-updated
 #    archive produces -- the reason this script always deletes before writing.
@@ -163,7 +189,7 @@ Write-Host "RS_VR_Unified.pk3  --  $n entries, $kb KB"
 Write-Host "  backslash entries : $bad"
 Write-Host "  stray files       : $($stray.Count)"
 Write-Host "  #includes         : $inc checked, $incMiss unresolved, $orphan orphaned"
-Write-Host "  event handlers    : $($handlers.Count) registered, $hMiss undefined"
+Write-Host "  event handlers    : $($handlers.Count) registered, $hMiss undefined, $($hUnreg.Count) defined-but-unregistered"
 Write-Host "  classes           : $($declared.Count) declared, $($dupes.Count) duplicated"
 if ($fail -gt 0) { throw "package verification failed ($fail problems)" }
 Write-Host "  VERIFIED OK"

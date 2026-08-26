@@ -286,6 +286,16 @@ class RR_Reload : EventHandler
 		// reserve empty, no ammo item, an archetype with no capacity -- and a
 		// silent no-op looks identical to the feature not being wired up at all,
 		// which is the exact confusion this file just spent a slice in.
+		//
+		// THE `cap` PRINTED HERE IS THIS GUN'S, NOT THE AMMO TYPE'S, and with
+		// shared ammo the two differ on purpose. Magazines() sizes the shared
+		// Ammo item by the LARGEST owned weapon feeding it, while a reload seats
+		// only as much as THE GUN IN YOUR HAND holds -- so a pistol reload with
+		// a chaingun in the pack can legitimately print "magazine 40/12" and
+		// "+0". That is a full pistol magazine and not a fault. Refill's cap is
+		// always <= the trim cap (this weapon is one of the owned weapons that
+		// max was taken over), so a seat can never overfill past what the next
+		// Trim will tolerate, and nothing seated is ever clawed back.
 		let am = RR_Mag.AmmoOf(pmo, w);
 		if (!am) { Console.Printf("[RR] refill: %s has no ammo item", target); return; }
 		Console.Printf("[RR] refill: +%d -- magazine %d/%d, reserve %d",
@@ -298,11 +308,20 @@ class RR_Reload : EventHandler
 	// at or below its magazine size, spilling the rest into the reserve, and
 	// keep an empty-but-reloadable gun in the hand that is holding it.
 	//
+	// WHICH AMMO ITEMS get trimmed is decided by what is IN HAND -- there are at
+	// most two, and an ammo type no held weapon feeds from is left entirely
+	// alone. HOW BIG the magazine is is a separate question with a different
+	// answer, decided by what the player OWNS; the long note below is why those
+	// two must not be the same question.
+	//
 	// RESOLVED FRESH EVERY TIC RATHER THAN CACHED. RR_Feed.Resolve does string
-	// work on two class names and reads two cvars; a cache would be two more
-	// handler fields that go stale the moment somebody moves rr_force_arch,
-	// which is the tuning knob most likely to be moved while watching this. Two
-	// short IndexOf chains a tic is not what will make this mod slow.
+	// work on a class name and reads two cvars; a cache would be handler fields
+	// that go stale the moment somebody moves rr_force_arch, which is the tuning
+	// knob most likely to be moved while watching this. It runs for the two held
+	// weapons plus every owned weapon that feeds one of their two ammo items --
+	// four in stock Doom, since Clip is shared by pistol and chaingun and Shell
+	// by shotgun and SSG. A handful of short IndexOf chains a tic is not what
+	// will make this mod slow.
 	private void Magazines(PlayerInfo p, PlayerPawn pmo)
 	{
 		let w0 = p.ReadyWeapon;
@@ -333,23 +352,79 @@ class RR_Reload : EventHandler
 		let a0 = RR_Mag.AmmoOf(pmo, w0);
 		let a1 = RR_Mag.AmmoOf(pmo, w1);
 
+		// Seeded from the two hands, then raised by the walk below. Seeding
+		// first rather than starting at zero costs nothing and covers the
+		// pathological case where a mod has put a weapon in a hand without it
+		// being in the inventory chain -- its own capacity still counts.
 		int cap0 = a0 ? RR_Feed.CapOf(ArchOf(p, w0), w0, p) : 0;
 		int cap1 = a1 ? RR_Feed.CapOf(ArchOf(p, w1), w1, p) : 0;
 
-		// ONE POOL, ONE MAGAZINE, AND THE BIGGER GUN WINS.
+		// ONE POOL, ONE MAGAZINE, AND THE BIGGEST GUN THE PLAYER OWNS WINS.
 		//
-		// GZDoom ammo is shared by ammo CLASS, not by weapon: Doom's pistol and
-		// chaingun both draw Clip out of the same item, and this is a dual-wield
-		// engine so both can be in your hands at once. There is exactly one
-		// Amount to cap and two answers for what to cap it at, and taking the
-		// smaller one would drain the chaingun's magazine into the reserve every
-		// tic the pistol was in the other hand -- a gun quietly emptying itself
-		// because of what the OTHER hand is holding. Taking the larger costs
-		// nothing: the pistol simply has more in front of it than a pistol
-		// normally would, out of a pool it was always sharing anyway.
+		// GZDoom ammo is shared by ammo CLASS and not by weapon: Doom's pistol
+		// and chaingun both draw Clip out of the same item. There is exactly
+		// ONE Amount to cap, so the cap has to be a property of the AMMO TYPE,
+		// and the only stable way to get one is to ask every weapon the player
+		// OWNS that feeds from it and take the largest.
 		//
-		// Nothing is lost or duplicated either way. Amount + reserve is what is
-		// conserved, and every path in rr_magazine.zs moves between the two.
+		// ASKING ONLY THE TWO HANDS WAS THE BUG, and it was not a corner case
+		// -- it fired on the mod's own core gesture. RS_Holsters swaps a Fist
+		// into a hand whenever that hand holds a grip claim
+		// (RS_Holsters.zs:1303-1316), which includes the entire time this file
+		// is carrying a magazine, because Begin() sets the claim. A Fist has no
+		// AmmoType1, so AmmoOf returns null and that hand contributes a
+		// capacity of zero. Hold a pistol (cap 12) and a chaingun (cap 100),
+		// reach into the pouch with the chaingun hand, and the chaingun becomes
+		// a Fist: the cap collapses to the pistol's 12 and Trim spills 88
+		// rounds out of the chaingun's magazine. Nothing fills upward outside
+		// Insert, so when the chaingun comes back it sits at 12/100 until it is
+		// reloaded by hand. The old in-hand max() could not catch this, because
+		// it only ran when BOTH hands resolved to the same ammo item -- the one
+		// thing that stops being true the moment the swap happens.
+		//
+		// The walk fixes a quieter version of the same thing too: with the
+		// chaingun merely HOLSTERED and the pistol in hand, the shared Clip
+		// magazine used to be sized by the pistol. Sizing by ownership means
+		// the magazine no longer flaps with what is in your hands at all.
+		//
+		// ONE WALK FOR BOTH ANSWERS, and Inv-chain iteration is thoroughly
+		// precedented -- ammo.zs:321 and :379 in the engine, RS_Holsters.zs:1749
+		// in this family. Held and holstered weapons alike stay in the chain, so
+		// this sees the whole arsenal. NOT CACHED, because it is cheap: AmmoOf
+		// is a field read, and the expensive part (RR_Feed.Resolve, inside
+		// ArchOf) only runs for weapons that actually feed one of the at most
+		// two ammo items in play -- two of them in stock Doom per ammo type.
+		//
+		// The failure direction is also the safe one. A mod weapon with an
+		// absurd magazine raises the shared cap, so the worst this can do is
+		// leave MORE in front of the player than a small gun would normally
+		// have, out of a pool they were always sharing anyway. It can no longer
+		// drain a magazine, which is the failure that actually loses a fight.
+		if (a0 || a1)
+		{
+			for (Inventory it = pmo.Inv; it != null; it = it.Inv)
+			{
+				let wp = Weapon(it);
+				if (wp == null) continue;
+
+				let aw = RR_Mag.AmmoOf(pmo, wp);
+				if (aw == null) continue;
+				if (aw != a0 && aw != a1) continue;
+
+				int c = RR_Feed.CapOf(ArchOf(p, wp), wp, p);
+				if (aw == a0 && c > cap0) cap0 = c;
+				if (aw == a1 && c > cap1) cap1 = c;
+			}
+		}
+
+		// KEPT, THOUGH THE WALK ABOVE ALREADY GUARANTEES IT for any weapon that
+		// is in the inventory chain -- which both hands' weapons are. Two lines
+		// to close the one gap the walk cannot: a held weapon that is somehow
+		// not in Inv gets its cap from the seed only, and with shared ammo the
+		// two seeds could then disagree about a number that must be a single
+		// value. Nothing is lost or duplicated either way; Amount + reserve is
+		// what is conserved and every path in rr_magazine.zs moves between the
+		// two.
 		if (a0 && a0 == a1)
 		{
 			int shared = max(cap0, cap1);

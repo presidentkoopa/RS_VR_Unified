@@ -1,11 +1,16 @@
 # The built package is a build artifact, not source. build.ps1 regenerates it.
 #
-# Deliberate, and it is a change from RS_Reload's convention: all five source
+# Deliberate, and it is a change from RS_Reload's convention: all six source
 # repos track their own pk3/zip, and that is a live hazard for THIS repo
 # specifically -- staging a committed artifact from any of them would put a
 # complete copy of a mod inside the merged pk3, which is a duplicate-class
 # fatal. The packer uses an explicit include list so it cannot happen by
 # accident; not tracking the output means it cannot happen on purpose either.
+#
+# RS_WeaponWheel is the closest call of the six: it keeps RS_WeaponWheel.pk3
+# in its repo root, one level ABOVE the package directory its lane points at.
+# Two things independently stop it being staged -- the lane path, and the fact
+# that stage.ps1 only ever reads *.zs plus the four asset subdirectories.
 *.pk3
 *.zip
 

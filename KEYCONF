@@ -108,3 +108,87 @@ alias rs_hardpoint_gesture_padx "netevent rs-hardpoint-gesture-padx"
 
 addmenukey "Hardpoint: gesture-fire TRIGGER (hardpoint 5)" rs_hardpoint_gesture_trigger
 alias rs_hardpoint_gesture_trigger "netevent rs-hardpoint-gesture-trigger"
+
+// ---------------------------------------------------------------- wheel
+// From RS_WeaponWheel/keyconf.txt, which declared TWO sections of its own --
+// "RSVR HUD" (wr_Keys) and "RSVR HUD - gun placement" (wr_PlaceKeys). Both are
+// gone: this package has one section, for the same reason the header of this
+// file gives. Nothing else had to change, because MENUDEF's rows bind the
+// ALIAS name ("wr_toggle_off", "wr_place", ...) and never the section, so the
+// wheel's own Control rows in MENUDEF.txt still resolve.
+//
+// NO NAME COLLISIONS with anything above: every alias here is wr_*, every
+// alias above is rs_*, and the netevents they fire are wr_* against rs-*.
+
+// -- the ring itself.
+//
+// THE ONLY DEFAULT BINDS IN THIS PACKAGE, and they are inherited rather than
+// chosen -- everything above is deliberately unbound. They are kept because
+// dropping them would silently change the wheel's out-of-box behaviour during
+// what is meant to be a packaging change.
+//
+// THEY COLLIDE, and it is worth knowing exactly how. UZDXREMA's own
+// engine/commonbinds.txt binds '[' to invprev and ']' to invnext, so on a
+// desktop profile these two lines do nothing at all: FKeyBindings::DefaultBind
+// refuses a key that is already bound and prints "Key already bound" rather
+// than overwriting it. On the VR profiles (engine/vr/commonbinds.txt,
+// vr/defbind0.txt, vr/defbind3.txt) inventory prev/next live on pgup/pgdn,
+// mwheel and the dpad, the brackets are free, and these DO take. So the wheel
+// opens on [ and ] in VR and appears unbound on a desktop config -- which is
+// the right way round for a VR mod, but is not obvious from the file.
+alias wr_toggle_off  "netevent wr_toggle_off"
+alias wr_toggle_main "netevent wr_toggle_main"
+addmenukey "Wheel: off hand"  wr_toggle_off
+addmenukey "Wheel: main hand" wr_toggle_main
+defaultbind ] wr_toggle_off
+defaultbind [ wr_toggle_main
+
+// Legacy spelling, kept so an already-written config that binds wr_toggle
+// still works. It fires wr_toggle_off, exactly as it did in the source file --
+// which makes it a synonym for the off-hand bind and NOT a general toggle,
+// despite the name. Bind one or the other, not both.
+alias wr_toggle      "netevent wr_toggle_off"
+
+// -- ModelSwapper model cycle. Ours, not a compat guess, so it earns a real
+// key rather than a gesture. No default bind: a model swap mid-fight from a
+// fat-fingered key would be worse than not having the feature.
+alias wr_ms_cycle_main "netevent wr_ms_cycle_main"
+alias wr_ms_cycle_off  "netevent wr_ms_cycle_off"
+addmenukey "Wheel: cycle main-hand model" wr_ms_cycle_main
+addmenukey "Wheel: cycle off-hand model"  wr_ms_cycle_off
+
+// -- gun readout placement. A calibration tool for whoever is measuring a
+// weapon set, not a normal-play control, so no default binds -- none of these
+// can fire by accident during a fight because none is on a key until you put
+// it there.
+//
+// Bindable FROM THE MENU, not console-only: this is used in VR, where there is
+// no reachable console, so an alias with no menu row is not "advanced", it is
+// unreachable. The four verbs below are the whole workflow. The sixteen nudge
+// aliases stay config-only -- eight axes times two directions would bury the
+// key list, and anyone binding all sixteen is editing a config file anyway.
+alias wr_place   "netevent wr_place"
+alias wr_lock    "netevent wr_lock"
+alias wr_measure "netevent wr_measure"
+alias wr_save    "netevent wr_save"
+addmenukey "Wheel: enter/exit placement mode" wr_place
+addmenukey "Wheel: lock touch point"          wr_lock
+addmenukey "Wheel: two-point size measure"    wr_measure
+addmenukey "Wheel: print calibration line"    wr_save
+
+alias wr_nudge_f_pos "netevent wr_nudge 0 1"
+alias wr_nudge_f_neg "netevent wr_nudge 0 0"
+alias wr_nudge_l_pos "netevent wr_nudge 1 1"
+alias wr_nudge_l_neg "netevent wr_nudge 1 0"
+alias wr_nudge_u_pos "netevent wr_nudge 2 1"
+alias wr_nudge_u_neg "netevent wr_nudge 2 0"
+alias wr_nudge_yaw_pos  "netevent wr_nudge 3 1"
+alias wr_nudge_yaw_neg  "netevent wr_nudge 3 0"
+alias wr_nudge_tilt_pos "netevent wr_nudge 4 1"
+alias wr_nudge_tilt_neg "netevent wr_nudge 4 0"
+alias wr_nudge_roll_pos "netevent wr_nudge 5 1"
+alias wr_nudge_roll_neg "netevent wr_nudge 5 0"
+alias wr_nudge_w_pos "netevent wr_nudge 6 1"
+alias wr_nudge_w_neg "netevent wr_nudge 6 0"
+alias wr_nudge_h_pos "netevent wr_nudge 7 1"
+alias wr_nudge_h_neg "netevent wr_nudge 7 0"

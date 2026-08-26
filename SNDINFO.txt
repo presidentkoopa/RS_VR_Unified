@@ -154,3 +154,41 @@ $random headshot/mini { hs/mini1 hs/mini2 hs/mini3 hs/mini4 hs/mini5 }
 $limit headshot/mini 2
 
 
+
+// ============================================================
+// from RS_WeaponWheel  (sndinfo.txt)
+// ============================================================
+// The rig's own voice. Logical names are namespaced wristrig/*, lump names
+// are wr_* (sounds/wr_*.ogg) -- neither collides with the DDZCLK*/RSHO*/RSHP*
+// set above, and the wheel's eight .ogg files land in sounds/ with no path
+// collision at all, which stage.ps1 confirms.
+// The rig's own voice.
+//
+// It used to borrow the engine's menu aliases -- menu/cursor, menu/choose --
+// which was the right call while there was nothing else, but they are the flat
+// UI beeps of whichever game is loaded and they sound exactly like the pause
+// menu. This is not the pause menu; it is a thing on your arm.
+//
+// Namespaced wristrig/* so nothing here can collide with a game's own sounds or
+// with another mod's.
+
+wristrig/move   wr_move
+wristrig/lock   wr_lock
+wristrig/open   wr_open
+wristrig/close  wr_close
+wristrig/nope   wr_nope
+
+wristrig/tick1  wr_tick1
+wristrig/tick2  wr_tick2
+wristrig/tick3  wr_tick3
+
+// Three ticks, picked at random.
+//
+// A fan opens often enough that one fixed sample starts to grate -- the ear
+// notices an identical transient repeating far faster than it notices the
+// sound itself. Rotating three kills that for free.
+$random wristrig/tick { wristrig/tick1  wristrig/tick2  wristrig/tick3 }
+
+// Menu volume, not world volume, and nothing here should duck anything.
+$limit wristrig/move  2
+$limit wristrig/tick  2

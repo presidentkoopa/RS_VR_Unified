@@ -1,18 +1,34 @@
-// RS_VR_Unified -- Hands, Holsters, HardPoints, Reload, Headshots in one package.
+// RS_VR_Unified -- Hands, Holsters, HardPoints, Reload, Headshots, WeaponWheel
+// in one package.
 //
 // ONE VERSION LINE, AND IT MUST BE 5.0.0.
 //
-// The five source packages declared two different versions: RS_Hands and
-// RS_Reload at "5.0.0", RS_Holsters / RS_HardPoints / Headshots at "4.14".
-// A merged project gets exactly one, and 5.0.0 is not a preference here --
-// zscript/hands/rs_grab.zs calls a native gated at version("4.15.1"), so a
-// merged build declaring 4.14 does not degrade, it fails to compile outright.
+// The six source packages declared three different versions: RS_Hands and
+// RS_Reload at "5.0.0", RS_Holsters / RS_HardPoints / Headshots at "4.14",
+// RS_WeaponWheel at "4.10". A merged project gets exactly one, and 5.0.0 is
+// not a preference here -- zscript/hands/rs_grab.zs calls a native gated at
+// version("4.15.1"), so a merged build declaring 4.14 does not degrade, it
+// fails to compile outright.
 //
 // Lifting the three 4.14 packages to 5.0.0 needs no code changes: their const
 // methods were checked against the 4.15.1 SafeConst rule (no member write, no
 // non-const self-call), and none of them use `unsafe`/`norollback`, `<>=`,
 // nested generics, or anything deprecated at 4.15.1. The engine is UZDoom
 // 5.0.0-rc.2 (E:\UZDXREMA, src/version.h) -- 5.0.0 IS the target.
+//
+// THE WHEEL'S 4.10 GOT THE SAME AUDIT, and it is the only one where the jump
+// is large enough for the SafeConst rule to be a real question. zcc_compile.cpp
+// makes a `const` method's self-pointer properly const only at >= 4.15.1
+// (VARF_SafeConst); below that it is merely VARF_ReadOnly and does not
+// propagate, so 4.10 code can legally do things 5.0.0 rejects. All 27 const
+// methods in the wheel were read: every one is pure-read, and every call they
+// make on self is either to another const method (calIndex, placeHand,
+// freeHand, placementFor, cardIndexOf, subIndexOf, HoveredClass,
+// otherHandWeapon) or to a `static`/`clearscope static` helper that takes no
+// self at all (cv, handFrame, handPos, familyRoot). Nothing to change.
+// The three 4.15.1 parse-version gates in zcc-parse.lemon are RELAXATIONS
+// ('>>' without a space in nested generics), so raising a version can never
+// trip them.
 //
 // NOTE: RS_Reload's original preamble claimed 5.0.0 was required for "the
 // frame/bone API this package leans on" and that a lower version would make it
@@ -34,6 +50,20 @@ version "5.0.0"
 //   reload      Depends on BOTH hands (RS_Basis) and holsters (the pouch).
 //   headshots   Independent. Hooks WorldThingDamaged and the laser trace and
 //               touches nothing else here -- the only member with no seam.
+//   wheel       Independent at compile time. It reaches RS_Headshots only by
+//               NAME -- 'HS_HeadshotBonus' as a DamageType literal, "HS_Marker"
+//               through Object.FindClass and GetClassName string compares (see
+//               wr_stattracker.zs) -- so it has always compiled alone and still
+//               does. Merged, those name lookups now always resolve.
+//
+//               THAT DOES NOT MAKE THE COUNTER WORK, and it would be easy to
+//               assume it does. wr_StatTracker's readers are static and are
+//               called from the ring (zscript.zs) and from wr_stats.zs, but
+//               the only thing that ever WRITES the wr_StatLedger they read is
+//               wr_StatEvents, and MAPINFO.txt does not register it -- see the
+//               note there. Reader without writer: every stat row reports "no
+//               data" and hides itself. Merging changes which half of the gate
+//               is shut, not whether it is shut.
 
 // -- hands: foundation ------------------------------------------------------
 #include "zscript/hands/rs_hands.zs"
@@ -67,6 +97,37 @@ version "5.0.0"
 // -- headshots: independent --------------------------------------------------
 #include "zscript/headshots/hs_feedback.zs"
 #include "zscript/headshots/hs_detect.zs"
+
+// -- wheel: the wrist rig, its compat readers and its stat tracker -----------
+// EIGHTEEN FILES, AND ALL EIGHTEEN MUST BE LISTED HERE.
+//
+// Unlike every other lane, the wheel's root script is not a bare include list:
+// zscript/wheel/zscript.zs is ~379KB of the ring's own implementation with the
+// includes merely sitting on top of it. staging strips that file's `version`
+// line and its seventeen `#include` lines (both are fatal in an included file
+// -- see the note in stage.ps1) which makes this list the ONLY thing that
+// reaches those seventeen. Miss one and its classes silently do not exist.
+//
+// Order below reproduces the wheel's own zscript.zs exactly: the seventeen in
+// the order it included them, then its own body last, where the file put it.
+#include "zscript/wheel/wr_gunhud.zs"
+#include "zscript/wheel/wr_compat_legendoom.zs"
+#include "zscript/wheel/wr_compat_drla.zs"
+#include "zscript/wheel/wr_compat_doomablo.zs"
+#include "zscript/wheel/wr_compat_pandemonia.zs"
+#include "zscript/wheel/wr_compat_pandemonia_anarchy.zs"
+#include "zscript/wheel/wr_compat_pandemonia_insurrection.zs"
+#include "zscript/wheel/wr_compat_guncaster.zs"
+#include "zscript/wheel/wr_compat_metadoom.zs"
+#include "zscript/wheel/wr_compat_borderdoom.zs"
+#include "zscript/wheel/wr_compat_combinedarms.zs"
+#include "zscript/wheel/wr_compat_doominfinite.zs"
+#include "zscript/wheel/wr_compat_finaldoomer.zs"
+#include "zscript/wheel/wr_compat_modelswapper.zs"
+#include "zscript/wheel/wr_compat_lithium.zs"
+#include "zscript/wheel/wr_stats.zs"
+#include "zscript/wheel/wr_stattracker.zs"
+#include "zscript/wheel/zscript.zs"
 
 // -- the grip arbiter --------------------------------------------------------
 // A Service, not an EventHandler, so it needs no MAPINFO entry: InitServices()
