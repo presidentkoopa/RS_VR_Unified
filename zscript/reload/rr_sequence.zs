@@ -370,7 +370,7 @@ class RR_Reload : EventHandler
 		// ASKING ONLY THE TWO HANDS WAS THE BUG, and it was not a corner case
 		// -- it fired on the mod's own core gesture. RS_Holsters swaps a Fist
 		// into a hand whenever that hand holds a grip claim
-		// (RS_Holsters.zs:1303-1316), which includes the entire time this file
+		// (RS_Holsters.zs:1302-1317), which includes the entire time this file
 		// is carrying a magazine, because Begin() sets the claim. A Fist has no
 		// AmmoType1, so AmmoOf returns null and that hand contributes a
 		// capacity of zero. Hold a pistol (cap 12) and a chaingun (cap 100),
