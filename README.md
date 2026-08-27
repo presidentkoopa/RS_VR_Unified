@@ -11,7 +11,17 @@ meant to serve as a centralized VR_Doom interface
 
 - three hardpoints for each hand allows holding one weapon and mounting three others for a gesture-based quick-fire system
 
-- a modular and customizable weapon wheel tracking weapon stats and features across over a dozen of Doom's most popular and technically complex mods
+- a modular and customizable weapon wheel tracking weapon stats and details across over a dozen of Doom's most popular and technically complex mods
+...DoomRL
+...Pandemonium (& Anarchy & Insurrection)
+...Lithium
+...Doomablo
+...Guncaster
+...Borderdoom
+...MetaDoom
+...CombinedArms
+...DoomInfinite
+...FinalDoomer
 
 - an optional second selectale inventory wheel
 
