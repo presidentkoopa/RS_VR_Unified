@@ -901,7 +901,15 @@ class RS_HolsterManager : EventHandler
 		}
 		else
 		{
-			pit = pawn.OffhandPitch;
+			// NEGATED, 2026-08-28 -- AttackPitch/OffhandPitch are stored
+			// negated by the engine; RS_HardPoints.zs fixed the identical
+			// bug the same day (its own handBasisPose-equivalent), and
+			// RS_Reload's rr_point.zs:Pit() is the original precedent,
+			// `return -((hand == 0) ? pmo.AttackPitch : pmo.OffhandPitch);`.
+			// Currently dead either way -- isHandAnchored() is always false
+			// in this repo (HOLSTER_COUNT == HAND_HOLSTER_START) -- fixed
+			// now so it isn't a landmine for whoever turns that on.
+			pit = -pawn.OffhandPitch;
 		}
 		rol = pawn.OffhandRoll;
 	}
@@ -1010,7 +1018,12 @@ class RS_HolsterManager : EventHandler
 				double bAng, bPit, bRol;
 				handBasisPose(pawn, gm, bAng, bPit, bRol);
 				edYaw[gm]   = normalizeDeg(pawn.AttackAngle - bAng);
-				edPitch[gm] = normalizeDeg(pawn.AttackPitch - bPit);
+				// NEGATED, 2026-08-28, to match handBasisPose's own fix
+				// above -- bPit now comes back true-signed, so the raw
+				// field here has to match it or the subtraction mixes two
+				// different sign conventions and produces a delta that's
+				// wrong in a NEW way, not just inverted.
+				edPitch[gm] = normalizeDeg(-pawn.AttackPitch - bPit);
 				edRoll[gm]  = normalizeDeg(pawn.AttackRoll  - bRol);
 			}
 			else

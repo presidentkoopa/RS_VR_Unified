@@ -437,6 +437,17 @@ class RS_HolsterProp : Actor
 		return (cv != null) ? cv.GetFloat() : 8.0;
 	}
 
+	// The same one diagnostic gate the rest of this repo uses. RS_Holsters has
+	// its own copy (verboseDiag) because it is a different class and ZScript
+	// has no shared free functions -- same cvar, same meaning, read the same
+	// way, so the two stay in step by reading one name rather than by anyone
+	// remembering to update both.
+	static bool holsterVerbose()
+	{
+		let cv = CVar.GetCVar("rs_holster_verbose", players[consoleplayer]);
+		return (cv != null) ? cv.GetBool() : false;
+	}
+
 	// Yaw offset applied to every stored weapon, and a separate 180 for
 	// main-hand weapons whose models are mirrored.
 	//
@@ -693,20 +704,66 @@ class RS_HolsterProp : Actor
 						= level.GetModelOffsetHint(wantClass, sprite, frame, stretch);
 					[boundsFound, measuredRadius] = level.GetModelBoundsHint(wantClass, sprite, frame);
 
-					// The retry failed too (some OTHER foreign-model system,
-					// not ModelSwapper, that doesn't use its SHOT/A anchor
-					// either) -- sprite/frame are this actor's own native
-					// rendering fields, not just a model-lookup key, so
-					// leaving them pinned to SHOT/0 would make the flat-
-					// sprite fallback show a generic shotgun-pickup icon
-					// instead of the real weapon's own. Put the real values
-					// back; no model resolved either way, so fallbackScale
-					// below applies same as any other unmeasurable weapon.
+					// CONFIRMED WRONG IN HEADSET, 2026-08-28: the donor class
+					// itself is never the one anchored on SHOT/A. ModelSwapper
+					// generates a SEPARATE display class per donor for exactly
+					// that anchor (RS_ForeignPickups.zs, MS_PickupModel and its
+					// ~35 generated subclasses -- "MS_BD_Rifle|MS_PU_BD_Rifle",
+					// "MS_Pistol|MS_PU_Pistol", etc.), always named by stripping
+					// the "MS_" prefix and adding "MS_PU_" back -- checked
+					// against the full list in this install, zero exceptions.
+					// Querying the donor class directly for SHOT/A, as this
+					// retry used to, always fails: bounds=0 found=0 offFound=0
+					// every single time, confirmed against real PB_DMR/MS_BD_
+					// Rifle and PB_Pistol/MS_Pistol logs.
+					string donorName = wantClass.GetClassName();
+					if (donorName.Left(3) == "MS_")
+					{
+						class<Actor> pickupClass = (class<Actor>)("MS_PU_" .. donorName.Mid(3));
+						if (pickupClass != null)
+						{
+							[found, mirrored, bakedAngleOffset, bakedPitchOffset, bakedRollOffset]
+								= level.GetModelOrientationHint(pickupClass, sprite, frame);
+							[foundOff, bakedOffX, bakedOffY, bakedOffZ]
+								= level.GetModelOffsetHint(pickupClass, sprite, frame, stretch);
+							[boundsFound, measuredRadius] = level.GetModelBoundsHint(pickupClass, sprite, frame);
+
+							// Found it under the PICKUP class -- that is what
+							// actually has to be bound via A_ChangeModel below,
+							// not the donor wantClass started as.
+							if (boundsFound)
+								wantClass = pickupClass;
+						}
+					}
+
+					// Neither the donor nor its pickup class (or this install
+					// has no "MS_" donor at all -- some OTHER foreign-model
+					// system, not ModelSwapper) resolved anything. sprite/frame
+					// are this actor's own native rendering fields, not just a
+					// model-lookup key, so leaving them pinned to SHOT/0 would
+					// show a generic shotgun-pickup icon instead of the real
+					// weapon's own. Put the real values back; no model
+					// resolved either way, so fallbackScale below applies same
+					// as any other unmeasurable weapon.
 					if (!boundsFound)
 					{
 						sprite = realSprite;
 						frame  = realFrame;
 					}
+
+					// GATED, 2026-08-28. This was the live probe for "ModelSwapper
+					// weapons show no model in holsters," and it did its job: it
+					// proved the donor class itself never resolves on SHOT/A and
+					// the MS_PU_ pickup class does. CONFIRMED WORKING IN HEADSET
+					// against both Brutal Doom and Project Brutality that same
+					// day. Kept rather than deleted, behind the same one gate the
+					// rest of this repo uses, because the MS_PU_ prefix is a
+					// convention read off ModelSwapper's own generated class
+					// list -- if that mod ever renames them, this line is what
+					// says so immediately instead of another blind chase.
+					if (holsterVerbose())
+						Console.Printf("\cy RS_HOLSTERPROP: ModelSwapper retry for %s -- resolved class %s -- bounds=%d",
+							w.GetClassName(), wantClass.GetClassName(), boundsFound);
 				}
 			}
 
@@ -723,6 +780,16 @@ class RS_HolsterProp : Actor
 			}
 
 			popTicsRemaining = POP_TICS;   // settle-pop on every fresh show
+
+			// TEMPORARY, 2026-08-28: same chase as the retry print above --
+			// covers the case that print never fires at all, which is itself
+			// diagnostic: wantClass == w.GetClass() here means
+			// GetActorModelClass never saw a donor swap for this weapon in
+			// the first place, so ModelSwapper compatibility never had a
+			// chance to matter -- a completely different problem than the
+			// SHOT/0 anchor failing.
+			Console.Printf("\cy RS_HOLSTERPROP: A_ChangeModel(%s) for %s -- boundsFound=%d sprite=%d frame=%d",
+				wantClass.GetClassName(), w.GetClassName(), boundsFound, sprite, frame);
 
 			// Borrow the RESOLVED model definition onto this instance --
 			// wantClass, not w.GetClassName(). After this, FindModelFrame
