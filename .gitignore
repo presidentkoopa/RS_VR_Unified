@@ -19,3 +19,7 @@
 .claude/
 
 __pycache__/
+
+# Engine logs, written next to whatever launched the build. Never source.
+doomxr-log.txt
+log-debug.txt
