@@ -556,7 +556,50 @@ class RS_Held : EventHandler
 		if (brk <= 0) return false;
 		Vector3 palm = RS_Reach.Centre(pmo, p, hand);
 		Vector3 mid  = (a.Pos.x, a.Pos.y, a.Pos.z + a.Height * 0.5);
-		return (mid - palm).Length() > brk;
+		double gap = (mid - palm).Length();
+
+		// THE GAP IS A FEELING, NOT JUST A THRESHOLD.
+		//
+		// This number was already being computed every tic and read exactly
+		// once, as a yes/no. But it is a measurement of how far the object is
+		// LAGGING BEHIND the palm that is asking for it -- which is precisely
+		// what "this is heavy" and "this is snagged on something" feel like.
+		// TryMove refuses when the object cannot fit, so dragging a barrel
+		// around a corner or lifting something into a ceiling opens that gap
+		// long before the hold actually breaks. Reading it continuously instead
+		// of only at the limit costs one call and turns a silent failure into a
+		// warning you can feel.
+		//
+		// SCALED BY SIZE, using the collision cylinder every other hand
+		// mechanism already reads, so a corpse drags limp and a barrel fights
+		// you. Radius*Height rather than mass because Doom actors have no mass
+		// -- and the barrel is 16x32 while a medikit is 20x16, which is close
+		// enough to right that inventing a mass table would be a worse answer
+		// than the number already on the actor.
+		//
+		// NORMALISED AGAINST THE BREAK DISTANCE so it reaches full strength
+		// exactly as the hold is about to fail, whatever that distance is tuned
+		// to. Nothing is felt while the object is tracking properly.
+		double buzz = Num("rs_hold_haptic", p, 0.6);
+		if (buzz > 0)
+		{
+			double strain = gap / brk;
+			if (strain > 0.15)
+			{
+				// Cheap size proxy, capped: a big prop should feel heavier than
+				// a small one, but a mod's oversized actor must not be able to
+				// ask for an intensity the runtime never expected.
+				double bulk = clamp((a.Radius * a.Height) / 512.0, 0.5, 2.0);
+				double amp  = clamp(strain * buzz * bulk, 0.0, 1.0);
+
+				// Short and re-issued every tic rather than one long buzz: the
+				// strain changes continuously and a long pulse would describe
+				// the gap as it was when it started, not as it is.
+				level.VRHaptic(hand, amp, 20.0);
+			}
+		}
+
+		return gap > brk;
 	}
 
 	// ---- the tic ---------------------------------------------------------

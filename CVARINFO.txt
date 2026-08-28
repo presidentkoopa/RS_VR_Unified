@@ -228,6 +228,14 @@ user float rs_hold_break = 40.0;
 // would still be drawn differently from a dropped one with roll left at 0.
 user bool rs_hold_rotate = true;
 
+// How hard the controller buzzes as a carried object strains against your
+// grip -- dragging a barrel round a corner, lifting something into a ceiling.
+// Scales with how far the thing is lagging behind your palm and with its own
+// size, and reaches full strength exactly as the hold is about to break, so
+// it is a warning rather than a surprise. 0 switches it off; nothing is felt
+// while an object is tracking your hand properly.
+user float rs_hold_haptic = 0.6;
+
 user bool rs_hold_debug = false;
 
 // ---- WHAT IS GRABBABLE --------------------------------------------------
@@ -388,10 +396,21 @@ user bool rs_grab_lightup = true;
 // to read as alive, slow enough that a room full of pickups is not a strobe.
 user float rs_grab_flash = 24.0;
 
-// What a non-pickup does when it reaches you uncaught, in damage. A barrel that
-// detonates on contact makes every missed pull a near-death; you can still shoot
-// one out of the air if that is what you wanted. 0 makes an impact harmless.
-user float rs_dgrab_impact = 5.0;
+// WHAT A MISSED CATCH COSTS. 0 -- the default as of 2026-08-28 -- means an
+// uncaught object simply lands at your feet, still there and still grabbable.
+//
+// It used to be 5, and a miss resolved as a real event: the medikit healed you,
+// the ammo box armed you, the barrel hurt you. The idea was that missing should
+// cost something. What it meant in practice was that you could not pull a
+// medikit across a room IN ORDER TO CARRY IT -- fumbling the catch spent the
+// item where it stood, and there was no way to ask for the pull without also
+// accepting the pickup.
+//
+// Above zero restores the old stakes: a pickup resolves as a pickup and
+// anything else deals this much damage. A barrel still will not detonate on
+// contact -- that made every missed pull a near-death -- and you can always
+// shoot one out of the air if that is the outcome you were after.
+user float rs_dgrab_impact = 0.0;
 
 // ---- THROWING -----------------------------------------------------------
 //
