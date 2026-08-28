@@ -94,6 +94,28 @@ class RS_Held : EventHandler
 	private bool   hSavedInterpAng[2];
 	private double hSavedRoll[2];
 
+	// A HELD THING BECOMES A REAL 3D OBJECT, if a voxel exists for it.
+	//
+	// The roll trick above makes a billboard READ as something turning over,
+	// and it is a good illusion, but it is still a flat sprite that always
+	// faces you -- turn it far enough and the lie shows. A voxel is genuinely
+	// solid, and it is also the only path on which the engine will honour
+	// actor PITCH and ROLL at all: VOXELDEF entries can carry UseActorPitch
+	// and UseActorRoll (models.cpp:1765-1766), which is exactly what a
+	// borrowed weapon MODELDEF cannot.
+	//
+	// Voxel selection is otherwise all-or-nothing -- keyed on the sprite frame
+	// and gated by the global r_drawvoxels -- so this needed an engine change
+	// to be possible at all: AActor.VoxelOverride, added 2026-08-28, which
+	// ignores that cvar and outranks any model, for one actor at a time.
+	// That is what lets a voxel pack sit loaded and inert until something is
+	// actually picked up.
+	//
+	// Saved and restored like every other borrowed flag, under the same
+	// hOwnsFlags token, so a dropped object goes back to being whatever it was
+	// -- including already-voxel, if the player has r_drawvoxels on globally.
+	private bool   hSavedVoxel[2];
+
 	// The last value THIS system wrote to GripClaimMain/Off, kept apart from the
 	// slot above because the slot is gone by the time the claim needs clearing.
 	// The convention on GripClaim* is "clear only a value that is yours", and
@@ -360,6 +382,7 @@ class RS_Held : EventHandler
 		hSavedRollCentre[hand] = false;
 		hSavedInterpAng[hand]  = false;
 		hSavedRoll[hand]       = 0.0;
+		hSavedVoxel[hand]      = false;
 	}
 
 	// Whether held objects turn with the wrist at all. Read per-use rather than
@@ -368,6 +391,14 @@ class RS_Held : EventHandler
 	private bool RotateHeld(PlayerInfo p) const
 	{
 		return Flag("rs_hold_rotate", p, true);
+	}
+
+	// Whether a held object should become its voxel. Read per-use for the same
+	// reason as the rotate toggle: switching it off has to put the object back
+	// on the next tic, not at release.
+	private bool VoxelHeld(PlayerInfo p) const
+	{
+		return Flag("rs_hold_voxel", p, true);
 	}
 
 	private void SaveFlags(int hand, Actor a)
@@ -380,6 +411,7 @@ class RS_Held : EventHandler
 		hSavedRollCentre[hand] = a.bROLLCENTER;
 		hSavedInterpAng[hand]  = a.bINTERPOLATEANGLES;
 		hSavedRoll[hand]       = a.Roll;
+		hSavedVoxel[hand]      = a.VoxelOverride;
 
 		// SPECIAL cleared is the one that is not optional. An item in your hand
 		// is an item permanently inside your own collision cylinder, so Doom's
@@ -425,6 +457,7 @@ class RS_Held : EventHandler
 		hSavedRollCentre[to]   = hSavedRollCentre[from];
 		hSavedInterpAng[to]    = hSavedInterpAng[from];
 		hSavedRoll[to]         = hSavedRoll[from];
+		hSavedVoxel[to]        = hSavedVoxel[from];
 		hOwnsFlags[from]       = false;
 	}
 
@@ -447,6 +480,11 @@ class RS_Held : EventHandler
 		a.bROLLCENTER        = hSavedRollCentre[hand];
 		a.bINTERPOLATEANGLES = hSavedInterpAng[hand];
 		a.Roll               = hSavedRoll[hand];
+
+		// Back to whatever it was, which is not always false: a player running
+		// r_drawvoxels globally may have picked up something that was already
+		// a voxel, and putting it down must not take that away.
+		a.VoxelOverride      = hSavedVoxel[hand];
 
 		a.Vel = (0, 0, 0);
 	}
@@ -508,6 +546,15 @@ class RS_Held : EventHandler
 		// in the menu restores the borrowed flags immediately instead of at the
 		// next release.
 		if (!hOwnsFlags[hand]) return;
+
+		// A VOXEL FOR AS LONG AS IT IS HELD, if one exists for this thing.
+		//
+		// Free when it does not: the engine falls straight through to the
+		// ordinary model/sprite path when the actor's current frame has no
+		// voxel, so this costs a null check on everything else. Set every tic
+		// alongside the toggle read, so switching voxels off in the menu puts
+		// the object back on the next tic rather than at release.
+		a.VoxelOverride = VoxelHeld(p);
 
 		if (RotateHeld(p))
 		{

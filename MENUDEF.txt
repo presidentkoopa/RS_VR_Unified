@@ -257,6 +257,7 @@ OptionMenu "RS_GrabHoldMenu"
 	Slider "Let go at",                 "rs_hold_break", 0, 120, 2, 0
 	Option "Turn with wrist",           "rs_hold_rotate", "OnOff"
 	Slider "Weight feedback",           "rs_hold_haptic", 0, 1.5, 0.05, 2
+	Option "Voxel when held",           "rs_hold_voxel", "OnOff"
 	StaticText ""
 	StaticText "Walking into a pickup collects it long before", 1
 	StaticText "your hand gets near it. On = you must reach.", 1

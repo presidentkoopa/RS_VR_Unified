@@ -236,6 +236,15 @@ user bool rs_hold_rotate = true;
 // while an object is tracking your hand properly.
 user float rs_hold_haptic = 0.6;
 
+// Turn a held object into its VOXEL, if a voxel exists for it. A billboard
+// always faces you, so a sprite can only ever fake being turned over; a voxel
+// is genuinely solid, and it is also the one path where the engine honours
+// actor pitch and roll at all. Free on anything with no voxel -- the lookup
+// falls straight through. Needs a voxel pack loaded to do anything, and
+// deliberately does NOT need r_drawvoxels: the point is a pack that sits
+// inert until something is actually in your hand.
+user bool rs_hold_voxel = true;
+
 user bool rs_hold_debug = false;
 
 // ---- WHAT IS GRABBABLE --------------------------------------------------
