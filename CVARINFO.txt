@@ -1007,22 +1007,6 @@ user float rr_grip_unmaker  = 4;
 
 
 // ============================================================
-// from RS_Headshots  (CVARINFO.txt)
-// ============================================================
-// Headshot damage bonus. Applied as a SEPARATE, immediate follow-up hit on
-// top of the original damage -- WorldThingDamaged fires AFTER DamageMobj
-// has already run, so the original hit's number can't be changed in place.
-// See hs_detect.zs (WorldThingDamaged, HS_BONUS_DAMAGETYPE).
-//
-// High-ROF weapons get the lower of the two: landing many headshots is a
-// matter of spray volume rather than aim for them, so they don't earn the
-// full bonus. See HS_HighROF in hs_detect.zs for which weapons that is.
-server float hs_headshot_damage_mult = 1.5;
-server float hs_headshot_damage_mult_highrof = 1.2;
-
-
-
-// ============================================================
 // from RS_WeaponWheel  (cvarinfo.txt)
 // ============================================================
 // 130 cvars, every one wr_*. Checked name-by-name against the 191 already

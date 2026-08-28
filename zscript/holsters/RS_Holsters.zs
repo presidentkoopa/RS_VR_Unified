@@ -1379,11 +1379,11 @@ class RS_HolsterManager : EventHandler
 		if (handClaimed && prev == null && pouchInvolved)
 		{
 			Weapon real = isMain ? pawn.player.ReadyWeapon : pawn.player.OffhandWeapon;
-			if (real != null && !isFistClass(real.GetClass()))
+			if (real != null && !RS_HandFist.IsFistClass(real.GetClass()))
 			{
 				// findFist's own parameter is named "offhand" -- !isMain
 				// gives it exactly that.
-				let fist = findFist(pawn, !isMain);
+				let fist = RS_HandFist.FindOrMakeFist(pawn, !isMain);
 				if (fist != null)
 				{
 					if (isMain) pouchPreviousMain[i] = real;
@@ -1828,108 +1828,6 @@ class RS_HolsterManager : EventHandler
 		if (mainHand) { grabbedMain[i] = want; } else { grabbedOff[i] = want; }
 	}
 
-	// Whatever this player's melee weapon actually is. Walks inventory rather
-	// than naming a class, so it survives new player classes and new fist
-	// variants without edits here.
-	// Must return a fist that ALREADY belongs to the hand being filled.
-	// MoveWeaponToHand's first guard is:
-	//     if (weap.bNoHandSwitch && weap.bOffhandWeapon != (hand == 1)) return;
-	// and every fist here carries +WEAPON.NOHANDSWITCH -- so handing it the
-	// main-hand fist for the off hand makes it bail SILENTLY. That was the
-	// "offhand never lets go of the gun" bug: the store happened, the hand
-	// was never emptied, and nothing reported a failure.
-	// One definition of "is this a fist", used by both the store guard and the
-	// fist lookup. Name-based first -- see the note at the store guard --
-	// PLUS a fallback for a pack that replaces Fist under an unrelated name.
-	//
-	// BrutalDoom's own melee weapon is "ACTOR Melee_Attacks : BrutalWeapon
-	// Replaces Fist" -- no "Fist" anywhere in the class name, so the naming
-	// convention alone never finds it. Every store attempt committed the
-	// weapon to the holster table, then found no fist to put in the now-
-	// empty hand and rolled the whole thing back -- "no %s-hand fist to
-	// empty into" on literally every press, which is what "BrutalDoom does
-	// not holster anything" turned out to mean. GetReplacement asks the
-	// engine's own replacement table what currently occupies Fist's slot,
-	// which is exactly the relationship a pack in this shape actually
-	// declares, regardless of what it named the result.
-	static bool isFistClass(class<Actor> cls)
-	{
-		if (cls == null)
-			return false;
-		// GetClassName() is a Name; IndexOf is a String method, so it has
-		// to land in a string first.
-		string cn = cls.GetClassName();
-		if (cn.IndexOf("Fist") >= 0)
-			return true;
-
-		class<Actor> repl = Actor.GetReplacement((class<Actor>)("Fist"));
-		return repl != null && repl == cls;
-	}
-
-	private Weapon findFist(PlayerPawn pawn, bool offhand) const
-	{
-		Weapon spare = null;
-
-		for (Inventory item = pawn.Inv; item != null; item = item.Inv)
-		{
-			let w = Weapon(item);
-			if (w == null)
-				continue;
-			if (!isFistClass(w.GetClass()))
-				continue;
-
-			if (w.bOffhandWeapon == offhand)
-				return w;      // the one that belongs in this hand
-
-			// A CANDIDATE FOR THE FALLBACK BELOW, remembered but not returned
-			// yet -- an exact match anywhere later in the chain still wins.
-			// Never the weapon currently seated in the OTHER hand: that
-			// instance is busy, full stop, no flag fixup changes that.
-			Weapon otherHandWeapon = offhand ? pawn.player.ReadyWeapon : pawn.player.OffhandWeapon;
-			if (spare == null && w != otherHandWeapon)
-				spare = w;
-		}
-
-		if (spare != null)
-		{
-			// THE FALLBACK, DONE THE WAY THE OLD ONE WASN'T.
-			//
-			// A genuinely-named, unclaimed off-hand fist (this arsenal's own
-			// "Offhand_Fist") was sitting right there in inventory and
-			// findFist walked past it, because
-			// bOffhandWeapon is not a fixed "which hand this is for" label --
-			// it is the engine's own live "which hand did I most recently get
-			// seated in" tracker (player.zs:2629,
-			// `weap.bOffhandWeapon = hand == 1;`, written unconditionally
-			// inside MoveWeaponToHand every time a weapon is placed). A fist
-			// that has never yet been drawn into ANY hand still reads its
-			// class default, which is false for both -- so a genuinely
-			// off-hand-only fist that has simply never been used yet fails
-			// the exact-match test above for the exact same reason a
-			// main-hand one would.
-			//
-			// The comment this replaces tried a fallback that returned a
-			// mismatched fist WITHOUT fixing its flag first, and that failed
-			// for a documented reason: MoveWeaponToHand's own first guard is
-			//     if (weap.bNoHandSwitch && weap.bOffhandWeapon != (hand==1)) return;
-			// and every fist here carries +WEAPON.NOHANDSWITCH, so hand it a
-			// fist still flagged for the wrong side and MoveWeaponToHand
-			// bails SILENTLY before doing anything -- the store completes,
-			// the hand is never emptied, and nothing reports why.
-			//
-			// So: set the flag to match the hand THIS CALL is filling, before
-			// handing it back. That is exactly what MoveWeaponToHand would do
-			// to it anyway, the moment it successfully seats -- doing it here
-			// only means the guard sees a fist already correctly labelled for
-			// where it is about to go, instead of rejecting it on the way in.
-			spare.bOffhandWeapon = offhand;
-			if (spare.SisterWeapon != null)
-				spare.SisterWeapon.bOffhandWeapon = offhand;
-			return spare;
-		}
-
-		return null;
-	}
 
 	private void ensureProps()
 	{
@@ -2513,7 +2411,7 @@ class RS_HolsterManager : EventHandler
 		for (int c = 0; c < HOLSTER_COUNT; ++c)
 		{
 			int ci = (i * HOLSTER_COUNT) + c;
-			if (contents[ci] != null && isFistClass(contents[ci].GetClass()))
+			if (contents[ci] != null && RS_HandFist.IsFistClass(contents[ci].GetClass()))
 				contents[ci] = null;
 		}
 
@@ -2528,7 +2426,7 @@ class RS_HolsterManager : EventHandler
 		// fist got stored like a real weapon. That is where the extra fists
 		// came from. Match on the name, the same way findFist does.
 		string heldName = "";
-		if (held != null && !isFistClass(held.GetClass()))
+		if (held != null && !RS_HandFist.IsFistClass(held.GetClass()))
 			heldName = held.GetClassName();
 
 		if (stored == null && heldName == "")
@@ -2545,7 +2443,7 @@ class RS_HolsterManager : EventHandler
 			string dbgHeld = "NULL";
 			if (held != null) dbgHeld = held.GetClassName();
 			string dbgFistNote = "";
-			if (held != null && isFistClass(held.GetClass())) dbgFistNote = " (matched as fist)";
+			if (held != null && RS_HandFist.IsFistClass(held.GetClass())) dbgFistNote = " (matched as fist)";
 			Console.Printf("\cy RS_HOLSTER: %s-hand no-op -- held=%s%s  slot(%d) empty",
 				offhand ? "off" : "main", dbgHeld, dbgFistNote, holsterIdx);
 			return; // fists into an empty holster: nothing to do
@@ -2710,7 +2608,7 @@ class RS_HolsterManager : EventHandler
 			// depends on the player class. Hardcoding "Fist" found nothing,
 			// which is why storing a weapon appeared to do nothing at all --
 			// the gun went into the holster but never left the hand.
-			let fist = findFist(pawn, offhand);
+			let fist = RS_HandFist.FindOrMakeFist(pawn, offhand);
 			if (fist == null)
 			{
 				// No fist this hand can actually accept. Refusing loudly beats
@@ -2734,8 +2632,20 @@ class RS_HolsterManager : EventHandler
 					if (dbgW == null) continue;
 					wCount++;
 					string dbgCn = dbgW.GetClassName();
-					Console.Printf("\cy    %-24s offhand=%d  isFist=%d",
-						dbgCn, dbgW.bOffhandWeapon, isFistClass(dbgW.GetClass()));
+					// noHandSwitch/sister added 2026-08-28, chasing the
+					// Brutal Doom/Project Brutality off-hand report -- the
+					// original three columns can't tell a single-instance
+					// arsenal (this fist is the only one, so it's always
+					// "otherHandWeapon" from the off hand's point of view,
+					// findFist has nothing to relabel) apart from a
+					// two-instance one where the SECOND instance's own
+					// NOHANDSWITCH or missing SisterWeapon link is what
+					// actually blocks the seat. One repro answers both.
+					string dbgSister = "null";
+					if (dbgW.SisterWeapon != null)
+						dbgSister = dbgW.SisterWeapon.GetClassName();
+					Console.Printf("\cy    %-24s offhand=%d  isFist=%d  noHandSwitch=%d  sister=%s",
+						dbgCn, dbgW.bOffhandWeapon, RS_HandFist.IsFistClass(dbgW.GetClass()), dbgW.bNoHandSwitch, dbgSister);
 				}
 				if (wCount == 0)
 					Console.Printf("\cy    (no Weapon-type items in inventory at all)");

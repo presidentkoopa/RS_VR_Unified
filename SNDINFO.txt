@@ -76,27 +76,6 @@ rr/drop       DSBDCLOS
 
 
 // ============================================================
-// from RS_Headshots  (sndinfo.txt)
-// ============================================================
-// Mini-crit hit confirms, lifted from mk-crits (TF2 source set).
-// Five variants so a burst of hits doesn't machine-gun the same sample.
-
-hs/mini1					"sounds/tf2/crit_hit_mini1.ogg"
-hs/mini2					"sounds/tf2/crit_hit_mini2.ogg"
-hs/mini3					"sounds/tf2/crit_hit_mini3.ogg"
-hs/mini4					"sounds/tf2/crit_hit_mini4.ogg"
-hs/mini5					"sounds/tf2/crit_hit_mini5.ogg"
-
-$random headshot/mini { hs/mini1 hs/mini2 hs/mini3 hs/mini4 hs/mini5 }
-
-// Plays off the marker actor at the impact point, not off the player, so it
-// arrives from the thing you shot. $limit keeps a shotgun spread from stacking
-// five copies of the same confirm on top of each other.
-$limit headshot/mini 2
-
-
-
-// ============================================================
 // from RS_WeaponWheel  (sndinfo.txt)
 // ============================================================
 // The rig's own voice. Logical names are namespaced wristrig/*, lump names

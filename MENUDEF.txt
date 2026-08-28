@@ -935,58 +935,6 @@ OptionMenu "RR_Sizes"
 
 
 // ============================================================
-// from RS_Headshots  (menudef.txt)
-// ============================================================
-// ---------------------------------------------------------------------------
-// Headshots -- options.
-//
-// This mod decides WHEN the engine's VR laser sight should react to a
-// lined-up headshot (HS_Handler.WorldTick, hs_detect.zs), confirms an
-// actual hit (WorldThingDamaged, same file), and now deals a real damage
-// bonus on that hit -- own cvars, this mod's own menu section below.
-//
-// The sight-reaction cvars are engine-owned and surfaced again here rather
-// than left for a player to find by accident under VR Options: they only
-// do anything BECAUSE this mod is loaded, so this is where a player looks
-// for them first. Same cvars, same names -- a second doorway, not a copy.
-// ---------------------------------------------------------------------------
-AddOptionMenu "OptionsMenu"
-{
-	StaticText " "
-	Submenu "Headshots", "HS_Options"
-}
-
-OptionMenu "HS_Options"
-{
-	Title "Headshots"
-	StaticText " "
-	StaticText "Adds a lined-up-headshot reaction to the VR laser sight,", "DarkGray"
-	StaticText "a confirm marker and sound, and a real damage bonus, on", "DarkGray"
-	StaticText "an actual hit.", "DarkGray"
-	StaticText " "
-
-	StaticText "Damage Bonus", 1
-	Slider "Damage Multiplier", "hs_headshot_damage_mult", 1.0, 3.0, 0.1, 1
-	Slider "Damage Multiplier (High-ROF Weapons)", "hs_headshot_damage_mult_highrof", 1.0, 3.0, 0.1, 1
-	StaticText "High-ROF weapons -- the Chaingun by default -- get the", "DarkGray"
-	StaticText "second multiplier: landing many headshots with them is a", "DarkGray"
-	StaticText "matter of spray volume, not aim, so they don't earn the", "DarkGray"
-	StaticText "full bonus.", "DarkGray"
-	StaticText " "
-
-	StaticText "Sight Reaction", 1
-	Option "React To Lined-Up Headshot", "vr_laser_headshot_react", "OnOff"
-	ColorPicker "Reaction Color", "vr_laser_headshot_color"
-	Option "Pulse", "vr_laser_headshot_pulse", "OnOff"
-	Slider "Pulse Speed (Hz)", "vr_laser_headshot_pulse_speed", 0.5, 20.0, 0.5, 1
-	StaticText " "
-	StaticText "More laser sight settings -- colour, range, cycling --", "DarkGray"
-	StaticText "live under VR Options > Laser Sight Options.", "DarkGray"
-}
-
-
-
-// ============================================================
 // from RS_WeaponWheel  (menudef.txt)
 // ============================================================
 // Appended verbatim. No name collides with anything above -- every menu and

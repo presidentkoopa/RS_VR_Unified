@@ -1,10 +1,10 @@
-// RS_VR_Unified -- Hands, Holsters, HardPoints, Reload, Headshots, WeaponWheel
+// RS_VR_Unified -- Hands, Holsters, HardPoints, Reload, WeaponWheel
 // in one package.
 //
 // ONE VERSION LINE, AND IT MUST BE 5.0.0.
 //
 // The six source packages declared three different versions: RS_Hands and
-// RS_Reload at "5.0.0", RS_Holsters / RS_HardPoints / Headshots at "4.14",
+// RS_Reload at "5.0.0", RS_Holsters / RS_HardPoints at "4.14",
 // RS_WeaponWheel at "4.10". A merged project gets exactly one, and 5.0.0 is
 // not a preference here -- zscript/hands/rs_grab.zs calls a native gated at
 // version("4.15.1"), so a merged build declaring 4.14 does not degrade, it
@@ -48,13 +48,13 @@ version "5.0.0"
 //   hardpoints  Arm anchors. Sibling of holsters (one mod until 2026-08-23),
 //               shares its design and, currently, ~1200 duplicated lines.
 //   reload      Depends on BOTH hands (RS_Basis) and holsters (the pouch).
-//   headshots   Independent. Hooks WorldThingDamaged and the laser trace and
-//               touches nothing else here -- the only member with no seam.
-//   wheel       Independent at compile time. It reaches RS_Headshots only by
-//               NAME -- 'HS_HeadshotBonus' as a DamageType literal, "HS_Marker"
-//               through Object.FindClass and GetClassName string compares (see
-//               wr_stattracker.zs) -- so it has always compiled alone and still
-//               does. Merged, those name lookups now always resolve.
+//   wheel       Independent at compile time. It used to reach RS_Headshots only
+//               by NAME -- 'HS_HeadshotBonus' as a DamageType literal,
+//               "HS_Marker" through Object.FindClass and GetClassName string
+//               compares (see wr_stattracker.zs) -- which is exactly what let
+//               Headshots come back OUT again (2026-08-28) without touching
+//               this file: those lookups just resolve to nothing again, same
+//               as any build that never had Headshots in it.
 //
 //               THAT DOES NOT MAKE THE COUNTER WORK, and it would be easy to
 //               assume it does. wr_StatTracker's readers are static and are
@@ -68,6 +68,7 @@ version "5.0.0"
 // -- hands: foundation ------------------------------------------------------
 #include "zscript/hands/rs_hands.zs"
 #include "zscript/hands/handworld.zs"
+#include "zscript/hands/rs_fist.zs"
 #include "zscript/hands/rs_grabpolicy.zs"
 #include "zscript/hands/rs_held.zs"
 #include "zscript/hands/rs_swing.zs"
@@ -91,10 +92,6 @@ version "5.0.0"
 #include "zscript/reload/rr_ammo.zs"
 #include "zscript/reload/rr_magazine.zs"
 #include "zscript/reload/rr_sequence.zs"
-
-// -- headshots: independent --------------------------------------------------
-#include "zscript/headshots/hs_feedback.zs"
-#include "zscript/headshots/hs_detect.zs"
 
 // -- wheel: the wrist rig, its compat readers and its stat tracker -----------
 // EIGHTEEN FILES, AND ALL EIGHTEEN MUST BE LISTED HERE.
