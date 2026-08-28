@@ -39,24 +39,21 @@ class RS_HolsterManager : EventHandler
 	// indices 8-13 now live in their own mod, RS_HardPoints -- see README.md.
 	// Both are designed to load at the same time.
 	//
-	// HAND_HOLSTER_START moved to 9 (was 8) when the ammo pouch took index 8
-	// -- isHandAnchored() is idx >= HAND_HOLSTER_START, so leaving this at 8
-	// would have made the pouch read as hand-anchored (raw hand-relative
-	// offsets instead of body-relative + eye-height fraction) and land
-	// somewhere off the player entirely. Every valid index (0-8) is still
-	// below 9, so isHandAnchored() stays always-false and every hand-anchored
-	// branch it guards stays unreachable, same as before -- this repo still
-	// has no hand-anchored holsters of its own.
-	const HAND_HOLSTER_START = 9;
-	const FOREARM_HOLSTER_END = 12;   // unreachable; see above
-
-	// Also unreachable, and also kept rather than deleted: handBasisPose still
-	// REFERENCES this, and dead code still has to compile. Deleting the
-	// constant while leaving its one consumer standing is exactly the kind of
-	// break that only shows up as a load failure in the headset, since there
-	// is no way to test-compile here. The live copy of this constant is in
-	// RS_HardPoints, where the forearm rig actually runs.
-	const FOREARM_YAW_CORRECTION = 90.0;
+	// THEIR LEFTOVERS WERE REMOVED FROM THIS FILE ON 2026-08-28. Until then
+	// this class still carried the whole hand-anchored path -- isHandAnchored,
+	// handBasisPose, handAnchorPos, worldToHand, HAND_HOLSTER_START,
+	// FOREARM_HOLSTER_END, FOREARM_YAW_CORRECTION -- none of it reachable,
+	// because isHandAnchored was `idx >= 9` while HOLSTER_COUNT is 9. It was
+	// kept for a while on the theory that dead code is harmless; it was not.
+	// A pitch sign-convention bug was found sitting inside that dead path the
+	// same day (the engine stores AttackPitch/OffhandPitch negated), which is
+	// a bug nobody could ever have observed and everybody would have had to
+	// re-derive the day those indices were switched back on. Every branch it
+	// guarded resolved to its else, so removal was mechanical.
+	//
+	// If hand-anchored holsters are ever wanted here again, take them from
+	// RS_HardPoints, where that rig actually runs and its math is exercised --
+	// not from this file's history.
 
 	// Doom's player scale puts a map unit at roughly one real inch (player
 	// radius 16 ~ a person's half shoulder width), so these read as inches.
@@ -93,21 +90,15 @@ class RS_HolsterManager : EventHandler
 	// angle. One shared set of angles cannot serve both, so pitch/yaw/roll ride
 	// in the table alongside position and are captured the same way -- from
 	// your hand, in edit mode.
-	// FIELD MEANING SPLITS AT idx == HAND_HOLSTER_START. For idx 0-7 (the
-	// torso holsters, below), hsFwd/hsSide are offsets from HmdPos along
-	// bodyYaw's forward/right, hsFrac is a FRACTION of calibrated eye
-	// height, and hsPitch/hsYaw/hsRoll are ABSOLUTE angles. For idx 8-13
-	// (the forearm/wrist hardpoints), hsFwd/hsSide/hsFrac are instead raw
-	// map-unit (inch) offsets, always from OffhandPos and along the OFF
-	// HAND's own live forward/right/up axes -- see handBasisPose/
-	// handAnchorPos -- and hsPitch/hsYaw/hsRoll are TRIMS added on top of
-	// that basis, not absolute
-	// angles (see updateProps' baseAngle/basePitch/baseRoll). Reusing the
-	// same six fields for both rather than adding a 7th out-param: nothing
-	// that only moves these doubles around (dumpTable, saveProfile,
-	// loadProfile) ever needs to know which meaning applies, only the code
-	// that actually turns them into a world position/orientation does, and
-	// that code already has to branch on isHandAnchored anyway.
+	// FIELD MEANING, all indices: hsFwd/hsSide are offsets from HmdPos along
+	// bodyYaw's forward/right, hsFrac is a FRACTION of calibrated eye height
+	// (so the rig scales to the player rather than to a fixed inch count),
+	// and hsPitch/hsYaw/hsRoll are ABSOLUTE angles.
+	//
+	// This used to split at idx 9, where a second set of hand-relative
+	// meanings took over for the forearm/wrist mounts. Those moved to
+	// RS_HardPoints and the dead half was removed on 2026-08-28 -- see the
+	// note on the constants at the top of this class.
 	static void GetHolster(int idx, out string hsName, out double hsFwd, out double hsSide, out double hsFrac, out double hsRadius,
 	                       out double hsPitch, out double hsYaw, out double hsRoll)
 	{
@@ -824,12 +815,6 @@ class RS_HolsterManager : EventHandler
 	{
 		ensureEdit();
 
-		// Forearm/wrist hardpoints track the off-hand's own live pose, not
-		// the torso -- a completely different basis, so it is its own
-		// function rather than a few more branches folded into this one.
-		if (isHandAnchored(idx))
-			return handAnchorPos(pawn, idx);
-
 		// bodyYaw, NOT HmdYaw: anchors hang off the torso's facing so they do
 		// not whip around when the head turns. ZScript's cos/sin take DEGREES.
 		double yaw = bodyYaw[i];
@@ -867,124 +852,6 @@ class RS_HolsterManager : EventHandler
 		oFrac = (eyeHeight[i] != 0) ? ((world.Z - floorZ) / eyeHeight[i]) : 0.0;
 	}
 
-	// The live angle/pitch/roll every hand-anchored holster's basis is built
-	// from: the OFF hand's own live pose, unconditionally, for both position
-	// (handAnchorPos/worldToHand, which only read ang/pit -- position
-	// deliberately ignores roll, see handAnchorPos' own comment) and
-	// orientation (updateProps/dumpOneHolsterProp/updateGrabs, which need
-	// all three). A single small function rather than reading
-	// pawn.OffhandAngle/Pitch/Roll inline at every call site so there is one
-	// place to touch if that ever needs to change again. Forearm indices
-	// (8-10) get FOREARM_YAW_CORRECTION added on top -- see its own comment
-	// up top for why -- and their pitch is forced to 0 rather than read
-	// live. Confirmed in headset: tilting the off hand's gun down swung
-	// Forearm1-3 the WRONG way (up, mirrored) instead of leaving them
-	// roughly put, because a pure 180-degree reversal of a downward-tilted
-	// vector points backward-and-UP -- mathematically correct for "the
-	// exact reverse of wherever the controller points this instant," but
-	// physically wrong for "my forearm," which does not flip upside down
-	// just because I flex my wrist. There is no elbow tracking to give a
-	// real forearm direction (see the IK note elsewhere in this file), so
-	// this is the stand-in: forearm hardpoints follow the arm's YAW only
-	// (turning left/right) and ignore wrist PITCH (tilting up/down)
-	// entirely, for both position (this function feeds handAnchorPos) and
-	// the stored item's own orientation (this function also feeds
-	// updateProps' basePitch) -- a forearm-mounted item should sit level
-	// and stay level, not wobble with every wrist flex.
-	private void handBasisPose(PlayerPawn pawn, int idx, out double ang, out double pit, out double rol)
-	{
-		ang = pawn.OffhandAngle;
-		if (idx < FOREARM_HOLSTER_END)
-		{
-			ang = normalizeDeg(ang + FOREARM_YAW_CORRECTION);
-			pit = 0.0;
-		}
-		else
-		{
-			// NEGATED, 2026-08-28 -- AttackPitch/OffhandPitch are stored
-			// negated by the engine; RS_HardPoints.zs fixed the identical
-			// bug the same day (its own handBasisPose-equivalent), and
-			// RS_Reload's rr_point.zs:Pit() is the original precedent,
-			// `return -((hand == 0) ? pmo.AttackPitch : pmo.OffhandPitch);`.
-			// Currently dead either way -- isHandAnchored() is always false
-			// in this repo (HOLSTER_COUNT == HAND_HOLSTER_START) -- fixed
-			// now so it isn't a landmine for whoever turns that on.
-			pit = -pawn.OffhandPitch;
-		}
-		rol = pawn.OffhandRoll;
-	}
-
-	// World-space position of one HAND-anchored holster (idx 8-13): the
-	// off-hand-relative counterpart to anchorPos, above. ORIGIN is always
-	// OffhandPos -- these are physically on your off-arm -- but the
-	// forward/right/up BASIS also comes from handBasisPose -- the off hand's
-	// own live angle/pitch. Same local-basis shape already proven in
-	// updateProps' trim-slider math (localFwdX/localUpX/rightX there) and in
-	// RS_Main's RS_GrenadeThrower.Throw (positive pitch looks DOWN in this
-	// engine, hence the negated Z on forward/up), just re-sourced here.
-	// Deliberately yaw+pitch only, NOT roll -- rolling the off hand will
-	// visibly rotate whatever is mounted here (updateProps carries roll into
-	// orientation) but will not swing the ANCHOR POSITION around the arm.
-	// Known v1 gap, not an oversight: this is the #1 thing to look at in
-	// headset before guessing at a roll-aware basis blind (see the plan/
-	// CLAUDE.md notes on this file's two previous wrong hand-derived
-	// rotation attempts).
-	private Vector3 handAnchorPos(PlayerPawn pawn, int idx)
-	{
-		double ang, pit, unusedRoll;
-		handBasisPose(pawn, idx, ang, pit, unusedRoll);
-
-		double fx =  cos(ang) * cos(pit);
-		double fy =  sin(ang) * cos(pit);
-		double fz = -sin(pit);
-		double rx = sin(ang);
-		double ry = -cos(ang);   // right is yaw-only, matches anchorPos' rx/ry
-		// up = right x forward (verified by direct cross-product expansion
-		// at pit=0, where forward/right/up must reduce to the familiar
-		// facing/right/world-up trio) -- NOT the -cos/-sin signs the prop
-		// trim sliders in updateProps use, which get away with being
-		// inverted because they are a symmetric bidirectional knob nobody
-		// would notice the polarity of. hsFrac has a HARD physical meaning
-		// here (WristBelow's -3.0 means "below", full stop), so the sign
-		// has to be actually correct, not just self-consistent.
-		double upx = cos(ang) * sin(pit);
-		double upy = sin(ang) * sin(pit);
-		double upz = cos(pit);
-
-		return (
-			pawn.OffhandPos.X + (edFwd[idx] * fx) + (edSide[idx] * rx) + (edFrac[idx] * upx),
-			pawn.OffhandPos.Y + (edFwd[idx] * fy) + (edSide[idx] * ry) + (edFrac[idx] * upy),
-			pawn.OffhandPos.Z + (edFwd[idx] * fz)                      + (edFrac[idx] * upz)
-		);
-	}
-
-	// The inverse of handAnchorPos, mirroring how worldToBody inverts
-	// anchorPos -- what makes edit mode able to drag a forearm/wrist sphere
-	// and read hand-local offsets straight back out. oUp takes the third
-	// out-param name (not oFrac) because it is a raw inch offset here, never
-	// a fraction of anything. Takes idx now (not just to index ed* arrays --
-	// handBasisPose needs it too, for the forearm yaw correction).
-	private void worldToHand(PlayerPawn pawn, int idx, Vector3 world, out double oFwd, out double oSide, out double oUp)
-	{
-		double ang, pit, unusedRoll;
-		handBasisPose(pawn, idx, ang, pit, unusedRoll);
-
-		double fx = cos(ang) * cos(pit),  fy = sin(ang) * cos(pit),  fz = -sin(pit);
-		double rx = sin(ang), ry = -cos(ang);
-		// up = right x forward -- see handAnchorPos' own comment on this
-		// exact formula for why it is NOT the same sign as updateProps'
-		// prop-trim basis.
-		double upx = cos(ang) * sin(pit), upy = sin(ang) * sin(pit), upz = cos(pit);
-
-		double dx = world.X - pawn.OffhandPos.X;
-		double dy = world.Y - pawn.OffhandPos.Y;
-		double dz = world.Z - pawn.OffhandPos.Z;
-
-		oFwd  = (dx * fx)  + (dy * fy)  + (dz * fz);
-		oSide = (dx * rx)  + (dy * ry);
-		oUp   = (dx * upx) + (dy * upy) + (dz * upz);
-	}
-
 	// While a holster is grabbed, it simply lives wherever that hand is.
 	private void updateGrabs(int i, PlayerPawn pawn)
 	{
@@ -1004,47 +871,15 @@ class RS_HolsterManager : EventHandler
 		// angled how the gun should sit, and let go.
 		if (gm >= 0)
 		{
-			if (isHandAnchored(gm))
-			{
-				// Position always updates -- this is what lets you drag a
-				// forearm/wrist sphere to a new spot on your arm either way.
-				worldToHand(pawn, gm, pawn.AttackPos, edFwd[gm], edSide[gm], edFrac[gm]);
-
-				// Orientation trim is captured RELATIVE to the off hand's
-				// own basis pose (handBasisPose), same idea as edYaw being
-				// relative to bodyYaw for the torso case below -- the
-				// dragging hand (main) and the basis hand (off) are always
-				// different hands here, so this delta is always meaningful.
-				double bAng, bPit, bRol;
-				handBasisPose(pawn, gm, bAng, bPit, bRol);
-				edYaw[gm]   = normalizeDeg(pawn.AttackAngle - bAng);
-				// NEGATED, 2026-08-28, to match handBasisPose's own fix
-				// above -- bPit now comes back true-signed, so the raw
-				// field here has to match it or the subtraction mixes two
-				// different sign conventions and produces a delta that's
-				// wrong in a NEW way, not just inverted.
-				edPitch[gm] = normalizeDeg(-pawn.AttackPitch - bPit);
-				edRoll[gm]  = normalizeDeg(pawn.AttackRoll  - bRol);
-			}
-			else
-			{
-				worldToBody(i, pawn, pawn.AttackPos, edFwd[gm], edSide[gm], edFrac[gm]);
-				edPitch[gm] = pawn.AttackPitch;
-				edRoll[gm]  = pawn.AttackRoll;
-				// yaw relative to the BODY, not the world, or the stored angle
-				// would only be right while facing the direction you set it in
-				edYaw[gm] = normalizeDeg(pawn.AttackAngle - bodyYaw[i]);
-			}
+			worldToBody(i, pawn, pawn.AttackPos, edFwd[gm], edSide[gm], edFrac[gm]);
+			edPitch[gm] = pawn.AttackPitch;
+			edRoll[gm]  = pawn.AttackRoll;
+			// yaw relative to the BODY, not the world, or the stored angle
+			// would only be right while facing the direction you set it in
+			edYaw[gm] = normalizeDeg(pawn.AttackAngle - bodyYaw[i]);
 		}
 		if (go >= 0)
 		{
-			// No hand-anchored branch here: updateClaims never lets the off
-			// hand claim its own hand-anchored gear (see there for why), so
-			// grabbedOff can never actually BE a hand-anchored index -- this
-			// is structurally unreachable, not just untested. worldToHand's
-			// own origin is pawn.OffhandPos, so "drag a wrist sphere with
-			// the same hand it's mounted on" has no meaningful answer to
-			// give it anyway.
 			worldToBody(i, pawn, pawn.OffhandPos, edFwd[go], edSide[go], edFrac[go]);
 			edPitch[go] = pawn.OffhandPitch;
 			edRoll[go]  = pawn.OffhandRoll;
@@ -1214,7 +1049,7 @@ class RS_HolsterManager : EventHandler
 				nearMain[i] = prevMain;
 			}
 		}
-		if (prevOff >= 0 && holsterActive(prevOff) && !isHandAnchored(prevOff))
+		if (prevOff >= 0 && holsterActive(prevOff))
 		{
 			string hsNameO; double hsFwdO, hsSideO, hsFracO, hsRadiusO, hsPitchO, hsYawO, hsRollO;
 			GetHolster(prevOff, hsNameO, hsFwdO, hsSideO, hsFracO, hsRadiusO, hsPitchO, hsYawO, hsRollO);
@@ -1265,7 +1100,7 @@ class RS_HolsterManager : EventHandler
 			// stuck claiming its own wrist forever) or permanently outside
 			// (dead code) -- excluding the test outright is the only
 			// correct fix, not something radius tuning could paper over.
-			if (!isHandAnchored(h) && !offClaimed && (pawn.OffhandPos - anchor).Length() < offR)
+			if (!offClaimed && (pawn.OffhandPos - anchor).Length() < offR)
 			{
 				offClaimed = true;
 				nearOff[i] = h;
@@ -1496,26 +1331,17 @@ class RS_HolsterManager : EventHandler
 			// orientation to get right; a bracket reticle is not
 			// rotationally symmetric, so it needs pointing the same way.
 			//
-			// baseAngle/basePitch/baseRoll, not a single byaw: torso
-			// holsters (h < HAND_HOLSTER_START) keep the exact old
-			// behaviour -- body yaw only, edPitch/edRoll used as ABSOLUTE
-			// values -- while hand-anchored holsters (8-13) take their base
-			// from handBasisPose (the off hand's own live pose), with
-			// edPitch/edRoll added as TRIMS on top. For the torso branch
-			// basePitch/baseRoll are 0.0, which makes every formula below
-			// reduce to exactly what it was before this split --
-			// behavior-preserving for 0-7.
-			double baseAngle, basePitch, baseRoll;
-			if (isHandAnchored(h))
-			{
-				handBasisPose(pawn, h, baseAngle, basePitch, baseRoll);
-			}
-			else
-			{
-				baseAngle = bodyYaw[i];
-				basePitch = 0.0;
-				baseRoll  = 0.0;
-			}
+			// baseAngle/basePitch/baseRoll rather than a single byaw: every
+			// holster in this mod is torso-anchored, so the base is body yaw
+			// with zero pitch and roll, and edPitch/edRoll are used as
+			// ABSOLUTE values on top of it. The three names are kept (rather
+			// than folding bodyYaw[i] into the formulas directly) because the
+			// orientation math below reads all three, and a future
+			// non-zero-pitch anchor would set them here and change nothing
+			// downstream.
+			double baseAngle = bodyYaw[i];
+			double basePitch = 0.0;
+			double baseRoll  = 0.0;
 
 			string hsNameM; double hsFwdM, hsSideM, hsFracM, hsRadius, hsPitchM, hsYawM, hsRollM;
 			GetHolster(h, hsNameM, hsFwdM, hsSideM, hsFracM, hsRadius, hsPitchM, hsYawM, hsRollM);
@@ -1708,7 +1534,7 @@ class RS_HolsterManager : EventHandler
 			// smaller default scale (RS_HolsterProp.holsterPropScaleArm) --
 			// a wrist-mounted flashlight should read as compact gear, not a
 			// full holstered sidearm.
-			double propScale = isHandAnchored(h) ? RS_HolsterProp.holsterPropScaleArm() : RS_HolsterProp.holsterPropScale();
+			double propScale = RS_HolsterProp.holsterPropScale();
 
 			// Passing null is the existing "this holster is empty" path --
 			// ShowWeapon sets pendingClear and fades the model out. Reusing it
@@ -1882,15 +1708,6 @@ class RS_HolsterManager : EventHandler
 		if (n <= 4) return 4;
 		if (n <= 6) return 6;
 		return 8;
-	}
-
-	// Always false now -- every index in this mod is torso-anchored, since
-	// the arm rig moved out to RS_HardPoints. Kept as a predicate rather
-	// than deleted; see the HAND_HOLSTER_START comment at the top of this
-	// class for why.
-	private bool isHandAnchored(int idx) const
-	{
-		return idx >= HAND_HOLSTER_START;
 	}
 
 	// The ammo pouch (AMMO_POUCH_IDX) is its OWN toggle, not part of the
@@ -2909,25 +2726,14 @@ class RS_HolsterManager : EventHandler
 		string hsName; double hsFwd, hsSide, hsFrac, hsRadius, hsPitch, hsYaw, hsRoll;
 		GetHolster(h, hsName, hsFwd, hsSide, hsFrac, hsRadius, hsPitch, hsYaw, hsRoll);
 
-		// Same baseAngle/basePitch/baseRoll split as updateProps -- kept as
-		// its own copy here rather than factored out, matching this
-		// function's existing role as an independent recomputation for
-		// diagnostics (see the file header comment on dumpOneHolsterProp).
-		// Without this branch the auto-dump-on-store would print body-yaw
-		// numbers for a wrist/forearm item, which is exactly the kind of
-		// misleading "actual vs sphere" report this function exists to
-		// prevent.
-		double baseAngle, basePitch, baseRoll;
-		if (isHandAnchored(h))
-		{
-			handBasisPose(pawn, h, baseAngle, basePitch, baseRoll);
-		}
-		else
-		{
-			baseAngle = bodyYaw[i];
-			basePitch = 0.0;
-			baseRoll  = 0.0;
-		}
+		// Same base as updateProps -- kept as its own copy here rather than
+		// factored out, matching this function's existing role as an
+		// INDEPENDENT recomputation for diagnostics (see the file header
+		// comment on dumpOneHolsterProp): a dump that shared updateProps'
+		// arithmetic could not catch updateProps getting it wrong.
+		double baseAngle = bodyYaw[i];
+		double basePitch = 0.0;
+		double baseRoll  = 0.0;
 		double extra = RS_HolsterProp.holsterPropYaw() + edYaw[h] + (mirrored ? 180.0 : 0.0);
 		double finalAngle = baseAngle + extra - angOff;
 		double finalPitch = basePitch + edPitch[h] + RS_HolsterProp.holsterPropPitch() - pitOff;
@@ -2943,7 +2749,7 @@ class RS_HolsterManager : EventHandler
 		// this dump's "world offset" stops matching what is really on screen.
 		bool foundBounds; double measuredRadius;
 		[foundBounds, measuredRadius] = level.GetModelBoundsHint(resolvedClass, rs.sprite, rs.Frame);
-		double fallbackScale = isHandAnchored(h) ? RS_HolsterProp.holsterPropScaleArm() : RS_HolsterProp.holsterPropScale();
+		double fallbackScale = RS_HolsterProp.holsterPropScale();
 		double visualRadius = RS_HolsterProp.holsterPropVisualRadius();
 		double steadyStateScale = (foundBounds && measuredRadius > 0.0)
 			? (visualRadius * RS_HolsterProp.holsterPropFill()) / measuredRadius
