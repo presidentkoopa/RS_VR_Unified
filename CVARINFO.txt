@@ -322,16 +322,41 @@ user bool rs_dgrab_sight = true;
 
 // ---- FLICK --------------------------------------------------------------
 //
-// Yank an empty hand toward yourself while the cone has something locked and it
-// comes to you, no button. Only ever fires with a lock, only on motion coming
-// TOWARD you, and only above the speed below -- a forward swing can never read
-// as "come here" however hard you throw it.
+// Open an empty hand while the cone has something locked and it comes to you,
+// no button. Only ever fires with a lock, and only when the release carries the
+// gesture below -- so simply letting go still just lets go.
 user bool rs_dgrab_flick = true;
 
-// Metres per second, measured as the PEAK of the last ~180ms rather than the
-// speed at any single moment. Your arm is already slowing down by the end of a
-// gesture, so the last sample always reads slower than the flick felt.
+// WHICH GESTURE. 0 = pull the hand back, 1 = tip the wrist up.
+//
+// 1 by default as of 2026-08-28, for comfort rather than for anything
+// technical. Dragging the hand back toward the body is a SHOULDER movement,
+// and seated with an elbow on an armrest that is precisely the motion you
+// cannot repeat -- which is how this mod is actually played. Tipping the wrist
+// is the same intent through the joint that is still free.
+//
+// A MODE AND NOT A PAIR. Accepting either gesture would put the shoulder-pull
+// back as an accidental trigger for exactly the player the wrist gesture is
+// for: draw your hand back to rest it, and the pull fires.
+user int rs_dgrab_flick_mode = 1;
+
+// Metres per second, for mode 0. Measured as the PEAK of the last ~180ms
+// rather than the speed at any single moment. Your arm is already slowing down
+// by the end of a gesture, so the last sample always reads slower than the
+// flick felt.
 user float rs_flick_speed = 2.5;
+
+// DEGREES PER TIC, for mode 1. A RATE, not a total -- which is the whole point:
+// a slow deliberate lift of the forearm never crosses it however far it
+// travels, while a sharp tip of the wrist crosses it at once. That is what
+// separates the gesture from ordinary aiming.
+//
+// 5.0 is ~175 degrees a second, a brisk but unhurried flick. Raise it if the
+// pull ever fires while you are simply aiming upward; do not shorten the
+// sample window instead, since the peak-over-window is what stops the gesture
+// reading as weak just because your wrist is already settling by the time your
+// fingers open.
+user float rs_flick_pitch = 5.0;
 
 // The line from your palm to what you have locked. Answers "what will I get",
 // which is the question you have while pointing -- a drawn cone would answer

@@ -812,8 +812,34 @@ class RS_GrabHandler : EventHandler
                     // here" is the one confusion this gesture cannot afford
                     // once real throwing shares the same arm.
                     double toward = -(v dot RS_Cone.Dir(pmo, hand));
-                    bool flicked = RS_Reach.Flag("rs_dgrab_flick", p, true)
-                        && v.Length() >= need && toward > 0;
+                    bool pulledBack = v.Length() >= need && toward > 0;
+
+                    // TIP THE WRIST UP, which is the default as of 2026-08-28,
+                    // and the reason is ergonomic rather than technical.
+                    //
+                    // Dragging the whole hand back toward the body is a
+                    // SHOULDER movement. Seated, with an elbow on an armrest,
+                    // that is the one motion you cannot make repeatedly -- and
+                    // this mod is played seated. A wrist tip is the same intent
+                    // routed through the joint that is still free.
+                    //
+                    // Degrees per tic, so it is a RATE and not a total: a slow
+                    // deliberate lift of the whole forearm never crosses it, no
+                    // matter how far it travels, while a sharp tip of the wrist
+                    // does immediately. That is what separates the gesture from
+                    // ordinary aiming, and it is why raising the threshold is
+                    // the fix if it ever misfires -- not shortening the window.
+                    double upRate = sw ? sw.PeakPitchUp(hand) : 0.0;
+                    bool flickedUp = upRate >= RS_Reach.Num("rs_flick_pitch", p, 5.0);
+
+                    // Mode, not an OR. Accepting both would put the old
+                    // shoulder-pull back in as an accidental trigger for
+                    // exactly the player the wrist gesture exists to serve --
+                    // draw your hand back to rest and the pull fires.
+                    int mode = RS_Reach.Opt("rs_dgrab_flick_mode", p, 1);
+                    bool gesture = (mode == 0) ? pulledBack : flickedUp;
+
+                    bool flicked = RS_Reach.Flag("rs_dgrab_flick", p, true) && gesture;
 
                     if (flicked && pull.Start(hand, locked, pmo, p))
                     {
@@ -821,9 +847,14 @@ class RS_GrabHandler : EventHandler
                         // after the motion stops, which is long enough to fire a
                         // second pull the instant the first one lands.
                         if (sw) sw.Forget(hand);
-                        if (dbg) Console.Printf("[RSPULL] hand %d FLICKED %s (%.1f m/s)",
+                        // Reports whichever number actually decided it, so a
+                        // misfire can be tuned against the right threshold
+                        // instead of the one that happened to be printed.
+                        if (dbg) Console.Printf("[RSPULL] hand %d FLICKED %s (%s)",
                             hand, locked.GetClassName(),
-                            RS_Swing.UnitsPerTicToMetresPerSec(v.Length()));
+                            (mode == 0)
+                                ? String.Format("%.1f m/s", RS_Swing.UnitsPerTicToMetresPerSec(v.Length()))
+                                : String.Format("%.1f deg/tic up", upRate));
                         continue;
                     }
 

@@ -91,6 +91,14 @@ OptionValue "RS_GrabScaleSpace"
 	1, "Drawn mesh (1 = 1m)"
 }
 
+// Named by the MOVEMENT, not by the joint, because the movement is what the
+// person choosing has to picture themselves doing in a chair.
+OptionValue "RS_DGrabFlickMode"
+{
+	0, "Pull hand back (shoulder)"
+	1, "Tip wrist up (seated)"
+}
+
 // Named so a forced pose reads as a hand shape rather than a frame number.
 OptionValue "RS_HandsPoseList"
 {
@@ -306,11 +314,14 @@ OptionMenu "RS_GrabThrowMenu"
 	Title "Flick and throw"
 
 	StaticText ""
-	StaticText "Yank an empty hand toward yourself at something", 1
-	StaticText "locked and it comes -- no button. Never fires on", 1
-	StaticText "a forward swing, so a throw cannot pull.", 1
+	StaticText "Open your hand at something locked and it comes", 1
+	StaticText "-- no button. Tipping the wrist is the seated", 1
+	StaticText "gesture: it needs no shoulder, so it works with", 1
+	StaticText "your elbow resting on an armrest.", 1
 	Option "Flick to pull",             "rs_dgrab_flick", "OnOff"
-	Slider "  Flick speed (m/s)",       "rs_flick_speed", 0.5, 8, 0.1, 1
+	Option "  Gesture",                 "rs_dgrab_flick_mode", "RS_DGrabFlickMode"
+	Slider "  Wrist speed (deg/tic)",   "rs_flick_pitch", 1.0, 20, 0.5, 1
+	Slider "  Hand speed (m/s)",        "rs_flick_speed", 0.5, 8, 0.1, 1
 
 	StaticText ""
 	StaticText "Letting go and throwing are the same act. Speed", 1
