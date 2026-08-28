@@ -257,6 +257,13 @@ OptionMenu "RS_GrabHoldMenu"
 	Slider "Let go at",                 "rs_hold_break", 0, 120, 2, 0
 	Option "Turn with wrist",           "rs_hold_rotate", "OnOff"
 	Slider "Weight feedback",           "rs_hold_haptic", 0, 1.5, 0.05, 2
+
+	StaticText ""
+	StaticText "Put your palms together and squeeze to take the", 1
+	StaticText "other hand's weapon. The hand you squeeze is the", 1
+	StaticText "hand doing the taking.", 1
+	Option "Swap by touching hands",    "rs_swap_overlap", "OnOff"
+	Slider "  How close",               "rs_swap_overlap_dist", 2, 24, 1, 0
 	StaticText ""
 	StaticText "With a voxel pack loaded, a held object becomes", 1
 	StaticText "a solid voxel you can actually turn over, then", 1

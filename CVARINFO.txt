@@ -245,6 +245,17 @@ user float rs_hold_haptic = 0.6;
 // inert until something is actually in your hand.
 user bool rs_hold_voxel = true;
 
+// Bring your palms together and squeeze to take the other hands weapon.
+// The hand you squeeze is the hand doing the taking. Fires the same
+// SwitchWeaponHand the switchhand keybind does, so the gesture and the key
+// can never drift apart.
+user bool rs_swap_overlap = true;
+
+// How close the two palms must be, in map units. 34 is a metre, so 8 is
+// about a hands width -- close enough that it cannot happen while reaching
+// past yourself, loose enough that you do not have to be precise about it.
+user float rs_swap_overlap_dist = 8.0;
+
 user bool rs_hold_debug = false;
 
 // ---- WHAT IS GRABBABLE --------------------------------------------------

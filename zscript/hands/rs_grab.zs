@@ -949,6 +949,46 @@ class RS_GrabHandler : EventHandler
 
             if (!press) continue;
 
+            // HANDS TOGETHER, GRIP: TAKE WHAT THE OTHER HAND IS HOLDING.
+            //
+            // Bring your palms together and squeeze, and the weapon crosses
+            // over. The hand you squeeze is the hand doing the TAKING, which is
+            // why this passes `hand` straight through: SwitchWeaponHand's
+            // argument is the DESTINATION -- it lifts the weapon out of the
+            // other slot and brings it up in this one.
+            //
+            // THE SAME CALL THE switchhand KEYBIND MAKES, deliberately, rather
+            // than a second swap implementation living over here. A gesture and
+            // a key that do the same thing should reach the same code, or they
+            // drift and only one of them ever gets the next fix.
+            //
+            // SAFE FROM HERE, and it is not safe from everywhere: that CCMD
+            // queues the call through the net layer specifically BECAUSE a
+            // console command runs outside P_Ticker, and SwitchWeaponHand nulls
+            // BOTH weapon slots before repopulating them -- land a psprite tick
+            // inside that window and TickPSprites destroys both layers, which
+            // is the weapons-flashing-and-vanishing bug documented at the CCMD.
+            // This is an EventHandler WorldTick, already inside the tick, so
+            // the swap completes between psprite ticks the same way the
+            // multiplayer path does.
+            //
+            // ABOVE the grab handling, so overlapping hands mean "swap" and not
+            // "grab whatever happens to be between us". Consumes the press.
+            if (RS_Reach.Flag("rs_swap_overlap", p, true))
+            {
+                Vector3 mine  = RS_Reach.Centre(pmo, p, hand);
+                Vector3 other = RS_Reach.Centre(pmo, p, 1 - hand);
+                double near = RS_Reach.Num("rs_swap_overlap_dist", p, 8.0);
+
+                if ((mine - other).Length() <= near)
+                {
+                    pmo.SwitchWeaponHand(hand);
+                    level.VRHaptic(hand, 0.5, 35.0);
+                    if (dbg) Console.Printf("[RSSWAP] hand %d took the other hand's weapon", hand);
+                    continue;
+                }
+            }
+
             if (toggle && full)
             {
                 Actor was = held.HeldBy(hand);
