@@ -523,6 +523,14 @@ user float rs_holster_prop_scale_arm = 0.08;
 // filling it.
 user float rs_holster_prop_fill = 0.55;
 
+// The target radius (map units) rs_holster_prop_fill scales a measured model
+// TOWARD. Used to just be each holster's own claim radius (GetHolster's
+// hsRadius, ~3.0 for every torso holster) -- that value is sized for
+// grab/claim detection, not display, and reusing it capped every stored
+// model's visible size at ~3 units no matter where the fill slider sat.
+// Separated out so the fill slider actually has room to work.
+user float rs_holster_prop_visual_radius = 8.0;
+
 // Trim on top of each holster's own pitch/roll (RS_Holsters.zs, GetHolster).
 // Every weapon MODELDEF block carries USEACTORPITCH/USEACTORROLL (added by
 // Add-ModelDefPitchFlags.ps1), so these do real work now -- earlier they did
@@ -631,18 +639,26 @@ user bool rs_holster_pouch_glow = true;
 // same meaning, so a tuning session turns both on together.
 //
 // Until this existed, a PERMANENT INSTRUMENTATION LAYER shipped switched on
-// in the default build. Three separate sources, all of them unconditional:
+// in the default build. Two separate sources, both of them unconditional:
 //   - a seven-line prop-orientation dump one tic after EVERY store
 //     ("record as I play" -- a tuning session's want, not a player's);
 //   - a console line on every hand-enters/leaves-holster-range transition,
-//     across nine overlapping anchors;
-//   - RS_HolsterFlashlight's pose printf, roughly 3.5 lines a SECOND for as
-//     long as the flashlight was held.
+//     across nine overlapping anchors.
 //
-// GATED, NOT DELETED. Each exists because a specific question is still
-// open -- most of all the flashlight one, which documents OffhandPitch
-// being stored negated and is the live lead on whether the hand-anchored
-// basis in RS_Holsters.zs shares that bug.
+// GATED, NOT DELETED. Each exists because a specific question is still open.
+//
+// STILL OPEN, NO LIVE PROBE FOR IT ANY MORE: RS_HolsterFlashlight used to be
+// this file's own diagnostic for one such question -- its pose printf
+// documented that OffhandPitch is stored negated, and was the lead on
+// whether the hand-anchored basis in RS_Holsters.zs shares that bug (the
+// same bug class RS_HardPoints.zs fixed on 2026-08-28: AttackPitch/
+// OffhandPitch read raw instead of negated). RS_HolsterFlashlight was
+// removed 2026-08-28 (its purpose -- testing arm/wrist mounts -- moved to
+// RS_HardPoints, and the mounts themselves are disabled pending player IK),
+// so that probe is gone too. The question it was investigating was never
+// answered -- worth checking RS_Holsters.zs's own hand-anchored basis
+// against the same negation bug directly, next time this file's pitch math
+// is touched.
 //
 // Deliberately NOT behind this gate: the range-entry HAPTIC (player
 // feedback, not instrumentation), the one-line store/draw confirmation,

@@ -257,27 +257,6 @@ Model RS_HolsterMarker
 	FrameIndex RSHM B 1 0
 }
 
-// RS_HolsterFlashlight (zscript/weapons/RS_HolsterFlashlight.zs) -- model,
-// skin and AngleOffset copied from GlowInTheDark's own GITD_FlashlightModel
-// entry (E:\GlowInTheDark\modeldef.txt). USEACTORPITCH/USEACTORROLL matter
-// here even though this is a normal held weapon in-hand: the SAME model is
-// also what RS_HolsterProp shows when this weapon is holstered, and that
-// path is a real world Actor with pitch/roll set manually, same as every
-// other holster prop -- flags MUST precede FrameIndex (see the comment
-// above on RS_HolsterMarker) or they apply to nothing.
-Model RS_HolsterFlashlight
-{
-	Path "models"
-	Model 0 "rs_holster_flashlight.md3"
-	Skin 0 "rs_holster_flashlight.jpg"
-	AngleOffset 90
-
-	USEACTORPITCH
-	USEACTORROLL
-
-	FrameIndex FLSH A 0 0
-}
-
 
 // ============================================================
 // from RS_HardPoints  (MODELDEF)

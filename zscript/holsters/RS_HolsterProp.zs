@@ -428,6 +428,15 @@ class RS_HolsterProp : Actor
 		return (cv != null) ? cv.GetFloat() : 0.55;
 	}
 
+	// The display-size target holsterPropFill() scales a measured model
+	// toward, in map units. Deliberately NOT a holster's own hsRadius
+	// (RS_Holsters.GetHolster) -- see ShowWeapon's doc comment for why.
+	static double holsterPropVisualRadius()
+	{
+		let cv = CVar.GetCVar("rs_holster_prop_visual_radius", players[consoleplayer]);
+		return (cv != null) ? cv.GetFloat() : 8.0;
+	}
+
 	// Yaw offset applied to every stored weapon, and a separate 180 for
 	// main-hand weapons whose models are mirrored.
 	//
@@ -587,10 +596,13 @@ class RS_HolsterProp : Actor
 	// read here via a default parameter value -- no confirmed precedent for
 	// user-method default args anywhere in this codebase, and no way to
 	// test-compile to find out, so the one call site just always supplies it.
-	// holsterRadius is that same holster's hsRadius, passed through so a
-	// measured model can be scaled to fill IT specifically rather than some
-	// value this method would otherwise have no way to see.
-	void ShowWeapon(Weapon w, double fallbackScale, double holsterRadius)
+	// visualRadius is the display-size target a measured model gets scaled to
+	// fill (RS_HolsterProp.holsterPropVisualRadius(), a cvar) -- NOT a
+	// holster's own hsRadius (grab/claim detection, RS_Holsters.GetHolster).
+	// Those two used to be the same number; decoupled because a claim sphere
+	// sized for reach detection has no reason to also be the visual size
+	// budget every stored weapon gets capped at.
+	void ShowWeapon(Weapon w, double fallbackScale, double visualRadius)
 	{
 		// GetActorModelClass, not w.GetClass() -- reads what THIS INSTANCE
 		// actually resolves against right now, which is a donor class
@@ -635,6 +647,69 @@ class RS_HolsterProp : Actor
 			bool found;
 			[found, mirrored, bakedAngleOffset, bakedPitchOffset, bakedRollOffset]
 				= level.GetModelOrientationHint(wantClass, sprite, frame);
+
+			double stretch = (level.info != null) ? level.info.pixelstretch : 1.0;
+			bool foundOff;
+			[foundOff, bakedOffX, bakedOffY, bakedOffZ]
+				= level.GetModelOffsetHint(wantClass, sprite, frame, stretch);
+
+			// Measured once per class-change, same as the orientation/offset
+			// hints above -- the native call and FindModelFrame lookup are
+			// the expensive part. What that measurement is USED for (below)
+			// is not gated the same way.
+			[boundsFound, measuredRadius] = level.GetModelBoundsHint(wantClass, sprite, frame);
+
+			// A foreign model-swap (ModelSwapper, or anything working the
+			// same way) resolves wantClass to a donor class -- but the
+			// donor's MODELDEF is keyed against ITS OWN anchor sprite/frame,
+			// not w's real compiled Ready sprite/frame. ModelSwapper keeps
+			// its HUD-hand and world/pickup anchors deliberately disjoint
+			// from the foreign weapon's own sprites (its own docs call this
+			// "the disjoint-anchor invariant"), so w's real sprite letter
+			// never appears in the donor's FrameIndex table and every hint
+			// above comes back not-found -- nothing renders, even though
+			// wantClass itself resolved correctly. ModelSwapper's own
+			// world/pickup binder (RS_ForeignPickups.zs) anchors every donor
+			// on sprite "SHOT" frame 0 for exactly this "not currently in a
+			// HUD hand" case -- a holstered prop is that, not a HUD-held
+			// weapon, so retry against the same anchor before giving up.
+			// Gated on the real sprite having already failed, so an ordinary
+			// (non-swapped) weapon whose OWN bounds genuinely cannot be
+			// measured still falls back to fallbackScale below as before,
+			// rather than being pointed at an unrelated generic sprite.
+			if (!boundsFound && wantClass != w.GetClass())
+			{
+				int foreignSpr = Actor.GetSpriteIndex("SHOT");
+				if (foreignSpr >= 0)
+				{
+					SpriteID realSprite = sprite;
+					int realFrame = frame;
+					sprite = foreignSpr;
+					frame  = 0;
+
+					[found, mirrored, bakedAngleOffset, bakedPitchOffset, bakedRollOffset]
+						= level.GetModelOrientationHint(wantClass, sprite, frame);
+					[foundOff, bakedOffX, bakedOffY, bakedOffZ]
+						= level.GetModelOffsetHint(wantClass, sprite, frame, stretch);
+					[boundsFound, measuredRadius] = level.GetModelBoundsHint(wantClass, sprite, frame);
+
+					// The retry failed too (some OTHER foreign-model system,
+					// not ModelSwapper, that doesn't use its SHOT/A anchor
+					// either) -- sprite/frame are this actor's own native
+					// rendering fields, not just a model-lookup key, so
+					// leaving them pinned to SHOT/0 would make the flat-
+					// sprite fallback show a generic shotgun-pickup icon
+					// instead of the real weapon's own. Put the real values
+					// back; no model resolved either way, so fallbackScale
+					// below applies same as any other unmeasurable weapon.
+					if (!boundsFound)
+					{
+						sprite = realSprite;
+						frame  = realFrame;
+					}
+				}
+			}
+
 			if (!found)
 			{
 				mirrored = false;
@@ -642,21 +717,10 @@ class RS_HolsterProp : Actor
 				bakedPitchOffset = 0.0;
 				bakedRollOffset = 0.0;
 			}
-
-			double stretch = (level.info != null) ? level.info.pixelstretch : 1.0;
-			bool foundOff;
-			[foundOff, bakedOffX, bakedOffY, bakedOffZ]
-				= level.GetModelOffsetHint(wantClass, sprite, frame, stretch);
 			if (!foundOff)
 			{
 				bakedOffX = 0.0; bakedOffY = 0.0; bakedOffZ = 0.0;
 			}
-
-			// Measured once per class-change, same as the orientation/offset
-			// hints above -- the native call and FindModelFrame lookup are
-			// the expensive part. What that measurement is USED for (below)
-			// is not gated the same way.
-			[boundsFound, measuredRadius] = level.GetModelBoundsHint(wantClass, sprite, frame);
 
 			popTicsRemaining = POP_TICS;   // settle-pop on every fresh show
 
@@ -691,7 +755,7 @@ class RS_HolsterProp : Actor
 		// nothing else ever re-solves baseScale for it. Cheap: this is just
 		// arithmetic over the cached measurement above, no native call.
 		if (boundsFound && measuredRadius > 0.0)
-			baseScale = (holsterRadius * holsterPropFill()) / measuredRadius;
+			baseScale = (visualRadius * holsterPropFill()) / measuredRadius;
 		else
 			baseScale = fallbackScale;
 

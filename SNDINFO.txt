@@ -1,65 +1,6 @@
 // ============================================================
 // from RS_Holsters  (SNDINFO.txt)
 // ============================================================
-// RS_HolsterFlashlight's draw/holster click. Files and voicing copied from
-// GlowInTheDark's DarkDoomZ flashlight click set (E:\GlowInTheDark\sounds,
-// credited there to mshahen, CC BY 3.0) -- same 12-on/12-off split, own
-// logical names so this pk3 does not need GlowInTheDark loaded to have a
-// sound at all.
-$random rs_holster_flashlight_on {
-	rs_holster_flashlight/on01
-	rs_holster_flashlight/on02
-	rs_holster_flashlight/on03
-	rs_holster_flashlight/on04
-	rs_holster_flashlight/on05
-	rs_holster_flashlight/on06
-	rs_holster_flashlight/on07
-	rs_holster_flashlight/on08
-	rs_holster_flashlight/on09
-	rs_holster_flashlight/on10
-	rs_holster_flashlight/on11
-	rs_holster_flashlight/on12	}
-
-$random rs_holster_flashlight_off {
-	rs_holster_flashlight/off01
-	rs_holster_flashlight/off02
-	rs_holster_flashlight/off03
-	rs_holster_flashlight/off04
-	rs_holster_flashlight/off05
-	rs_holster_flashlight/off06
-	rs_holster_flashlight/off07
-	rs_holster_flashlight/off08
-	rs_holster_flashlight/off09
-	rs_holster_flashlight/off10
-	rs_holster_flashlight/off11
-	rs_holster_flashlight/off12	}
-
-rs_holster_flashlight/on01	DDZCLK13
-rs_holster_flashlight/on02	DDZCLK14
-rs_holster_flashlight/on03	DDZCLK15
-rs_holster_flashlight/on04	DDZCLK16
-rs_holster_flashlight/on05	DDZCLK17
-rs_holster_flashlight/on06	DDZCLK18
-rs_holster_flashlight/on07	DDZCLK19
-rs_holster_flashlight/on08	DDZCLK20
-rs_holster_flashlight/on09	DDZCLK21
-rs_holster_flashlight/on10	DDZCLK22
-rs_holster_flashlight/on11	DDZCLK23
-rs_holster_flashlight/on12	DDZCLK24
-
-rs_holster_flashlight/off01	DDZCLK01
-rs_holster_flashlight/off02	DDZCLK02
-rs_holster_flashlight/off03	DDZCLK03
-rs_holster_flashlight/off04	DDZCLK04
-rs_holster_flashlight/off05	DDZCLK05
-rs_holster_flashlight/off06	DDZCLK06
-rs_holster_flashlight/off07	DDZCLK07
-rs_holster_flashlight/off08	DDZCLK08
-rs_holster_flashlight/off09	DDZCLK09
-rs_holster_flashlight/off10	DDZCLK10
-rs_holster_flashlight/off11	DDZCLK11
-rs_holster_flashlight/off12	DDZCLK12
-
 // ---------------------------------------------------------------------
 // The store/draw confirm cue, SHIPPED HERE AS OF 2026-08-26.
 //
@@ -74,11 +15,11 @@ rs_holster_flashlight/off12	DDZCLK12
 // these mods without RS_Main, and nothing said so. A cvar, a menu row and a
 // style selector all existed for a cue that could not sound.
 //
-// OWN LOGICAL NAMES AND OWN LUMP NAMES, exactly like the flashlight click
-// set above and for the same stated reason: this pk3 must not need any
-// other pk3 loaded to have a sound, and must not silently override a lump
-// another pk3 owns. RSHO* is this repo's prefix; RS_HardPoints ships the
-// identical audio under RSHP* so the two siblings do not collide either.
+// OWN LOGICAL NAMES AND OWN LUMP NAMES, for the same stated reason: this
+// pk3 must not need any other pk3 loaded to have a sound, and must not
+// silently override a lump another pk3 owns. RSHO* is this repo's prefix;
+// RS_HardPoints ships the identical audio under RSHP* so the two siblings
+// do not collide either.
 //
 // Audio source: RS_Main's Sounds/combatfx/foley/HOLSTR{,2,3} (the $random
 // 3-variant holster clunk) and Sounds/combatfx/allclear/READYBP (the

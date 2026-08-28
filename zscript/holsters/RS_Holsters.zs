@@ -253,6 +253,21 @@ class RS_HolsterManager : EventHandler
 	int lastSwapTicMain[MAXPLAYERS];
 	int lastSwapTicOff[MAXPLAYERS];
 
+	// HOW LONG player.PendingWeapon HAS BEEN STUCK, so a genuinely aborted
+	// switch can be told apart from an ordinary one still in flight and
+	// actively RECOVERED rather than waited out forever.
+	//
+	// Proven in a real session, not theorised: a third-party weapon's own
+	// Deselect state looped on itself and the engine's own recursion guard
+	// killed it mid-transition -- "Recursive weapon state loop in
+	// 'X.5' -- aborted at depth 65". Refusing to trust the hand while that
+	// is true (doSwap's own guard, added first) was correct as far as it
+	// went, but it assumed the switch would eventually settle on its own.
+	// It does not: PendingWeapon was still stuck six presses and two real
+	// interactions later in the session that proved this. Waiting is not a
+	// strategy for a switch this broken; recovering is.
+	int pendingStuckTics[MAXPLAYERS];
+
 	// One prop per holster per player, flattened like contents. Held as
 	// pointers so a destroyed prop (level change, player death) reads null and
 	// gets respawned rather than leaving a dangling anchor.
@@ -381,6 +396,45 @@ class RS_HolsterManager : EventHandler
 					nearOff[i] = -1;
 				}
 				continue; // no anchors, no claims, until calibration lands
+			}
+
+			// STUCK-SWITCH RECOVERY. See the field comment on
+			// pendingStuckTics for why this exists and why "wait" is not
+			// enough on its own -- doSwap's own guard already refuses to
+			// touch a hand mid-switch, which is correct, but it needs
+			// something that actually MOVES the switch forward, since this
+			// specific failure mode does not resolve on its own.
+			if (pawn.player.PendingWeapon != WP_NOCHANGE)
+			{
+				pendingStuckTics[i]++;
+
+				// STUCK_THRESHOLD = 70 tics, ~2 real seconds. Comfortably
+				// longer than any legitimate lower/raise cycle -- even the
+				// ~16-tic non-instant path this file's own comments cite --
+				// so this never fires mid a healthy switch and reliably
+				// fires once one has genuinely stopped moving.
+				if (pendingStuckTics[i] > 70)
+				{
+					// BringUpWeapon (player.zs:1958) is the engine's own
+					// recovery tool, not something invented here: given a
+					// stuck PendingWeapon, it reads that target weapon,
+					// clears PendingWeapon to WP_NOCHANGE, and drives the
+					// psprite straight to the target's ready state --
+					// bypassing whatever broken Deselect/Lower chain the
+					// OLD weapon never finished, rather than trying to
+					// coax it to completion. Exactly the shape of recovery
+					// this needs: it does not fix the third-party weapon's
+					// own broken states, it routes around them.
+					pawn.BringUpWeapon();
+					pendingStuckTics[i] = 0;
+
+					if (verboseDiag())
+						Console.Printf("RS_HOLSTER: forced a stuck weapon switch to resolve (BringUpWeapon)");
+				}
+			}
+			else
+			{
+				pendingStuckTics[i] = 0;
 			}
 
 			updateBodyYaw(i, pawn);
@@ -1325,7 +1379,7 @@ class RS_HolsterManager : EventHandler
 		if (handClaimed && prev == null && pouchInvolved)
 		{
 			Weapon real = isMain ? pawn.player.ReadyWeapon : pawn.player.OffhandWeapon;
-			if (real != null && !isFistClass(real.GetClassName()))
+			if (real != null && !isFistClass(real.GetClass()))
 			{
 				// findFist's own parameter is named "offhand" -- !isMain
 				// gives it exactly that.
@@ -1594,6 +1648,30 @@ class RS_HolsterManager : EventHandler
 				// FindInventory lookup needed to detect it.
 				if (inHand)
 				{
+					// TEMPORARY, 2026-08-26: this is the prime suspect for a
+					// store that confirms, then reads empty again on the very
+					// next attempt. The gate above (PendingWeapon==WP_NOCHANGE
+					// and swapCooldown() elapsed) exists specifically to stop
+					// this firing right after a normal doSwap store -- but
+					// that gate assumes the weapon's own Deselect/Raise state
+					// chain fully resolves ReadyWeapon within swapCooldown()
+					// tics (4, with instant switch on). A third-party weapon
+					// with a longer transition could still be mid-switch when
+					// this fires, which would look EXACTLY like "drifted back
+					// on its own" from here. One line, only when a slot is
+					// actually being cleared, cannot become spam.
+					// PendingWeapon is guaranteed WP_NOCHANGE here already --
+					// that is the outer gate this branch sits inside -- so it
+					// is not worth re-printing. ticsSinceSwap is the number
+					// that actually matters: it is being compared against
+					// swapCooldown() (4 tics, instant switch on) by that same
+					// gate, and this print exists to check whether 4 is
+					// actually enough for THIS weapon's own state chain.
+					Console.Printf("\cy RS_HOLSTER: updateProps CLEARING slot %d (%s) -- still in %s hand, %d tics after the last swap",
+						h, stored.GetClassName(),
+						(rw != null && rw == stored) ? "MAIN" : "OFF",
+						level.time - Max(lastSwapTicMain[i], lastSwapTicOff[i]));
+
 					// The weapon drifted back into a hand through something
 					// other than doSwap (ammo-pickup re-arm via
 					// CheckWeaponSwitch, the native VR wheel, a tier
@@ -1624,7 +1702,7 @@ class RS_HolsterManager : EventHandler
 			// well-tested route rather than a second way to make a prop
 			// invisible, and it comes back correctly when switched on again.
 			Weapon toShow = wantProps ? stored : null;
-			p.ShowWeapon(toShow, propScale, hsRadius);
+			p.ShowWeapon(toShow, propScale, RS_HolsterProp.holsterPropVisualRadius());
 
 			// Face the same way the BODY does (not the head), so a holstered
 			// gun stays put on the hip when you look around, plus a tunable
@@ -1761,36 +1839,95 @@ class RS_HolsterManager : EventHandler
 	// "offhand never lets go of the gun" bug: the store happened, the hand
 	// was never emptied, and nothing reported a failure.
 	// One definition of "is this a fist", used by both the store guard and the
-	// fist lookup. Name-based on purpose -- see the note at the store guard.
-	static bool isFistClass(string cn)
+	// fist lookup. Name-based first -- see the note at the store guard --
+	// PLUS a fallback for a pack that replaces Fist under an unrelated name.
+	//
+	// BrutalDoom's own melee weapon is "ACTOR Melee_Attacks : BrutalWeapon
+	// Replaces Fist" -- no "Fist" anywhere in the class name, so the naming
+	// convention alone never finds it. Every store attempt committed the
+	// weapon to the holster table, then found no fist to put in the now-
+	// empty hand and rolled the whole thing back -- "no %s-hand fist to
+	// empty into" on literally every press, which is what "BrutalDoom does
+	// not holster anything" turned out to mean. GetReplacement asks the
+	// engine's own replacement table what currently occupies Fist's slot,
+	// which is exactly the relationship a pack in this shape actually
+	// declares, regardless of what it named the result.
+	static bool isFistClass(class<Actor> cls)
 	{
-		return cn.IndexOf("Fist") >= 0;
+		if (cls == null)
+			return false;
+		// GetClassName() is a Name; IndexOf is a String method, so it has
+		// to land in a string first.
+		string cn = cls.GetClassName();
+		if (cn.IndexOf("Fist") >= 0)
+			return true;
+
+		class<Actor> repl = Actor.GetReplacement((class<Actor>)("Fist"));
+		return repl != null && repl == cls;
 	}
 
 	private Weapon findFist(PlayerPawn pawn, bool offhand) const
 	{
+		Weapon spare = null;
+
 		for (Inventory item = pawn.Inv; item != null; item = item.Inv)
 		{
 			let w = Weapon(item);
 			if (w == null)
 				continue;
-			// GetClassName() is a Name; IndexOf is a String method, so it has
-			// to land in a string first.
-			string cn = w.GetClassName();
-			if (cn.IndexOf("Fist") < 0)
+			if (!isFistClass(w.GetClass()))
 				continue;
 
 			if (w.bOffhandWeapon == offhand)
 				return w;      // the one that belongs in this hand
+
+			// A CANDIDATE FOR THE FALLBACK BELOW, remembered but not returned
+			// yet -- an exact match anywhere later in the chain still wins.
+			// Never the weapon currently seated in the OTHER hand: that
+			// instance is busy, full stop, no flag fixup changes that.
+			Weapon otherHandWeapon = offhand ? pawn.player.ReadyWeapon : pawn.player.OffhandWeapon;
+			if (spare == null && w != otherHandWeapon)
+				spare = w;
 		}
 
-		// No fallback to "any fist". A wrong-hand fist can NEVER be seated --
-		// MoveWeaponToHand's first guard rejects it silently because every fist
-		// carries +WEAPON.NOHANDSWITCH -- so handing one back only produced a
-		// store that emptied nothing while the table recorded it as done. That
-		// is the "offhand never lets go of the gun" bug, reintroduced by the
-		// very fallback that was meant to be defensive. Null is the honest
-		// answer, and the caller rolls the store back.
+		if (spare != null)
+		{
+			// THE FALLBACK, DONE THE WAY THE OLD ONE WASN'T.
+			//
+			// A genuinely-named, unclaimed off-hand fist (this arsenal's own
+			// "Offhand_Fist") was sitting right there in inventory and
+			// findFist walked past it, because
+			// bOffhandWeapon is not a fixed "which hand this is for" label --
+			// it is the engine's own live "which hand did I most recently get
+			// seated in" tracker (player.zs:2629,
+			// `weap.bOffhandWeapon = hand == 1;`, written unconditionally
+			// inside MoveWeaponToHand every time a weapon is placed). A fist
+			// that has never yet been drawn into ANY hand still reads its
+			// class default, which is false for both -- so a genuinely
+			// off-hand-only fist that has simply never been used yet fails
+			// the exact-match test above for the exact same reason a
+			// main-hand one would.
+			//
+			// The comment this replaces tried a fallback that returned a
+			// mismatched fist WITHOUT fixing its flag first, and that failed
+			// for a documented reason: MoveWeaponToHand's own first guard is
+			//     if (weap.bNoHandSwitch && weap.bOffhandWeapon != (hand==1)) return;
+			// and every fist here carries +WEAPON.NOHANDSWITCH, so hand it a
+			// fist still flagged for the wrong side and MoveWeaponToHand
+			// bails SILENTLY before doing anything -- the store completes,
+			// the hand is never emptied, and nothing reports why.
+			//
+			// So: set the flag to match the hand THIS CALL is filling, before
+			// handing it back. That is exactly what MoveWeaponToHand would do
+			// to it anyway, the moment it successfully seats -- doing it here
+			// only means the guard sees a fist already correctly labelled for
+			// where it is about to go, instead of rejecting it on the way in.
+			spare.bOffhandWeapon = offhand;
+			if (spare.SisterWeapon != null)
+				spare.SisterWeapon.bOffhandWeapon = offhand;
+			return spare;
+		}
+
 		return null;
 	}
 
@@ -2087,16 +2224,16 @@ class RS_HolsterManager : EventHandler
 
 	// Developer instrumentation gate, added 2026-08-26. Until then this mod
 	// shipped a permanent instrumentation layer switched ON in the default
-	// build: a seven-line orientation dump after EVERY store, a console line
-	// on every hand-enters/leaves-range transition, and (in
-	// RS_HolsterFlashlight) a pose printf at roughly 3.5 lines a second for
-	// as long as the flashlight was held.
+	// build: a seven-line orientation dump after EVERY store, plus a console
+	// line on every hand-enters/leaves-range transition.
 	//
 	// GATED, NOT DELETED. Every one of those exists because a specific
 	// question was open and is still open -- the same reasoning that kept
 	// RS_HardPoints' wrist-pitch dump alive when it got this treatment
 	// (rs_hardpoint_wristdump). Turn this on for a tuning session and they
-	// all come back at once.
+	// all come back at once. See CVARINFO.txt's rs_holster_verbose entry for
+	// one such question that lost its own diagnostic tool (RS_HolsterFlashlight,
+	// removed 2026-08-28) before it was ever answered.
 	//
 	// What is deliberately NOT behind it: the range-entry HAPTIC (player
 	// feedback, not instrumentation), the one-line store/draw confirmation,
@@ -2268,8 +2405,46 @@ class RS_HolsterManager : EventHandler
 	// sides, write both sides. Draw, store, and swap are all this.
 	private void doSwap(int i, PlayerPawn pawn, int holsterIdx, bool offhand)
 	{
+		// TEMPORARY, 2026-08-26: unconditional entry marker. Every refusal
+		// below this point now prints its own reason -- this catches the
+		// possibility that NONE of them fire and the function still does
+		// nothing, which would otherwise be a fourth silent path nobody
+		// anticipated. Fires once per physical press, cannot become spam.
+		Console.Printf("\cy RS_HOLSTER: doSwap ENTER  hand=%s  holsterIdx=%d",
+			offhand ? "off" : "main", holsterIdx);
+
 		if (holsterIdx < 0)
 			return; // hand was not in a holster; nothing claimed it
+
+		// A HAND WITH A SWITCH ALREADY IN FLIGHT IS NOT A TRUSTWORTHY WITNESS.
+		//
+		// Proven in a real session, not theorised: a third-party rifle's own
+		// Deselect state looped on itself, and the engine's own recursion
+		// guard killed it --
+		//   "Recursive weapon state loop in 'VR_Rifle.5' -- aborted at depth 65"
+		// -- mid-transition. CF_INSTANTWEAPSWITCH is supposed to resolve the
+		// whole lower/raise cycle synchronously inside ONE MoveWeaponToHand
+		// call (see moveWeaponInstant's own comment above), so there should
+		// be no window where PendingWeapon reads anything but WP_NOCHANGE by
+		// the time control returns here -- but an aborted weapon state chain
+		// leaves the switch wherever the engine gave up, permanently, with no
+		// later tic that will ever finish it.
+		//
+		// This mod has no way to fix a third-party weapon's own broken
+		// states, but it does not have to trust ReadyWeapon/OffhandWeapon as
+		// fresh truth while this is true for THIS hand -- that stale value is
+		// exactly what let an already-broken rifle get read as the hand's
+		// current weapon by a LATER, unrelated holster action and displace
+		// whatever else was legitimately stored. Refuse instead: the holster
+		// table (contents[]) stays exactly as it was, nothing gets displaced,
+		// and the player at least keeps whatever the OTHER hand can still do.
+		if (pawn.player.PendingWeapon != WP_NOCHANGE)
+		{
+			if (verboseDiag())
+				Console.Printf("RS_HOLSTER: %s-hand -- a weapon switch has not settled, refusing rather than trusting a stale hand",
+					offhand ? "off" : "main");
+			return;
+		}
 
 		// Debounce. A held or repeating key must not swap more than once. With
 		// instant switch OFF, a swap also cannot settle immediately --
@@ -2297,17 +2472,40 @@ class RS_HolsterManager : EventHandler
 		// to collide with, so two hands really can swap in the same tic.
 		int sameHandTic = offhand ? lastSwapTicOff[i] : lastSwapTicMain[i];
 		if (level.time - sameHandTic < swapCooldown())
+		{
+			// TEMPORARY, 2026-08-26: both cooldown returns below were
+			// completely silent -- if the timestamp ever gets stuck ahead of
+			// level.time, this blocks EVERY press forever with zero evidence
+			// why. Only fires on an actual blocked press, not per tic.
+			Console.Printf("\cy RS_HOLSTER: %s-hand BLOCKED by own cooldown -- level.time=%d sameHandTic=%d delta=%d need=%d",
+				offhand ? "off" : "main", level.time, sameHandTic, level.time - sameHandTic, swapCooldown());
 			return;
+		}
 		if (!instantSwitchEnabled())
 		{
 			int otherHandTic = offhand ? lastSwapTicMain[i] : lastSwapTicOff[i];
 			if (level.time - otherHandTic < swapCooldown())
+			{
+				Console.Printf("\cy RS_HOLSTER: %s-hand BLOCKED by OTHER hand's cooldown -- level.time=%d otherHandTic=%d delta=%d need=%d",
+					offhand ? "off" : "main", level.time, otherHandTic, level.time - otherHandTic, swapCooldown());
 				return;
+			}
 		}
 
 		ensureContents();
 
 		int slot = (i * HOLSTER_COUNT) + holsterIdx;
+
+		// TEMPORARY, 2026-08-26: contents[slot] is reading as if the LAST
+		// call's commit never happened -- same "held" weapon, same "empty"
+		// slot, five presses in a row. Every other per-player array in this
+		// class (nearMain, calibrated, lastSwapTicMain) persists correctly
+		// between calls, so this checks whether i/slot/array-size themselves
+		// are the problem rather than the swap logic.
+		string dbgPre = "null";
+		if (contents[slot] != null) dbgPre = contents[slot].GetClassName();
+		Console.Printf("\cy RS_HOLSTER: pre-commit  i=%d  slot=%d  contents.Size()=%d  contents[slot]-BEFORE=%s",
+			i, slot, contents.Size(), dbgPre);
 
 		// Evict any fist a previous build managed to store. Without this the
 		// bad slots persist in a running session and keep showing a fist at
@@ -2315,7 +2513,7 @@ class RS_HolsterManager : EventHandler
 		for (int c = 0; c < HOLSTER_COUNT; ++c)
 		{
 			int ci = (i * HOLSTER_COUNT) + c;
-			if (contents[ci] != null && isFistClass(contents[ci].GetClassName()))
+			if (contents[ci] != null && isFistClass(contents[ci].GetClass()))
 				contents[ci] = null;
 		}
 
@@ -2330,31 +2528,76 @@ class RS_HolsterManager : EventHandler
 		// fist got stored like a real weapon. That is where the extra fists
 		// came from. Match on the name, the same way findFist does.
 		string heldName = "";
-		if (held != null && !isFistClass(held.GetClassName()))
+		if (held != null && !isFistClass(held.GetClass()))
 			heldName = held.GetClassName();
 
 		if (stored == null && heldName == "")
+		{
+			// TEMPORARY, 2026-08-26: this branch is completely silent by
+			// design (a real no-op, empty holster + nothing worth storing),
+			// but that silence is indistinguishable from a bug from outside.
+			// One line, only on the no-op path, so it cannot become spam.
+			//
+			// held.GetClassName() returns Name, not String -- a ternary needs
+			// both branches to share one type, so "NULL" (a String literal)
+			// against a bare Name does not compile. Plain if/else into a
+			// String local sidesteps the whole question.
+			string dbgHeld = "NULL";
+			if (held != null) dbgHeld = held.GetClassName();
+			string dbgFistNote = "";
+			if (held != null && isFistClass(held.GetClass())) dbgFistNote = " (matched as fist)";
+			Console.Printf("\cy RS_HOLSTER: %s-hand no-op -- held=%s%s  slot(%d) empty",
+				offhand ? "off" : "main", dbgHeld, dbgFistNote, holsterIdx);
 			return; // fists into an empty holster: nothing to do
+		}
 
-		// The slot names the very gun this hand is holding. That is not a
-		// legitimate no-op -- it is a STALE SLOT. A stored weapon never leaves
-		// inventory, so CheckWeaponSwitch re-arms it on the next ammo pickup
-		// while the table still claims the holster holds it.
+		// The slot names the very gun this hand is holding. That is not
+		// ALWAYS a stale slot, and conflating the two is the actual bug this
+		// comment used to describe as fixed.
 		//
-		// Used to clear the slot and RETURN here -- that fixed the permanent
-		// jam (a stale slot could never be drawn from OR stored into again)
-		// but traded it for a quieter one: the press that discovered the
-		// stale slot did nothing visible at all (no haptic, no sound, no
-		// console line), identical to a no-op press, so it read as "I have
-		// to holster something else first to unstick it" even though the
-		// table was already fixed by that first press. Resync stored to null
-		// and fall through into the ordinary store logic below instead, so
-		// the SAME press that finds the desync is the press that actually
-		// completes the store, with the normal confirmation. POINTER
-		// equality now (was class-name equality) -- see the field comment on
-		// contents for why that mattered.
+		// GENUINE STALE SLOT: the weapon drifted back into a hand through
+		// something OTHER than doSwap (ammo-pickup re-arm, the wheel, a tier
+		// promotion), completed, and settled. contents[] just hasn't heard
+		// about it yet. Safe to resync and re-store.
+		//
+		// SWITCH STILL IN FLIGHT: THIS mod's own PREVIOUS press already
+		// called MoveWeaponToHand for this exact hand and is still mid
+		// DropWeapon/BringUpWeapon. ReadyWeapon/OffhandWeapon has not caught
+		// up yet, so it reads identically to the genuine case above -- same
+		// held, same stored, same pointer equality. The two are
+		// indistinguishable from contents[] and held alone.
+		//
+		// Confusing the second case for the first was a real, reproducible
+		// jam: falling through re-called moveWeaponInstant, which calls
+		// MoveWeaponToHand a SECOND time on a weapon whose DropWeapon is
+		// already running. player.zs:2605-2639 does not guard against being
+		// re-entered mid-transition -- it happily reassigns PendingWeapon and
+		// calls DropWeapon(hand) again, restarting the lower sequence from
+		// wherever the first call's Deselect states had gotten to. Press
+		// again before that finishes -- and swapCooldown() is 4 tics,
+		// nowhere near enough to guarantee ANY weapon's Deselect chain has
+		// settled -- and the restart happens again. A weapon whose own
+		// Deselect is slow enough gets kept in a perpetual restart loop by
+		// this mod's own retries, which reads as "the switch is permanently
+		// stuck" and is not the third-party weapon's fault: this mod caused
+		// it by calling DropWeapon on top of an already-running DropWeapon.
+		//
+		// So: only treat this as a stale slot when NOTHING is already in
+		// flight for this hand. PendingWeapon != WP_NOCHANGE means a switch
+		// this mod itself started has not settled -- wait for it rather than
+		// restarting it. Precedent for exactly this gate is updateProps'
+		// own reconciliation a few hundred lines up, which already refuses
+		// to trust ReadyWeapon/OffhandWeapon while a switch is in flight, for
+		// the identical reason.
 		if (stored != null && stored == held)
 		{
+			if (pawn.player.PendingWeapon != WP_NOCHANGE)
+			{
+				if (verboseDiag())
+					Console.Printf("RS_HOLSTER: %s-hand -- a switch is still resolving, not restarting it",
+						offhand ? "off" : "main");
+				return;
+			}
 			contents[slot] = null;
 			stored = null;
 		}
@@ -2377,6 +2620,10 @@ class RS_HolsterManager : EventHandler
 
 		contents[slot] = (heldName != "") ? held : null;
 
+		string dbgPost = "null";
+		if (contents[slot] != null) dbgPost = contents[slot].GetClassName();
+		Console.Printf("\cy RS_HOLSTER: post-commit  contents[%d]=%s", slot, dbgPost);
+
 		// Bring out whatever was in there. The instance pointer IS the stored
 		// weapon -- no FindInventory-by-name lookup needed (that used to be
 		// how a same-class matched pair could resolve to the WRONG instance).
@@ -2390,20 +2637,34 @@ class RS_HolsterManager : EventHandler
 		{
 			let w = stored;
 
-			// MoveWeaponToHand is VOID and bails SILENTLY on a hand mismatch:
-			//     if (weap.bNoHandSwitch && weap.bOffhandWeapon != (hand == 1)) return;
-			// Every weapon in this arsenal carries +WEAPON.NOHANDSWITCH, and
-			// nothing binds a holster to a hand -- either hand can claim any of
-			// the six anchors, and the hip pair sit on opposite sides of the
-			// body. Without this check the store above was already committed, so
-			// reaching across with the wrong hand ATE the slot and delivered
-			// nothing: the weapon ended up in no holster and in no hand, and the
-			// console cheerfully printed a swap that never happened.
-			if (w.bNoHandSwitch && w.bOffhandWeapon != offhand)
+			// ANY HAND CAN DRAW FROM ANY HOLSTER. A holster is not bound to a
+			// hand -- either hand can claim any of the six anchors, and the
+			// hip pair sit on opposite sides of the body -- so refusing a
+			// draw because the weapon's OWN hand-flag happens to disagree was
+			// asking the physical world to match a piece of engine
+			// bookkeeping instead of the other way round.
+			//
+			// bOffhandWeapon is not a fixed "this weapon belongs to this
+			// hand" label. It is the engine's own live "which hand did I
+			// most recently get seated in" tracker -- player.zs:2629 inside
+			// MoveWeaponToHand writes `weap.bOffhandWeapon = hand == 1;`
+			// unconditionally, every single time a weapon is placed. So the
+			// correct move on a mismatch is not to refuse -- it is to
+			// relabel the weapon for the hand that is actually reaching for
+			// it, right now, which is exactly what MoveWeaponToHand would do
+			// to it anyway the moment it finishes seating. Doing it a line
+			// early just means MoveWeaponToHand's own guard --
+			//     if (weap.bNoHandSwitch && weap.bOffhandWeapon != (hand==1)) return;
+			// -- sees a weapon already labelled for where it is about to go,
+			// instead of silently refusing on the way in. Every weapon in
+			// this arsenal carries +WEAPON.NOHANDSWITCH, so without this the
+			// guard above would still be live and this draw would still
+			// silently do nothing.
+			if (w.bOffhandWeapon != offhand)
 			{
-				contents[slot] = stored;   // roll back the commit above
-				Console.Printf("\cgRS_HOLSTER: %s belongs to the %s hand", stored.GetClassName(), offhand ? "main" : "off");
-				return;
+				w.bOffhandWeapon = offhand;
+				if (w.SisterWeapon != null)
+					w.SisterWeapon.bOffhandWeapon = offhand;
 			}
 
 			// Coming back out, so it is an ordinary auto-switch candidate again,
@@ -2420,6 +2681,26 @@ class RS_HolsterManager : EventHandler
 			// This routes through PendingWeapon and DropWeapon/BringUpWeapon
 			// so the psprite is torn down and rebuilt properly.
 			moveWeaponInstant(pawn, w, hand);
+
+			// SAME IMMEDIATE RECOVERY AS THE STORE PATH, and for the same
+			// reason: DRAWING a stored weapon calls this exact same
+			// MoveWeaponToHand machinery, just with the weapon and the hand
+			// it is currently occupying swapped -- so it is exactly as
+			// exposed to a broken Select/Ready chain as the store path is to
+			// a broken Deselect chain. This mod's own evidence has only
+			// caught the store direction breaking so far, but there is no
+			// reason to leave the draw direction on the slow 70-tic
+			// WorldTick backstop when the fix is one identical check. contents[]
+			// is already correct at this point either way -- the slot was
+			// cleared above -- so recovering here only ever affects how the
+			// weapon lands in the hand, never the holster table.
+			if (pawn.player.PendingWeapon != WP_NOCHANGE)
+			{
+				pawn.BringUpWeapon();
+				pendingStuckTics[i] = 0;
+				if (verboseDiag())
+					Console.Printf("RS_HOLSTER: draw did not settle this tic -- recovered immediately, not waiting");
+			}
 		}
 		else
 		{
@@ -2438,9 +2719,62 @@ class RS_HolsterManager : EventHandler
 				// the table had already filed away.
 				contents[slot] = stored;   // roll back; the store did not happen
 				Console.Printf("\cgRS_HOLSTER: no %s-hand fist to empty into", offhand ? "off" : "main");
+
+				// TEMPORARY, 2026-08-26: findFist is failing with no known
+				// arsenal loaded and no obvious reason why -- dump every
+				// Weapon this player actually owns, since findFist only
+				// searches THIS list and nothing else. Not gated on
+				// rs_holster_verbose: this only fires on an actual failed
+				// store, not per tic, so it cannot become spam.
+				Console.Printf("\cy  inventory dump:");
+				int wCount = 0;
+				for (Inventory dbgItem = pawn.Inv; dbgItem != null; dbgItem = dbgItem.Inv)
+				{
+					let dbgW = Weapon(dbgItem);
+					if (dbgW == null) continue;
+					wCount++;
+					string dbgCn = dbgW.GetClassName();
+					Console.Printf("\cy    %-24s offhand=%d  isFist=%d",
+						dbgCn, dbgW.bOffhandWeapon, isFistClass(dbgW.GetClass()));
+				}
+				if (wCount == 0)
+					Console.Printf("\cy    (no Weapon-type items in inventory at all)");
 				return;
 			}
+			// TEMPORARY, 2026-08-26: contents[] bookkeeping has been proven
+			// correct -- this is the one remaining unverified step. Print
+			// what findFist chose and what actually landed in each hand
+			// immediately after the call, so a fist that silently fails to
+			// seat is visible instead of inferred.
+			string dbgRW  = "null";  if (pawn.player.ReadyWeapon  != null) dbgRW  = pawn.player.ReadyWeapon.GetClassName();
+			string dbgOW  = "null";  if (pawn.player.OffhandWeapon != null) dbgOW  = pawn.player.OffhandWeapon.GetClassName();
+			Console.Printf("\cy RS_HOLSTER: about to seat fist=%s (bOffhandWeapon=%d) into hand=%d.  BEFORE: Ready=%s Offhand=%s",
+				fist.GetClassName(), fist.bOffhandWeapon, hand, dbgRW, dbgOW);
+
 			moveWeaponInstant(pawn, fist, hand);
+
+			dbgRW = "null";  if (pawn.player.ReadyWeapon  != null) dbgRW  = pawn.player.ReadyWeapon.GetClassName();
+			dbgOW = "null";  if (pawn.player.OffhandWeapon != null) dbgOW  = pawn.player.OffhandWeapon.GetClassName();
+			Console.Printf("\cy RS_HOLSTER: AFTER seating:  Ready=%s Offhand=%s  PendingWeapon==WP_NOCHANGE=%d",
+				dbgRW, dbgOW, pawn.player.PendingWeapon == WP_NOCHANGE);
+
+			// IMMEDIATE RECOVERY, NOT A 2-SECOND WAIT. Proven in a real
+			// session: this specific failure (a third-party weapon's own
+			// Deselect looping and getting killed by the engine's recursion
+			// guard) is synchronous -- the abort happens DURING
+			// moveWeaponInstant, on this exact tic, not sometime later. The
+			// per-tic recovery in WorldTick (pendingStuckTics) exists for a
+			// switch that gets stuck through some OTHER path, but for the
+			// one this file has actual evidence of, waiting up to 70 tics to
+			// notice something that already finished failing THIS tic is
+			// pure lost time. Recover right here instead.
+			if (pawn.player.PendingWeapon != WP_NOCHANGE)
+			{
+				pawn.BringUpWeapon();
+				pendingStuckTics[i] = 0;
+				if (verboseDiag())
+					Console.Printf("RS_HOLSTER: seat did not settle this tic -- recovered immediately, not waiting");
+			}
 		}
 
 		// The gun that just went IN stops being an auto-switch candidate. A
@@ -2675,8 +3009,9 @@ class RS_HolsterManager : EventHandler
 		bool foundBounds; double measuredRadius;
 		[foundBounds, measuredRadius] = level.GetModelBoundsHint(resolvedClass, rs.sprite, rs.Frame);
 		double fallbackScale = isHandAnchored(h) ? RS_HolsterProp.holsterPropScaleArm() : RS_HolsterProp.holsterPropScale();
+		double visualRadius = RS_HolsterProp.holsterPropVisualRadius();
 		double steadyStateScale = (foundBounds && measuredRadius > 0.0)
-			? (hsRadius * RS_HolsterProp.holsterPropFill()) / measuredRadius
+			? (visualRadius * RS_HolsterProp.holsterPropFill()) / measuredRadius
 			: fallbackScale;
 
 		// Prefer the prop's REAL, currently-applied Scale over the formula

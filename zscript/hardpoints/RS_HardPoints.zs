@@ -1086,7 +1086,16 @@ class RS_HardPointManager : EventHandler
 		if (isMainArmAnchor(idx))
 		{
 			ang = pawn.AttackAngle;
-			pit = pawn.AttackPitch;
+			// NEGATED. AttackPitch/OffhandPitch are stored negated by the
+			// engine -- every correct consumer in this family flips it back
+			// on read; RS_Reload's rr_point.zs:Pit() is the precedent,
+			// `return -((hand == 0) ? pmo.AttackPitch : pmo.OffhandPitch);`.
+			// This read it raw, so a wrist mount pitched the opposite way
+			// from an actual tilt of the wrist -- tilt the gun up and the
+			// mount swung down. Level wrist reads 0 either way, which is
+			// why this survived: it looks correct until you actually tip
+			// your hand.
+			pit = -pawn.AttackPitch;
 			// MainHandRoll, not AttackRoll. The playsim zeroes AttackRoll every
 			// tic (p_user.cpp:134) and does it in P_PlayerThink, which
 			// p_tick.cpp:501 runs three lines before WorldTick at :504 -- so
@@ -1098,7 +1107,7 @@ class RS_HardPointManager : EventHandler
 		else
 		{
 			ang = pawn.OffhandAngle;
-			pit = pawn.OffhandPitch;
+			pit = -pawn.OffhandPitch;
 			rol = pawn.OffhandRoll;
 		}
 	}
@@ -1229,7 +1238,12 @@ class RS_HardPointManager : EventHandler
 				double bAng, bPit, bRol;
 				handBasisPose(pawn, gm, bAng, bPit, bRol);
 				edYaw[gm]   = normalizeDeg(pawn.AttackAngle - bAng);
-				edPitch[gm] = normalizeDeg(pawn.AttackPitch - bPit);
+				// NEGATED, to match handBasisPose's own fix -- bPit now comes
+				// back true-signed (handBasisPose negates AttackPitch itself),
+				// so the raw field on this side has to match or the
+				// subtraction mixes two different sign conventions and gets a
+				// delta that is wrong in a NEW way, not just inverted.
+				edPitch[gm] = normalizeDeg(-pawn.AttackPitch - bPit);
 				// MainHandRoll -- AttackRoll is a playsim-zeroed constant in
 				// script (see handBasisPose), so this captured -bRol rather
 				// than the wrist angle the mount was actually dragged to.
@@ -1238,7 +1252,11 @@ class RS_HardPointManager : EventHandler
 			else
 			{
 				worldToBody(i, pawn, pawn.AttackPos, edFwd[gm], edSide[gm], edFrac[gm]);
-				edPitch[gm] = pawn.AttackPitch;
+				// NEGATED, same reason as handBasisPose and the branch above --
+				// this stores the wrist's TRUE pitch at capture time as a fixed
+				// trim; storing the raw (negated-at-source) field here would
+				// have applied that trim backwards every time it was consumed.
+				edPitch[gm] = -pawn.AttackPitch;
 				// MainHandRoll, same reason as the branch above -- AttackRoll
 				// reads zero in script, so this stored 0 for every main-arm
 				// mount no matter how the wrist was held while placing it.
@@ -1270,13 +1288,15 @@ class RS_HardPointManager : EventHandler
 				double bAngO, bPitO, bRolO;
 				handBasisPose(pawn, go, bAngO, bPitO, bRolO);
 				edYaw[go]   = normalizeDeg(pawn.OffhandAngle - bAngO);
-				edPitch[go] = normalizeDeg(pawn.OffhandPitch - bPitO);
+				// NEGATED -- same reason as the main-hand branch above.
+				edPitch[go] = normalizeDeg(-pawn.OffhandPitch - bPitO);
 				edRoll[go]  = normalizeDeg(pawn.OffhandRoll  - bRolO);
 			}
 			else
 			{
 				worldToBody(i, pawn, pawn.OffhandPos, edFwd[go], edSide[go], edFrac[go]);
-				edPitch[go] = pawn.OffhandPitch;
+				// NEGATED, same reason as the main-hand branch above.
+				edPitch[go] = -pawn.OffhandPitch;
 				edRoll[go]  = pawn.OffhandRoll;
 				edYaw[go] = normalizeDeg(pawn.OffhandAngle - bodyYaw[i]);
 			}

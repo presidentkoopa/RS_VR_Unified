@@ -54,6 +54,43 @@ class RS_HandsAlwaysOn : EventHandler
 	const LAYER_MAIN = 900000;
 	const LAYER_OFF  = 1900000;   // >= PSprite.OFFHANDWEAPON, which is what puts it on the other controller
 
+	// TRACKS HOW LONG player.PendingWeapon HAS BEEN STUCK, so a permanently
+	// aborted switch can be told apart from a normal one still in flight.
+	//
+	// Proven in a real session, not theorised: a third-party weapon's own
+	// Deselect state looped on itself, and the engine's own recursion guard
+	// killed it mid-transition -- "Recursive weapon state loop in
+	// 'X.5' -- aborted at depth 65". After that, ReadyWeapon/OffhandWeapon
+	// keeps pointing at the aborted weapon: not null, just functionally dead
+	// -- nothing renders it, nothing can fire it, and no later tic will ever
+	// finish the switch that was supposed to replace it.
+	//
+	// `holding = ReadyWeapon != null` below cannot tell that apart from a
+	// real, held weapon, so the hand posed as if gripping a gun that render
+	// shows nothing in. Cannot simply gate on PendingWeapon != WP_NOCHANGE
+	// either -- that field goes non-NOCHANGE on EVERY ordinary switch too,
+	// and suppressing the grip pose for that would flicker the hand to empty
+	// on every normal weapon change, trading a rare permanent bug for a
+	// constant cosmetic one.
+	//
+	// So: count tics, not just presence. STUCK_THRESHOLD (70 tics, 2 real
+	// seconds) is comfortably longer than any legitimate lower/raise cycle
+	// -- even the ~16-tic non-instant path RS_Holsters' own comments cite --
+	// so it never fires during a healthy switch and reliably fires once one
+	// has genuinely stopped moving.
+	const STUCK_THRESHOLD = 70;
+
+	// ONE counter, not one per hand. player.PendingWeapon is itself a single
+	// shared field (player.zs:2629 -- `player.PendingWeapon = weap;`, with no
+	// hand index anywhere near it), so there is no native way to ask "which
+	// hand is the stuck one" -- only "is a switch stuck at all". Once it is,
+	// neither hand's ReadyWeapon/OffhandWeapon is trusted as "definitely
+	// holding" until it resolves; the rare cost is a legitimate hand's grip
+	// pose also going conservative for a couple of tics if only the OTHER
+	// hand was actually the broken one, which is a far smaller wrong than a
+	// hand staying permanently posed around a gun that renders nothing.
+	private int pendingTics;
+
 	override void WorldTick()
 	{
 		if (consoleplayer < 0 || consoleplayer >= MAXPLAYERS)
@@ -74,6 +111,16 @@ class RS_HandsAlwaysOn : EventHandler
 			return;
 		}
 
+		// Count how long PendingWeapon has been stuck, then forget the count
+		// the instant it is not -- this has to self-heal every tic, since a
+		// switch that resolves normally 4 tics from now must not leave a
+		// leftover count sitting around from an earlier, unrelated one.
+		if (player.PendingWeapon != WP_NOCHANGE)
+			pendingTics++;
+		else
+			pendingTics = 0;
+		bool switchStuck = pendingTics > STUCK_THRESHOLD;
+
 		// GripContext is None only when the squeeze is not held -- every other
 		// value is a context that claimed an already-held grip -- so != 0 is a
 		// reliable "squeeze down" regardless of what the grip is bound to.
@@ -84,11 +131,11 @@ class RS_HandsAlwaysOn : EventHandler
 		// them there, and the trigger still curls the index on top.
 		int buttons = player.cmd.buttons;
 		Show(player, pawn, LAYER_MAIN, "RS_HandIdleMain",
-			player.ReadyWeapon != null, pawn.GripContextMain != 0,
+			player.ReadyWeapon != null && !switchStuck, pawn.GripContextMain != 0,
 			(buttons & BT_ATTACK) != 0, pawn.FingerTouchMain,
 			pawn.GripSubjectMain);
 		Show(player, pawn, LAYER_OFF,  "RS_HandIdleOff",
-			player.OffhandWeapon != null, pawn.GripContextOff != 0,
+			player.OffhandWeapon != null && !switchStuck, pawn.GripContextOff != 0,
 			(buttons & BT_OFFHANDATTACK) != 0, pawn.FingerTouchOff,
 			pawn.GripSubjectOff);
 	}

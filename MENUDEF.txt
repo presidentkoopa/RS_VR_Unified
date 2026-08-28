@@ -520,8 +520,8 @@ OptionMenu "RS_HolsterOptions"
 	// unconditionally in the shipped build -- see CVARINFO.txt for the full
 	// list. The manual dump above and the range haptic are NOT affected.
 	Option "Verbose console logging",    "rs_holster_verbose", "OnOff"
-	StaticText "Range enter/leave lines, the automatic orientation dump", "DarkGray"
-	StaticText "after every store, and the flashlight's pose printf.", "DarkGray"
+	StaticText "Range enter/leave lines, and the automatic orientation", "DarkGray"
+	StaticText "dump after every store.", "DarkGray"
 	StaticText "Off in a normal build; turn on for a tuning session.", "DarkGray"
 }
 

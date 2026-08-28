@@ -80,8 +80,6 @@ version "5.0.0"
 // -- holsters: torso anchors + ammo pouch ------------------------------------
 #include "zscript/holsters/RS_HolsterProp.zs"
 #include "zscript/holsters/RS_Holsters.zs"
-#include "zscript/holsters/RS_HolsterFlashlight.zs"
-#include "zscript/holsters/RS_HolsterStartLoadout.zs"
 
 // -- hardpoints: arm anchors -------------------------------------------------
 #include "zscript/hardpoints/RS_HardPointProp.zs"
