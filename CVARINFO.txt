@@ -219,6 +219,15 @@ user bool rs_hold_pass = true;
 // moment a gap opened. 0 disables the break entirely.
 user float rs_hold_break = 40.0;
 
+// Held things turn with your wrist. ROLL ONLY -- a sprite has no visible yaw,
+// but it very much has a visible roll, which is what lets a carried barrel
+// tip over when you turn your hand over. Reuses the same three render flags
+// RS_Pull already uses to tumble a thrown object; they are borrowed and put
+// back exactly, because they are NOT inert at roll zero -- ROLLSPRITE
+// rescales the sprite and ROLLCENTER drops its offsets, so a held object
+// would still be drawn differently from a dropped one with roll left at 0.
+user bool rs_hold_rotate = true;
+
 user bool rs_hold_debug = false;
 
 // ---- WHAT IS GRABBABLE --------------------------------------------------

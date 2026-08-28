@@ -71,6 +71,29 @@ class RS_Held : EventHandler
 	// THE THIRD PAIR, and the barrel is why. See SaveFlags.
 	private bool hSavedThruActors[2];
 
+	// THE ROLL TRIO, borrowed and restored exactly like the three above, and
+	// carried by the same hOwnsFlags token so a second hand joining a hold can
+	// never re-save what the first hand already changed.
+	//
+	// A sprite normally turns to face you and has no visible facing of its own,
+	// which is why this file used to set no orientation at all. But RS_Pull
+	// already proved the way round it: +ROLLSPRITE, +ROLLCENTER and
+	// +INTERPOLATEANGLES together make a billboard genuinely read as a solid
+	// object turning in 3D, and it uses exactly that to tumble things through
+	// the air. Nothing about the trick is specific to flight -- it just needs a
+	// roll written each tic, and a hand holding something has a far better
+	// number to write than a ballistic arc does.
+	//
+	// NOT INERT AT ROLL ZERO, which is why these are saved rather than simply
+	// switched on and left. +ROLLSPRITE makes hw_sprites apply a pixelstretch
+	// rescale to any actor carrying it, and +ROLLCENTER drops the sprite's own
+	// offsets -- so a held object would still be drawn differently from a
+	// dropped one even with the roll left at zero. Off has to mean untouched.
+	private bool   hSavedRollSprite[2];
+	private bool   hSavedRollCentre[2];
+	private bool   hSavedInterpAng[2];
+	private double hSavedRoll[2];
+
 	// The last value THIS system wrote to GripClaimMain/Off, kept apart from the
 	// slot above because the slot is gone by the time the claim needs clearing.
 	// The convention on GripClaim* is "clear only a value that is yours", and
@@ -333,6 +356,18 @@ class RS_Held : EventHandler
 		hSavedSpecial[hand]    = false;
 		hSavedNoGravity[hand]  = false;
 		hSavedThruActors[hand] = false;
+		hSavedRollSprite[hand] = false;
+		hSavedRollCentre[hand] = false;
+		hSavedInterpAng[hand]  = false;
+		hSavedRoll[hand]       = 0.0;
+	}
+
+	// Whether held objects turn with the wrist at all. Read per-use rather than
+	// cached because it is a menu toggle, and switching it off has to put the
+	// borrowed flags back on the very next tic -- see CarryOne.
+	private bool RotateHeld(PlayerInfo p) const
+	{
+		return Flag("rs_hold_rotate", p, true);
 	}
 
 	private void SaveFlags(int hand, Actor a)
@@ -341,6 +376,10 @@ class RS_Held : EventHandler
 		hSavedSpecial[hand]    = a.bSPECIAL;
 		hSavedNoGravity[hand]  = a.bNOGRAVITY;
 		hSavedThruActors[hand] = a.bTHRUACTORS;
+		hSavedRollSprite[hand] = a.bROLLSPRITE;
+		hSavedRollCentre[hand] = a.bROLLCENTER;
+		hSavedInterpAng[hand]  = a.bINTERPOLATEANGLES;
+		hSavedRoll[hand]       = a.Roll;
 
 		// SPECIAL cleared is the one that is not optional. An item in your hand
 		// is an item permanently inside your own collision cylinder, so Doom's
@@ -382,6 +421,10 @@ class RS_Held : EventHandler
 		hSavedSpecial[to]      = hSavedSpecial[from];
 		hSavedNoGravity[to]    = hSavedNoGravity[from];
 		hSavedThruActors[to]   = hSavedThruActors[from];
+		hSavedRollSprite[to]   = hSavedRollSprite[from];
+		hSavedRollCentre[to]   = hSavedRollCentre[from];
+		hSavedInterpAng[to]    = hSavedInterpAng[from];
+		hSavedRoll[to]         = hSavedRoll[from];
 		hOwnsFlags[from]       = false;
 	}
 
@@ -395,6 +438,16 @@ class RS_Held : EventHandler
 		a.bSPECIAL    = hSavedSpecial[hand];
 		a.bNOGRAVITY  = hSavedNoGravity[hand];
 		a.bTHRUACTORS = hSavedThruActors[hand];
+
+		// Roll included, and the roll VALUE as well as the three flags. Without
+		// it a barrel set down after being turned over stays cocked at whatever
+		// angle your wrist happened to be at, forever -- the same failure
+		// RS_Pull.RestoreTumble exists to prevent for a caught object.
+		a.bROLLSPRITE        = hSavedRollSprite[hand];
+		a.bROLLCENTER        = hSavedRollCentre[hand];
+		a.bINTERPOLATEANGLES = hSavedInterpAng[hand];
+		a.Roll               = hSavedRoll[hand];
+
 		a.Vel = (0, 0, 0);
 	}
 
@@ -432,11 +485,61 @@ class RS_Held : EventHandler
 		a.SetZ(palm.z);
 		a.TryMove((palm.x, palm.y), 1);
 
-		// Orientation is deliberately NOT set here. Every grabbable thing in the
-		// world today is a sprite, and a sprite always turns to face you -- so
-		// there is no orientation to see, and anything written now would be
-		// tuned against something that cannot show whether it is right. It goes
-		// in with the voxel swap, where the object first has a visible facing.
+		// ---- orientation ------------------------------------------------
+		//
+		// This used to be a comment saying orientation could not be done until
+		// meshes arrived, because a sprite always turns to face you and so has
+		// no facing to set. That was true of YAW and only of yaw. ROLL is
+		// visible on a billboard, and RS_Pull has been proving it for as long
+		// as distance grab has existed -- +ROLLSPRITE, +ROLLCENTER and
+		// +INTERPOLATEANGLES together make a flat sprite read as a solid thing
+		// turning over. It just needs a roll written every tic, and a hand has
+		// a much better number for that than a ballistic arc does.
+		//
+		// So: a held barrel now tips with your wrist. Turn your hand over and
+		// it turns over.
+		//
+		// ONE HAND'S ROLL, THE OWNER'S. A two-handed carry has two wrists and
+		// they disagree; picking the flag-owning hand means the object follows
+		// whichever hand is actually carrying it, and keeps following the same
+		// one when the other lets go (MoveFlagsTo hands ownership over).
+		//
+		// The switch is read every tic rather than latched, so turning it off
+		// in the menu restores the borrowed flags immediately instead of at the
+		// next release.
+		if (!hOwnsFlags[hand]) return;
+
+		if (RotateHeld(p))
+		{
+			a.bROLLSPRITE        = true;
+			a.bROLLCENTER        = true;
+			a.bINTERPOLATEANGLES = true;
+
+			// MainHandRoll/OffhandRoll, NOT AttackRoll. The playsim zeroes
+			// AttackRoll every tic inside P_PlayerThink, before any WorldTick
+			// hook runs, so reading it here would return a constant zero and
+			// nothing would ever turn. Same side-channel RS_HardPoints and
+			// wr_gunhud already read for the same reason.
+			//
+			// Written raw, not smoothed: +INTERPOLATEANGLES hands it to the
+			// renderer's own deltaangle lerp, which takes the short way round
+			// the 0/360 wrap. A second smoother here could only ever disagree
+			// with it. Safe to write in WorldTick because p_tick.cpp takes each
+			// actor's PrevAngles snapshot BEFORE the hook runs, so last tic's
+			// roll is still intact when this overwrites it.
+			a.Roll = (hand == HAND_MAIN) ? pmo.MainHandRoll : pmo.OffhandRoll;
+		}
+		else
+		{
+			// Switched off mid-hold. Put back exactly what was borrowed --
+			// these flags are not inert at roll zero (ROLLSPRITE rescales,
+			// ROLLCENTER drops the sprite's offsets), so leaving them set would
+			// keep drawing a held object differently from a dropped one.
+			a.bROLLSPRITE        = hSavedRollSprite[hand];
+			a.bROLLCENTER        = hSavedRollCentre[hand];
+			a.bINTERPOLATEANGLES = hSavedInterpAng[hand];
+			a.Roll               = hSavedRoll[hand];
+		}
 	}
 
 	// LET GO OF WHAT WE CANNOT ACTUALLY CARRY.

@@ -255,6 +255,7 @@ OptionMenu "RS_GrabHoldMenu"
 	StaticText "How far it may lag behind the palm before", 1
 	StaticText "your hand loses it. 34 units = 1 metre.", 1
 	Slider "Let go at",                 "rs_hold_break", 0, 120, 2, 0
+	Option "Turn with wrist",           "rs_hold_rotate", "OnOff"
 
 	StaticText ""
 	StaticText "Walking into a pickup collects it long before", 1

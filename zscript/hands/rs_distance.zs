@@ -226,6 +226,29 @@ class RS_Pull : EventHandler
 		// is not the only thing that can name a target, and this is the door the
 		// object actually leaves through.
 		if (held && held.IsHeld(a)) return false;
+
+		// NOR SOMETHING THE OTHER HAND IS ALREADY PULLING OR HAS LOCKED.
+		//
+		// Both hands driving one actor is not a harmless duplicate: each flight
+		// saves the object's SPECIAL/NOGRAVITY/THRUACTORS before touching them,
+		// so the second save records the values the FIRST flight had already
+		// changed -- weightless and pass-through -- as the originals. Whichever
+		// flight ends last then restores that fiction. The object is left
+		// permanently weightless and permanently walk-through, hanging in the
+		// air, and nothing in the game will ever put it back: the true values
+		// were overwritten and are gone.
+		//
+		// Exactly the hazard RS_Held.hOwnsFlags exists to prevent for a
+		// two-handed carry, which solves it by having one owner of the backup.
+		// Flight has no equivalent, and does not need one -- there is no gesture
+		// that means "pull it with both hands", so refusing is the whole fix.
+		//
+		// Both slots are checked, not just the flight: a lock is what a flick
+		// turns into a flight, so allowing the second lock only defers the
+		// collision to the moment both are flicked.
+		int other = 1 - hand;
+		if (flyActor[other] == a || lockActor[other] == a) return false;
+
 		lockActor[hand] = a;
 		if (RS_Reach.Flag("rs_hold_debug", p, true))
 			Console.Printf("[RSPULL] hand %d LOCKED %s -- flick to pull it", hand, a.GetClassName());
@@ -521,10 +544,27 @@ class RS_Pull : EventHandler
 		if (!p || !p.mo) return;
 		let pmo = p.mo;
 
-		if (pmo.Health <= 0 || !RS_Reach.Flag("rs_dgrab", p, true))
+		// rs_grab AS WELL AS rs_dgrab, and the master switch is the one that was
+		// missing.
+		//
+		// Distance grab is downstream of grab: the lock is taken by
+		// RS_GrabHandler and a flick is read there too. Switch rs_grab off with
+		// something locked and that handler clears its own claims and returns
+		// (rs_grab.zs, the Flag("rs_grab") exit) -- but this handler kept
+		// running, because it only ever asked about rs_dgrab. The lock therefore
+		// survived with nothing left able to reach it: the object went on
+		// pulsing and the reeling beam went on being drawn to the palm for the
+		// rest of the level, and the grip that would normally clear it no longer
+		// resolved at all. Anything already in the air also finished its arc and
+		// hit you, with the whole grab system supposedly switched off.
+		//
+		// AbortAll puts flights back the way they were found and drops both
+		// locks, which is exactly what "off" should mean.
+		if (pmo.Health <= 0
+			|| !RS_Reach.Flag("rs_grab",  p, true)
+			|| !RS_Reach.Flag("rs_dgrab", p, true))
 		{
 			AbortAll();
-			Unlock(0); Unlock(1);
 			return;
 		}
 
