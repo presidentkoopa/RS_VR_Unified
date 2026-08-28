@@ -337,6 +337,39 @@ class RS_Held : EventHandler
 			return;
 		}
 
+		// THE VELOCITY IS SOLVED BEFORE THE FLAGS GO BACK, because clearing the
+		// player is only possible while the object can still pass through them.
+		Vector3 v = (pmo && p) ? RS_Throw.VelocityFor(hand, pmo, p) : (0, 0, 0);
+
+		// STEP IT CLEAR OF YOUR OWN BODY FIRST, or a thrown object goes UP and
+		// nowhere else.
+		//
+		// Confirmed in headset on barrels, which is where it shows worst. The
+		// hold borrows THRUACTORS so a solid object can sit inside your
+		// collision cylinder at all; RestoreFlags hands that back. So the
+		// instant you let go, a barrel is solid again AND still overlapping you
+		// -- your radius is 16 and its own is 10, and anything in your hand is
+		// well inside that 26. P_XYMovement then refuses every horizontal step
+		// into you, while P_ZMovement is not blocked the same way, so the
+		// throw's upward component survives and its forward component dies on
+		// the first tic. It reads as momentum turning into height.
+		//
+		// Moved along the throw while THRUACTORS is still borrowed, so the step
+		// itself can pass through you, and via TryMove so it cannot pass through
+		// GEOMETRY -- throwing at a wall you are standing against must not post
+		// the object into it. A refused step just leaves the object where it
+		// was, which is the old behaviour and no worse.
+		if (v.Length() > 0)
+		{
+			double clearBy = pmo.Radius + a.Radius + 2.0;
+			Vector2 dir = (v.x, v.y);
+			if (dir.Length() > 0.01)
+			{
+				dir = dir / dir.Length();
+				a.TryMove((a.Pos.x + dir.x * clearBy, a.Pos.y + dir.y * clearBy), 1);
+			}
+		}
+
 		RestoreFlags(hand, a);
 		ClearSlot(hand);
 
@@ -345,7 +378,6 @@ class RS_Held : EventHandler
 		// returned above -- you cannot throw something you are still holding.
 		if (pmo && p)
 		{
-			Vector3 v = RS_Throw.VelocityFor(hand, pmo, p);
 			if (v.Length() > 0)
 			{
 				// Vel only. RestoreFlags put NOGRAVITY back one line above, and
