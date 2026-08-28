@@ -190,6 +190,41 @@ class RS_HolsterManager : EventHandler
 	bool pouchClaimedMain[MAXPLAYERS];
 	bool pouchClaimedOff[MAXPLAYERS];
 
+	// ---- the grip arbiter -------------------------------------------------
+	//
+	// Third copy of this lookup, and it stays a copy. A shared client helper
+	// would have to live in some file, and naming that file gives every
+	// consumer a COMPILE-TIME dependency on it -- fatal and GLOBAL when it is
+	// absent (thingdef.cpp:420-424 refuses every pk3 later in the load order).
+	// The arbiter is a Service reachable by string precisely so neither side
+	// ever names the other; three small lookups is what that costs.
+	private Service arbiter;
+	private int     arbWait;
+
+	const RS_ARB_RETRY = 350;    // ~10s at 35Hz; only a miss re-arms it
+	const RS_ARB_IDENT = 1;      // the arbiter's frozen IDENTITY, not its PROTOCOL
+	const RS_ARB_OWNER = 'RS_Holsters';
+
+	private void ArbiterFind()
+	{
+		if (arbiter) return;
+		if (arbWait > 0) { arbWait--; return; }
+
+		ServiceIterator it = ServiceIterator.Find("RS_GripArbiterService");
+		Service s;
+		while (s = it.Next())
+		{
+			// ServiceIterator matches on a case-insensitive SUBSTRING, so a hit
+			// proves nothing -- ask for something only the arbiter answers.
+			if (s.GetInt("grip.hello", "", 0, 0, null, 'None') != RS_ARB_IDENT)
+				continue;
+			arbiter = s;
+			break;
+		}
+
+		if (!arbiter) arbWait = RS_ARB_RETRY;
+	}
+
 	// The real weapon each hand held before ammo-pouch business took it
 	// over, null when nothing is currently suppressed. Watches the CLAIM
 	// broadly (GripClaim* != GRIPSUBJ_None), not just whether THIS mod still
@@ -359,6 +394,10 @@ class RS_HolsterManager : EventHandler
 
 	override void WorldTick()
 	{
+		// Once per tic, not once per player: the handle is a property of the
+		// loaded pk3 set, not of any player.
+		ArbiterFind();
+
 		for (int i = 0; i < MAXPLAYERS; ++i)
 		{
 			if (!playeringame[i] || players[i].mo == null)
@@ -1166,26 +1205,52 @@ class RS_HolsterManager : EventHandler
 		bool claimedByUs = isMain ? pouchClaimedMain[i] : pouchClaimedOff[i];
 		int curClaim = isMain ? pawn.GripClaimMain : pawn.GripClaimOff;
 
+		int hand = isMain ? 0 : 1;
+
 		if (nowInPouch && !claimedByUs && curClaim == GRIPSUBJ_None)
 		{
 			if (isMain) { pawn.GripClaimMain = GRIPSUBJ_Pouch; pouchClaimedMain[i] = true; }
 			else        { pawn.GripClaimOff  = GRIPSUBJ_Pouch; pouchClaimedOff[i]  = true; }
+
+			if (arbiter)
+				arbiter.GetInt("grip.claim", "", hand, GRIPSUBJ_Pouch, pawn, RS_ARB_OWNER);
+		}
+		else if (nowInPouch && claimedByUs)
+		{
+			// RENEWAL. Nothing else in this branch changes, and the engine field
+			// is already right -- but the arbiter's lease has to be refreshed or
+			// a hand parked in the pouch for two seconds would read as free.
+			if (arbiter)
+				arbiter.GetInt("grip.claim", "", hand, GRIPSUBJ_Pouch, pawn, RS_ARB_OWNER);
 		}
 		else if (!nowInPouch && claimedByUs)
 		{
-			// Only clear a value that is still ours -- another mod may have
-			// claimed GripClaim* for something else (a mag, a slide) in the
+			// Only clear a claim that is still ours -- another mod may have
+			// taken GripClaim* for something else (a mag, a slide) in the
 			// meantime, and that claim is not this mod's to erase.
-			if (isMain)
-			{
-				if (pawn.GripClaimMain == GRIPSUBJ_Pouch) pawn.GripClaimMain = GRIPSUBJ_None;
-				pouchClaimedMain[i] = false;
-			}
+			//
+			// Asked of the arbiter as of 2026-08-28 rather than inferred from
+			// the value. GRIPSUBJ_Pouch is at least a subject nothing else in
+			// this family writes, so the old compare was sounder here than it
+			// was in Hands or Reload -- but "sounder" is not "sound", and a
+			// fourth consumer picking the same subject would break it silently.
+			bool ours;
+			if (arbiter)
+				ours = arbiter.GetInt("grip.mine", "", hand, 0, pawn, RS_ARB_OWNER) == 1;
 			else
+				ours = (isMain ? pawn.GripClaimMain : pawn.GripClaimOff) == GRIPSUBJ_Pouch;
+
+			if (ours)
 			{
-				if (pawn.GripClaimOff == GRIPSUBJ_Pouch) pawn.GripClaimOff = GRIPSUBJ_None;
-				pouchClaimedOff[i] = false;
+				if (isMain) pawn.GripClaimMain = GRIPSUBJ_None;
+				else        pawn.GripClaimOff  = GRIPSUBJ_None;
 			}
+
+			if (arbiter)
+				arbiter.GetInt("grip.release", "", hand, 0, pawn, RS_ARB_OWNER);
+
+			if (isMain) pouchClaimedMain[i] = false;
+			else        pouchClaimedOff[i]  = false;
 		}
 
 		// The weapon<->fist swap watches the CLAIM broadly (GripClaim* !=

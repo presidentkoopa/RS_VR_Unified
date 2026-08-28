@@ -79,6 +79,53 @@ class RS_Held : EventHandler
 	// for the rest of the level, with stabilize permanently stood down.
 	private int hClaimed[2];
 
+	// ---- the grip arbiter -------------------------------------------------
+	//
+	// DUPLICATED FROM RR_Reload'S ArbiterProbe ON PURPOSE, and it must stay
+	// duplicated. A shared client helper would have to live somewhere, and
+	// every consumer naming that somewhere gets a COMPILE-TIME dependency on
+	// it -- which is fatal AND GLOBAL if the file is absent (thingdef.cpp:
+	// 420-424 refuses every pk3 later in the load order). The whole reason the
+	// arbiter is a Service reachable by string is that neither side may name
+	// the other. Three small copies of a lookup is the price of that, and it is
+	// the correct price.
+	//
+	// Trimmed against RR_Reload's version: no proto logging, no tri-state seen
+	// flag. Those exist there because that file's conversion was staged as a
+	// deliverable in itself. This one only needs the handle.
+	private Service arbiter;
+	private int     arbWait;
+
+	const RS_ARB_RETRY = 350;    // ~10s at 35Hz; a miss re-checks, a hit does not
+	const RS_ARB_IDENT = 1;      // the arbiter's frozen IDENTITY, never its PROTOCOL
+	const RS_ARB_OWNER = 'RS_Held';
+
+	// A COUNTDOWN, NOT A DEADLINE. ServiceIterator.Find allocates a fresh
+	// iterator per call, so a game without the arbiter would otherwise build one
+	// every tic forever to learn the same nothing -- and a saved `gametic + N`
+	// deadline goes stale across a process restart, where gametic returns to 0.
+	private void ArbiterFind()
+	{
+		if (arbiter) return;
+		if (arbWait > 0) { arbWait--; return; }
+
+		ServiceIterator it = ServiceIterator.Find("RS_GripArbiterService");
+		Service s;
+		while (s = it.Next())
+		{
+			// IDENTITY, not presence: ServiceIterator matches on a
+			// case-insensitive SUBSTRING, so a hit is not proof of identity.
+			if (s.GetInt("grip.hello", "", 0, 0, null, 'None') != RS_ARB_IDENT)
+				continue;
+			arbiter = s;
+			break;
+		}
+
+		// Only a miss arms the throttle, so the re-resolve after a savegame load
+		// lands on the next tic rather than up to ten seconds later.
+		if (!arbiter) arbWait = RS_ARB_RETRY;
+	}
+
 	// ---- access ----------------------------------------------------------
 
 	static RS_Held Get()
@@ -415,6 +462,10 @@ class RS_Held : EventHandler
 		if (!p || !p.mo) { return; }
 		let pmo = p.mo;
 
+		// BEFORE the death return below, not after: a hand emptied by dying
+		// still wants its lease released, and that path exits early.
+		ArbiterFind();
+
 		// An actor pointer nulls itself when the actor is destroyed, so a crushed
 		// or consumed object empties its slot on its own. The role and the flag
 		// backup do not, and a stale role is what decides the NEXT hold, so
@@ -485,6 +536,11 @@ class RS_Held : EventHandler
 			else                pmo.GripClaimOff  = hSubject[h];
 			hClaimed[h] = hSubject[h];
 
+			// Doubles as a renewal -- this runs every tic while holding, which
+			// is exactly what keeps the lease alive.
+			if (arbiter)
+				arbiter.GetInt("grip.claim", "", h, hSubject[h], pmo, RS_ARB_OWNER);
+
 			// And tell the hand model what shape to be, when the world hands are
 			// the ones on screen. One tic behind, because the pose handler is
 			// registered ahead of this one -- invisible on a finger blend.
@@ -524,12 +580,33 @@ class RS_Held : EventHandler
 		{
 			if (hActor[h]) continue;
 			if (hClaimed[h] == GRIPSUBJ_None) continue;
-			int cur = (h == HAND_MAIN) ? pmo.GripClaimMain : pmo.GripClaimOff;
-			if (cur == hClaimed[h])
+
+			// ASK, DON'T INFER. The value compare below is what this family's
+			// whole claim-collision bug is made of: rs_grabpolicy assigns
+			// GRIPSUBJ_Magazine to every Ammo/Health/Armor/Inventory/barrel
+			// grab and RR_Reload returns the same value as its own default, so
+			// "the int still holds what I wrote" never distinguished our claim
+			// from theirs. Kept as the answer when no arbiter is loaded --
+			// unchanged behaviour, not a new risk.
+			bool ours;
+			if (arbiter)
+				ours = arbiter.GetInt("grip.mine", "", h, 0, pmo, RS_ARB_OWNER) == 1;
+			else
+				ours = ((h == HAND_MAIN) ? pmo.GripClaimMain : pmo.GripClaimOff) == hClaimed[h];
+
+			if (ours)
 			{
 				if (h == HAND_MAIN) pmo.GripClaimMain = GRIPSUBJ_None;
 				else                pmo.GripClaimOff  = GRIPSUBJ_None;
 			}
+
+			// Outside the test on purpose: releasing a slot this package does
+			// not hold is a no-op, so it is always safe, and it means a hand
+			// emptied by death or by switching grab off mid-hold cannot leave a
+			// lease standing for the rest of the level.
+			if (arbiter)
+				arbiter.GetInt("grip.release", "", h, 0, pmo, RS_ARB_OWNER);
+
 			hClaimed[h] = GRIPSUBJ_None;
 
 			let hd = RS_HandWorldHandler.Get(h);

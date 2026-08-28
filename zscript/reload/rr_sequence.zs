@@ -671,15 +671,34 @@ class RR_Reload : EventHandler
 		if (s.Length()) pmo.A_StartSound(s, CHAN_WEAPON, CHANF_OVERLAP);
 	}
 
+	// The name this package identifies itself by to the arbiter. A string the
+	// caller picks for itself and never registers anywhere -- see the arbiter's
+	// own note on why nameArg works that way.
+	const RR_ARB_OWNER = 'RR_Reload';
+
 	// SET while carrying, and clear ONLY a value that is ours. More than one mod
 	// writes GripClaim* -- the pouch, rs_hands' grab family, this -- and clearing
 	// another package's claim leaves a hand posed for something it is not
 	// holding, with nothing in the log.
+	//
+	// AS OF 2026-08-28 the ownership question is asked of the arbiter instead of
+	// inferred from the value, WHEN THE ARBITER IS THERE. The value compare
+	// below is not merely a fallback for a missing pk3: GRIPSUBJ_Magazine is
+	// this package's own default subject AND what rs_grabpolicy assigns to every
+	// Ammo/Health/Armor/Inventory grab, so "the int still says what I wrote" was
+	// never evidence the claim was still mine. It stays as the answer when no
+	// arbiter is loaded, which is exactly as right and as wrong as it has always
+	// been, and no worse.
 	private void Claim(PlayerPawn pmo, int subj)
 	{
 		if (feeder == 0) pmo.GripClaimMain = subj;
 		else             pmo.GripClaimOff  = subj;
 		claimed = subj;
+
+		// Doubles as a renewal: re-asserting an existing claim refreshes its
+		// lease, and Claim is already called every tic while carrying.
+		if (arbiter)
+			arbiter.GetInt("grip.claim", "", feeder, subj, pmo, RR_ARB_OWNER);
 	}
 
 	private void Abort(Actor a)
@@ -687,12 +706,26 @@ class RR_Reload : EventHandler
 		let pmo = PlayerPawn(a);
 		if (pmo && claimed != GRIPSUBJ_None)
 		{
-			int cur = (feeder == 0) ? pmo.GripClaimMain : pmo.GripClaimOff;
-			if (cur == claimed)
+			bool ours;
+			if (arbiter)
+				ours = arbiter.GetInt("grip.mine", "", feeder, 0, pmo, RR_ARB_OWNER) == 1;
+			else
+				ours = ((feeder == 0) ? pmo.GripClaimMain : pmo.GripClaimOff) == claimed;
+
+			if (ours)
 			{
 				if (feeder == 0) pmo.GripClaimMain = GRIPSUBJ_None;
 				else             pmo.GripClaimOff  = GRIPSUBJ_None;
 			}
+
+			// Unconditional, and deliberately outside the `ours` test: release
+			// is a no-op unless this package actually holds the slot, so a
+			// defensive release on a cleanup path costs nothing and closes the
+			// level-exit-mid-carry jam, where Abort was reached with the engine
+			// field already reset by P_SetupPsprites and the old value compare
+			// therefore silently declined to clean up after itself.
+			if (arbiter)
+				arbiter.GetInt("grip.release", "", feeder, 0, pmo, RR_ARB_OWNER);
 		}
 		if (pmo && pmo.player) RR_Ammo.Hide(pmo.player, feeder);
 
