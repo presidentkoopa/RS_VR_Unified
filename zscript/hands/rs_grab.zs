@@ -869,7 +869,33 @@ class RS_GrabHandler : EventHandler
             // holding a squeeze closed for a whole session is a hand cramp, and
             // hold-to-keep exists because a toggle drops things you meant to
             // keep. H3VR ships both for the same reason.
-            if (!toggle && release && full)
+            //
+            // A THROW RELEASES IN EITHER MODE, and without this throwing did not
+            // work at all at defaults.
+            //
+            // rs_hold_toggle ships true, and in toggle mode the only release is
+            // a second PRESS -- everything below the `if (!press) continue;`
+            // gate needs a press edge. So opening your hand did nothing, and the
+            // only way to throw was to hit the grip button at the exact peak of
+            // a swing. That is not a gesture anybody would find, and it is why
+            // throwing read as missing rather than as awkward.
+            //
+            // A fast release is unambiguous: nothing else in the scheme means
+            // "open your hand while your arm is moving hard". Below the same
+            // threshold a throw already uses (rs_throw_min), toggle keeps
+            // behaving exactly as before -- open your hand slowly and you go on
+            // holding the thing, which is the whole point of the mode.
+            bool throwRelease = false;
+            if (toggle && release && full)
+            {
+                let sw = RS_Swing.Get();
+                double need = RS_Swing.MetresPerSecToUnitsPerTic(
+                    RS_Reach.Num("rs_throw_min", p, 1.2));
+                throwRelease = RS_Reach.Flag("rs_throw", p, true)
+                    && sw && sw.PeakSpeed(hand) >= need;
+            }
+
+            if (((!toggle && release) || throwRelease) && full)
             {
                 Actor was = held.HeldBy(hand);
                 String wasName = "something";

@@ -453,13 +453,25 @@ user bool rs_use_at_face = true;
 // length from your face.
 user float rs_use_face_reach = 12.0;
 
-// Ammo goes to a pouch instead of resolving when you catch it.
+// Ammo goes to the chest pouch instead of resolving when you catch it.
 //
-// INERT TODAY. The pouch this would route to died with RS_UnifiedVR. The switch
-// exists so the decision is recorded and the menu entry is already here when a
-// pouch lands -- with it on and no pouch, ammo is simply held, which is worse
-// than resolving, and is why it defaults off.
-user bool rs_use_ammo_pouch = false;
+// LIVE AS OF 2026-08-28, and on. This shipped inert for a long time with a note
+// saying the pouch it would route to "died with RS_UnifiedVR" -- the switch was
+// left in place so the decision was recorded and the menu row was ready for
+// when a pouch came back. It came back: RS_Holsters' ammo pouch is the same
+// anchor RR_Reload draws magazines out of, so ammunition now goes back in the
+// way it comes out.
+//
+// WHY THIS IS THE BETTER DEFAULT. A box you DON'T catch lands at your feet and
+// is collected by standing there anyway. So absorbing one on the catch produces
+// the identical outcome as missing it, which makes catching worthless -- you
+// did something skilful and the game gave you what it would have given you for
+// nothing. Holding it until you put it away is what makes the catch an act
+// rather than an event.
+//
+// Off restores the old behaviour: caught ammunition resolves instantly and
+// never reaches your hand.
+user bool rs_use_ammo_pouch = true;
 
 // A tick when a held item crosses into face range.
 //

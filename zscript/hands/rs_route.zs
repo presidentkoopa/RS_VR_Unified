@@ -44,6 +44,23 @@ class RS_Route : EventHandler
 		let held = RS_Held.Get();
 		Actor a = held ? held.HeldBy(hand) : null;
 		if (!a) return false;
+
+		// THE SAME TEST THE USE ITSELF APPLIES, and it was missing here.
+		//
+		// This function exists to drive the cyan flash in rs_grabviz -- the
+		// signal that says "bring this the rest of the way and it will do
+		// something". WorldTick below refuses anything that is not an unowned
+		// Inventory, on the stated grounds that a barrel at your face is just a
+		// barrel at your face. But this only measured DISTANCE, so a barrel,
+		// a corpse or any other prop flashed the promise anyway and then did
+		// nothing when it arrived.
+		//
+		// A signal that fires when the action will not is worse than no signal:
+		// it teaches the player the gesture is unreliable, when in fact the
+		// gesture was never available for that object.
+		let inv = Inventory(a);
+		if (!inv || inv.Owner) return false;
+
 		Vector3 mid = (a.Pos.x, a.Pos.y, a.Pos.z + a.Height * 0.5);
 		return (mid - pmo.HmdPos).Length() <= Num("rs_use_face_reach", p, 12.0);
 	}

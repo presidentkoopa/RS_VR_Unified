@@ -445,17 +445,27 @@ class RS_GrabPolicy : EventHandler
 	{
 		if (!a || !rule || !pmo) return false;
 
-		// AMMO RESOLVES ON CATCH. Nobody brings a shell box to their mouth.
-		// Health and armour want the face gesture because using them is a
-		// decision; ammo is not a decision, it is a quantity, and miming
-		// drinking a box of shells to acquire it is worse than not asking.
+		// AMMUNITION GOES TO THE POUCH NOW, and this branch is the OLD
+		// behaviour, kept behind rs_use_ammo_pouch for anyone who wants it.
 		//
-		// rs_use_ammo_pouch flips that, and is INERT TODAY: the pouch it would
-		// route to died with RS_UnifiedVR. The switch exists so the decision is
-		// recorded and the menu entry is already in place when a pouch lands --
-		// not because it does anything yet. With it on and no pouch, ammo is
-		// simply held, which is a worse experience and is why it defaults off.
-		if (Inherits(a, 'Ammo') && !Flag("rs_use_ammo_pouch", p, false))
+		// The old argument was: nobody brings a shell box to their mouth, so
+		// health and armour get the face gesture and ammo just resolves. The
+		// face half of that still stands and is untouched. The other half did
+		// not survive contact with the actual game.
+		//
+		// A box you DON'T catch lands at your feet and is collected by standing
+		// there anyway. So resolving one on the catch produced the identical
+		// outcome as missing it -- the catch was skilful and paid exactly what
+		// fumbling paid. Holding it until you put it in the pouch is what makes
+		// catching an act rather than an event, and the pouch is the same
+		// anchor RR_Reload draws magazines out of, so ammunition goes back in
+		// the way it comes out. The stow itself lives in RS_Holsters, which
+		// owns that anchor.
+		//
+		// This switch was inert for a long time -- the pouch it named had died
+		// with RS_UnifiedVR, and the note here said so. It is live as of
+		// 2026-08-28.
+		if (Inherits(a, 'Ammo') && !Flag("rs_use_ammo_pouch", p, true))
 		{
 			let inv = Inventory(a);
 			if (inv && !inv.Owner)

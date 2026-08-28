@@ -257,6 +257,14 @@ OptionMenu "RS_GrabHoldMenu"
 	Slider "Let go at",                 "rs_hold_break", 0, 120, 2, 0
 	Option "Turn with wrist",           "rs_hold_rotate", "OnOff"
 	Slider "Weight feedback",           "rs_hold_haptic", 0, 1.5, 0.05, 2
+	StaticText ""
+	StaticText "With a voxel pack loaded, a held object becomes", 1
+	StaticText "a solid voxel you can actually turn over, then", 1
+	StaticText "goes back to a sprite when you drop it.", 1
+	StaticText "Voxels for the world are under Display Options,", 1
+	StaticText "where the engine keeps them. Turning them off", 1
+	StaticText "there is the interesting setting: the world looks", 1
+	StaticText "untouched and only what you hold goes solid.", 1
 	Option "Voxel when held",           "rs_hold_voxel", "OnOff"
 	StaticText ""
 	StaticText "Walking into a pickup collects it long before", 1
@@ -348,11 +356,12 @@ OptionMenu "RS_GrabUseMenu"
 	Slider "  How close (34 = 1m)",     "rs_use_face_reach", 4, 40, 1, 0
 
 	StaticText ""
-	StaticText "Nobody brings a shell box to their mouth, so", 1
-	StaticText "caught ammo just resolves.", 1
-	StaticText "The pouch option does NOTHING yet -- the pouch", 1
-	StaticText "it would route to does not exist.", 1
-	Option "Ammo needs the pouch",      "rs_use_ammo_pouch", "OnOff"
+	StaticText "A box you DON'T catch lands at your feet and", 1
+	StaticText "is picked up anyway -- so catching one should", 1
+	StaticText "mean you wanted to keep it. Carry it to your", 1
+	StaticText "chest pouch to put it away.", 1
+	StaticText "Off: caught ammo resolves instantly instead.", 1
+	Option "Stow caught ammo in pouch",  "rs_use_ammo_pouch", "OnOff"
 }
 
 //======================================================================

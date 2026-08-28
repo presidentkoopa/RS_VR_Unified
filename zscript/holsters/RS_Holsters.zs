@@ -1208,6 +1208,68 @@ class RS_HolsterManager : EventHandler
 
 		int hand = isMain ? 0 : 1;
 
+		// STOW CAUGHT AMMUNITION, and this is what rs_use_ammo_pouch was always
+		// waiting for.
+		//
+		// That switch shipped inert with a note saying the pouch it would route
+		// to "died with RS_UnifiedVR" -- it was left in place so the decision
+		// was recorded and the menu row was ready for when a pouch came back.
+		// This is that pouch. It is the same anchor RR_Reload draws magazines
+		// out of, so ammunition now goes back in the way it comes out.
+		//
+		// THE ARGUMENT FOR IT, in the owner's words: a box you DON'T catch
+		// lands at your feet and is picked up by standing there anyway, so
+		// catching one can only mean you wanted to keep it. Absorbing it on the
+		// catch makes the catch worthless -- it produces the identical outcome
+		// as missing. Holding it until you put it away is what makes catching
+		// a thing you did rather than a thing that happened.
+		//
+		// BEFORE the claim block below, deliberately. Stowing is not a grip
+		// gesture: the hand is simply carrying something into the pouch volume,
+		// so it must not depend on a claim, on a press, or on the swap that the
+		// claim triggers. The proximity result it reads (nowInPouch) is the
+		// same hysteresis-respecting one every other holster gets this tic.
+		let pouchCv = CVar.GetCVar("rs_use_ammo_pouch", pawn.player);
+		if (nowInPouch && (pouchCv == null || pouchCv.GetBool()))
+		{
+			let held = RS_Held.Get();
+			Actor carried = held ? held.HeldBy(hand) : null;
+
+			// Ammo only. Everything else a hand can carry into this volume --
+			// a barrel, a corpse, a weapon -- has somewhere else to go, and
+			// swallowing it here would be a way to delete things by accident.
+			if (carried && carried is 'Ammo')
+			{
+				let inv = Inventory(carried);
+				if (inv && !inv.Owner)
+				{
+					// Released FIRST. CallTryPickup destroys or hides the world
+					// copy on success, and a slot still pointing at it would be
+					// holding a corpse of an actor for a tic. Release also puts
+					// back every flag the hold borrowed, which the pickup path
+					// needs -- SPECIAL above all, since it is what makes an
+					// item takeable at all.
+					held.Release(hand, pawn, pawn.player);
+
+					bool got = inv.CallTryPickup(pawn);
+					if (got)
+					{
+						level.VRHaptic(hand, 0.45, 30.0);
+
+						// The same confirm the store path uses, so putting
+						// ammunition away sounds like putting anything away.
+						let sndCv = CVar.GetCVar("rs_holster_sound", pawn.player);
+						if (sndCv == null || sndCv.GetBool())
+							pawn.A_StartSound("rs_holster_fx_store", CHAN_AUTO, CHANF_DEFAULT, 0.7);
+					}
+					if (verboseDiag())
+						Console.Printf("\cy RS_HOLSTER: %s-hand stowed %s -- %s",
+							isMain ? "main" : "off", carried.GetClassName(),
+							got ? "taken" : "refused");
+				}
+			}
+		}
+
 		if (nowInPouch && !claimedByUs && curClaim == GRIPSUBJ_None)
 		{
 			if (isMain) { pawn.GripClaimMain = GRIPSUBJ_Pouch; pouchClaimedMain[i] = true; }
