@@ -343,6 +343,35 @@ class RS_HolsterProp : Actor
 {
 	Default
 	{
+		// RENDERSTYLE IS LOAD-BEARING, 2026-08-28. Without it this class
+		// inherits Actor's own default of "Normal" (actor.zs:656), and
+		// STYLE_Normal carries STYLEF_Alpha1 (renderstyle.cpp:38) -- which
+		// makes the renderer THROW THE ACTOR'S ALPHA AWAY before drawing
+		// (hw_sprites.cpp:1639, `else if (RenderStyle.Flags & STYLEF_Alpha1)
+		// trans = 1.f;`). FRenderStyle::IsVisible forces alpha to 1 as well,
+		// so a faded prop could not even be culled.
+		//
+		// The effect was that Tick()'s whole fade ramp rendered NOTHING: the
+		// prop sat at full opacity for the 8 tics the ramp takes (1.0 /
+		// FADE_STEP) and then popped out in one frame -- strictly WORSE than
+		// the hard cut the ramp replaced, since it added the delay and
+		// delivered none of the fade it was traded for. Fade-in was equally
+		// inert.
+		//
+		// This went unnoticed for so long because the sibling class in this
+		// same file, RS_HolsterMarker, declares RenderStyle "Add" -- and
+		// STYLE_Add's flags are 0, no STYLEF_Alpha1 -- so the IDENTICAL fade
+		// code visibly worked there the whole time.
+		//
+		// The engine's own fade helpers (A_FadeIn/A_FadeOut/A_FadeTo,
+		// p_actionfunctions.cpp:1489/1523/1554) all clear STYLEF_Alpha1
+		// before touching Alpha. This class writes Alpha directly, so it has
+		// to declare a style that never sets the flag in the first place.
+		//
+		// RS_HardPointProp has the identical defect and needs the identical
+		// line -- see the note in the audit doc.
+		RenderStyle "Translucent";
+
 		+NOBLOCKMAP
 		+NOGRAVITY
 		+NOINTERACTION
@@ -781,15 +810,16 @@ class RS_HolsterProp : Actor
 
 			popTicsRemaining = POP_TICS;   // settle-pop on every fresh show
 
-			// TEMPORARY, 2026-08-28: same chase as the retry print above --
-			// covers the case that print never fires at all, which is itself
+			// GATED, 2026-08-28, same as the retry print above. Covers the
+			// case that print never fires at all, which is itself
 			// diagnostic: wantClass == w.GetClass() here means
 			// GetActorModelClass never saw a donor swap for this weapon in
 			// the first place, so ModelSwapper compatibility never had a
 			// chance to matter -- a completely different problem than the
 			// SHOT/0 anchor failing.
-			Console.Printf("\cy RS_HOLSTERPROP: A_ChangeModel(%s) for %s -- boundsFound=%d sprite=%d frame=%d",
-				wantClass.GetClassName(), w.GetClassName(), boundsFound, sprite, frame);
+			if (holsterVerbose())
+				Console.Printf("\cy RS_HOLSTERPROP: A_ChangeModel(%s) for %s -- boundsFound=%d sprite=%d frame=%d",
+					wantClass.GetClassName(), w.GetClassName(), boundsFound, sprite, frame);
 
 			// Borrow the RESOLVED model definition onto this instance --
 			// wantClass, not w.GetClassName(). After this, FindModelFrame

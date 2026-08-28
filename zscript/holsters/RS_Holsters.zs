@@ -1680,6 +1680,7 @@ class RS_HolsterManager : EventHandler
 					// swapCooldown() (4 tics, instant switch on) by that same
 					// gate, and this print exists to check whether 4 is
 					// actually enough for THIS weapon's own state chain.
+					if (verboseDiag())
 					Console.Printf("\cy RS_HOLSTER: updateProps CLEARING slot %d (%s) -- still in %s hand, %d tics after the last swap",
 						h, stored.GetClassName(),
 						(rw != null && rw == stored) ? "MAIN" : "OFF",
@@ -2321,6 +2322,7 @@ class RS_HolsterManager : EventHandler
 		// possibility that NONE of them fire and the function still does
 		// nothing, which would otherwise be a fourth silent path nobody
 		// anticipated. Fires once per physical press, cannot become spam.
+		if (verboseDiag())
 		Console.Printf("\cy RS_HOLSTER: doSwap ENTER  hand=%s  holsterIdx=%d",
 			offhand ? "off" : "main", holsterIdx);
 
@@ -2388,6 +2390,7 @@ class RS_HolsterManager : EventHandler
 			// completely silent -- if the timestamp ever gets stuck ahead of
 			// level.time, this blocks EVERY press forever with zero evidence
 			// why. Only fires on an actual blocked press, not per tic.
+			if (verboseDiag())
 			Console.Printf("\cy RS_HOLSTER: %s-hand BLOCKED by own cooldown -- level.time=%d sameHandTic=%d delta=%d need=%d",
 				offhand ? "off" : "main", level.time, sameHandTic, level.time - sameHandTic, swapCooldown());
 			return;
@@ -2397,6 +2400,7 @@ class RS_HolsterManager : EventHandler
 			int otherHandTic = offhand ? lastSwapTicMain[i] : lastSwapTicOff[i];
 			if (level.time - otherHandTic < swapCooldown())
 			{
+				if (verboseDiag())
 				Console.Printf("\cy RS_HOLSTER: %s-hand BLOCKED by OTHER hand's cooldown -- level.time=%d otherHandTic=%d delta=%d need=%d",
 					offhand ? "off" : "main", level.time, otherHandTic, level.time - otherHandTic, swapCooldown());
 				return;
@@ -2415,6 +2419,7 @@ class RS_HolsterManager : EventHandler
 		// are the problem rather than the swap logic.
 		string dbgPre = "null";
 		if (contents[slot] != null) dbgPre = contents[slot].GetClassName();
+		if (verboseDiag())
 		Console.Printf("\cy RS_HOLSTER: pre-commit  i=%d  slot=%d  contents.Size()=%d  contents[slot]-BEFORE=%s",
 			i, slot, contents.Size(), dbgPre);
 
@@ -2457,6 +2462,7 @@ class RS_HolsterManager : EventHandler
 			if (held != null) dbgHeld = held.GetClassName();
 			string dbgFistNote = "";
 			if (held != null && RS_HandFist.IsFistClass(held.GetClass())) dbgFistNote = " (matched as fist)";
+			if (verboseDiag())
 			Console.Printf("\cy RS_HOLSTER: %s-hand no-op -- held=%s%s  slot(%d) empty",
 				offhand ? "off" : "main", dbgHeld, dbgFistNote, holsterIdx);
 			return; // fists into an empty holster: nothing to do
@@ -2533,6 +2539,7 @@ class RS_HolsterManager : EventHandler
 
 		string dbgPost = "null";
 		if (contents[slot] != null) dbgPost = contents[slot].GetClassName();
+		if (verboseDiag())
 		Console.Printf("\cy RS_HOLSTER: post-commit  contents[%d]=%s", slot, dbgPost);
 
 		// Bring out whatever was in there. The instance pointer IS the stored
@@ -2637,6 +2644,7 @@ class RS_HolsterManager : EventHandler
 				// searches THIS list and nothing else. Not gated on
 				// rs_holster_verbose: this only fires on an actual failed
 				// store, not per tic, so it cannot become spam.
+				if (verboseDiag())
 				Console.Printf("\cy  inventory dump:");
 				int wCount = 0;
 				for (Inventory dbgItem = pawn.Inv; dbgItem != null; dbgItem = dbgItem.Inv)
@@ -2657,10 +2665,12 @@ class RS_HolsterManager : EventHandler
 					string dbgSister = "null";
 					if (dbgW.SisterWeapon != null)
 						dbgSister = dbgW.SisterWeapon.GetClassName();
+					if (verboseDiag())
 					Console.Printf("\cy    %-24s offhand=%d  isFist=%d  noHandSwitch=%d  sister=%s",
 						dbgCn, dbgW.bOffhandWeapon, RS_HandFist.IsFistClass(dbgW.GetClass()), dbgW.bNoHandSwitch, dbgSister);
 				}
 				if (wCount == 0)
+					if (verboseDiag())
 					Console.Printf("\cy    (no Weapon-type items in inventory at all)");
 				return;
 			}
@@ -2671,6 +2681,7 @@ class RS_HolsterManager : EventHandler
 			// seat is visible instead of inferred.
 			string dbgRW  = "null";  if (pawn.player.ReadyWeapon  != null) dbgRW  = pawn.player.ReadyWeapon.GetClassName();
 			string dbgOW  = "null";  if (pawn.player.OffhandWeapon != null) dbgOW  = pawn.player.OffhandWeapon.GetClassName();
+			if (verboseDiag())
 			Console.Printf("\cy RS_HOLSTER: about to seat fist=%s (bOffhandWeapon=%d) into hand=%d.  BEFORE: Ready=%s Offhand=%s",
 				fist.GetClassName(), fist.bOffhandWeapon, hand, dbgRW, dbgOW);
 
@@ -2678,6 +2689,7 @@ class RS_HolsterManager : EventHandler
 
 			dbgRW = "null";  if (pawn.player.ReadyWeapon  != null) dbgRW  = pawn.player.ReadyWeapon.GetClassName();
 			dbgOW = "null";  if (pawn.player.OffhandWeapon != null) dbgOW  = pawn.player.OffhandWeapon.GetClassName();
+			if (verboseDiag())
 			Console.Printf("\cy RS_HOLSTER: AFTER seating:  Ready=%s Offhand=%s  PendingWeapon==WP_NOCHANGE=%d",
 				dbgRW, dbgOW, pawn.player.PendingWeapon == WP_NOCHANGE);
 
