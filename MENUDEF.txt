@@ -592,7 +592,7 @@ OptionMenu "RS_HolsterAppearance"
 	Option "Marker color (cold)",       "rs_holster_marker_color", "RS_HolsterMarkerColor"
 	Option "Marker color (hot)",        "rs_holster_marker_color_hot", "RS_HolsterMarkerColor"
 	Slider "Marker scale",              "rs_holster_marker_scale", 0.3, 3.0, 0.1, 2
-	Slider "Stored weapon size (fallback)", "rs_holster_prop_scale", 0.05, 1.0, 0.01, 2
+	Slider "Stored weapon size",         "rs_holster_prop_scale", 0.1, 4.0, 0.05, 2
 	Slider "Fill amount (measured models)", "rs_holster_prop_fill", 0.1, 1.0, 0.05, 2
 	Slider "Display size (measured models)", "rs_holster_prop_visual_radius", 2.0, 24.0, 0.5, 1
 	Slider "Stored weapon yaw",         "rs_holster_prop_yaw", -180.0, 180.0, 5.0, 0

@@ -552,9 +552,23 @@ user bool rs_holster_markers = true;
 
 // Holster prop appearance. Live-tunable because the right values are found by
 // looking at them in the headset, not by reasoning about model units.
-// A weapon's MODELDEF Scale is tuned for the HUD projection, so reusing it on
-// a world actor renders it enormous -- hence the shrink.
-user float rs_holster_prop_scale = 0.18;
+//
+// SIZE OF EVERY STORED WEAPON, as a multiplier. 1.0 is the size the auto-fit
+// solved for; 0.5 is half that, 2.0 is double.
+//
+// It was 0.18 and it was a FALLBACK -- the flat shrink applied only to weapons
+// whose model bounds the engine could not read. That made the menu row labelled
+// "Stored weapon size" inert for every weapon it CAN read, which is most of
+// them: their size came entirely from the fill/visual-radius auto-fit and never
+// consulted this at all. Dragging the size slider did nothing, correctly, and
+// looked broken.
+//
+// Now it multiplies BOTH paths. Measured weapons still auto-fit so a BFG and a
+// pistol arrive proportionate to each other -- that is what measuring is for --
+// and this scales the whole result to taste. The old flat 0.18 lives on as
+// UNMEASURED_SCALE in RS_HolsterProp.zs, where it is what an unmeasurable model
+// gets before the same multiplier.
+user float rs_holster_prop_scale = 1.0;
 
 // Vestigial: the forearm/wrist rig this sized moved out to RS_HardPoints,
 // which declares its own. Kept declared because holsterPropScaleArm() is

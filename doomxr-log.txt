@@ -1,0 +1,11 @@
+Log started
+W_Init: Init WADfiles.
+adding E:/UZDXREMA/build-dxr/Debug/doomxr.pk3, 770 lumps
+adding E:/UZDXREMA/build-dxr/Debug/game_support.pk3, 3310 lumps
+adding E:/UZDXREMA/build-dxr/Debug/doom2.wad, 2919 lumps
+adding E:/UZDXREMA/build-dxr/Debug/lights.pk3, 7 lumps
+adding E:/UZDXREMA/build-dxr/Debug/brightmaps.pk3, 500 lumps
+adding E:/UZDXREMA/build-dxr/Debug/game_widescreen_gfx.pk3, 214 lumps
+adding E:/mERGE/RS_VR_Unified/RS_VR_Unified.pk3, 152 lumps
+S_Init: Setting up sound.
+Log stopped: 2026-08-28 06:28:48

@@ -466,6 +466,14 @@ class RS_HolsterProp : Actor
 		return (cv != null) ? cv.GetFloat() : 8.0;
 	}
 
+	// The flat size a model gets when the engine cannot measure it -- no bounds
+	// survive in memory for some formats, so there is nothing to fit against
+	// and a constant is the only honest answer. Was the default of
+	// rs_holster_prop_scale back when that cvar WAS this number; it is a
+	// constant now because that cvar became a multiplier over both solves,
+	// which is what made the size slider work on measured weapons at all.
+	const UNMEASURED_SCALE = 0.18;
+
 	// The same one diagnostic gate the rest of this repo uses. RS_Holsters has
 	// its own copy (verboseDiag) because it is a different class and ZScript
 	// has no shared free functions -- same cvar, same meaning, read the same
@@ -851,10 +859,29 @@ class RS_HolsterProp : Actor
 		// cvars on any weapon that is already sitting in a holster, since
 		// nothing else ever re-solves baseScale for it. Cheap: this is just
 		// arithmetic over the cached measurement above, no native call.
+		// THE SIZE SLIDER NOW APPLIES TO EVERY WEAPON, 2026-08-28.
+		//
+		// It used to live in the `else` alone, which made it dead for any
+		// weapon the engine could actually measure -- and that is most of them.
+		// The menu row said "Stored weapon size", the player dragged it, and
+		// nothing moved, because a measured model's size came entirely from
+		// visualRadius * fill / measuredRadius and never consulted it at all.
+		// The only weapons it ever moved were the ones whose bounds could not
+		// be read, which is exactly the set a player never knowingly picks.
+		//
+		// So the two solves now decide a BASE size and the slider is a
+		// multiplier over both. Measured models still auto-fit to the holster
+		// -- a BFG and a pistol still arrive proportionate, which is the whole
+		// point of measuring -- and the slider scales that result up or down as
+		// a matter of taste. Unmeasurable models keep the flat fallback they
+		// always had, now also multiplied, so one control means one thing
+		// everywhere.
 		if (boundsFound && measuredRadius > 0.0)
 			baseScale = (visualRadius * holsterPropFill()) / measuredRadius;
 		else
-			baseScale = fallbackScale;
+			baseScale = UNMEASURED_SCALE;
+
+		baseScale *= fallbackScale;
 
 		// Also write the real Scale here, not just baseScale -- Tick() is
 		// the only other writer, and the engine runs WorldTick (this call's
