@@ -1249,7 +1249,15 @@ class RS_HolsterManager : EventHandler
 					// back every flag the hold borrowed, which the pickup path
 					// needs -- SPECIAL above all, since it is what makes an
 					// item takeable at all.
-					held.Release(hand, pawn, pawn.player);
+					//
+					// WITHOUT THE PAWN, so this cannot throw. Release only
+					// applies a throw velocity when handed a pawn and a
+					// PlayerInfo, and your hand is ALWAYS moving as you put
+					// something into the pouch -- so a refused stow (ammunition
+					// already full) would have flung the box across the room at
+					// swing speed. Refused now simply drops it at your feet,
+					// where you can pick it up again.
+					held.Release(hand);
 
 					bool got = inv.CallTryPickup(pawn);
 					if (got)

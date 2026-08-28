@@ -974,7 +974,22 @@ class RS_GrabHandler : EventHandler
             //
             // ABOVE the grab handling, so overlapping hands mean "swap" and not
             // "grab whatever happens to be between us". Consumes the press.
-            if (RS_Reach.Flag("rs_swap_overlap", p, true))
+            // ONLY WHEN NEITHER HAND IS CARRYING ANYTHING, and that guard is
+            // not paranoia -- without it this breaks two-handed carry outright.
+            //
+            // rs_hold_twohand ships on, and joining a second hand to something
+            // works by bringing that hand TO the object the first one holds and
+            // squeezing. That puts the palms a few units apart by definition,
+            // which is exactly the condition below. So gripping to two-hand a
+            // barrel would have swapped weapons instead, every time, and the
+            // barrel is the one object the policy explicitly marks two-handed.
+            //
+            // nearTarget matters for the same reason from the other direction:
+            // something grabbable inside this hand's volume means the press was
+            // a reach, not a swap. A weapon swap is what a grip means only when
+            // there is nothing else it could mean.
+            bool carrying = held && (held.HandIsFull(hand) || held.HandIsFull(1 - hand));
+            if (RS_Reach.Flag("rs_swap_overlap", p, true) && !carrying && !nearTarget[hand])
             {
                 Vector3 mine  = RS_Reach.Centre(pmo, p, hand);
                 Vector3 other = RS_Reach.Centre(pmo, p, 1 - hand);
