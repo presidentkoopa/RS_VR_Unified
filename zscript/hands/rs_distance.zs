@@ -112,6 +112,38 @@ class RS_Pull : EventHandler
 	private int     flyTic[2];
 	private int     flyTotal[2];
 	private Vector3 flyStart[2];
+
+	// TICS THE OBJECT WAITS ON YOUR PALM BEFORE IT RESOLVES AS A MISS.
+	//
+	// Without this the catch could not be made at any real range, and the reason
+	// is a tick-order trap rather than anything wrong with the catch test.
+	//
+	// The arc used to reach t == 1.0, place the object exactly on the palm, and
+	// call Impact() in the SAME pass -- so the object existed at the catch point
+	// for zero tics. Worse, RS_GrabHandler (registered 4th in MAPINFO) asks
+	// CatchableBy BEFORE RS_Pull (7th) runs, so the only position the catch test
+	// ever saw was the one written the PREVIOUS tic, i.e. the second-to-last
+	// sample of the arc. At default speed that sample sits ~23 units short and
+	// ~13 units above the palm, against a catch volume with semi-axes
+	// (2.2, 3.2, 1.6). It scores ~17 where <= 1.0 is required. The window was
+	// not tight, it was shut.
+	//
+	// That also explains why this survived testing: the residual gap is a
+	// constant number of units, not a fraction, so a SHORT pull lands inside the
+	// volume anyway. Under ~50-70 units it catches fine, which is arm's reach --
+	// exactly the distance someone tests at first.
+	//
+	// So the object now parks on the palm for a few tics and keeps tracking it
+	// (t is clamped at 1.0, so the position code above keeps re-solving to the
+	// live palm). That gives the earlier-registered catch test real tics at the
+	// real arrival position. Miss the whole window and it still hits you, which
+	// is the point of the mechanic -- the medikit heals you, the barrel hurts.
+	private int     flyHold[2];
+
+	// Four tics, ~114ms. Long enough that the catch test gets several real looks
+	// including one after the hand's own pose has settled, short enough that a
+	// missed catch still reads as an impact rather than the object hovering.
+	const CATCH_HOLD_TICS = 4;
 	// The LAUNCH distance, kept for the whole flight. Arc height is a fraction
 	// of it, and re-measuring each tic would shrink the arc as the object closed
 	// on you -- flattening the parabola into a straight line exactly as it
@@ -332,6 +364,7 @@ class RS_Pull : EventHandler
 		lockActor[hand] = null;
 		flyActor[hand] = a;
 		flyTic[hand]   = 0;
+		flyHold[hand]  = 0;   // a fresh pull gets a fresh catch window
 		flyTotal[hand] = int(tics);
 		flyStart[hand] = mid0;
 		flyDist[hand]  = dist;
@@ -414,6 +447,7 @@ class RS_Pull : EventHandler
 		if (pol.OnTake(hand, a, rule, pmo, p))
 		{
 			flyActor[hand] = null;
+			flyHold[hand]  = 0;
 			return true;
 		}
 
@@ -434,6 +468,7 @@ class RS_Pull : EventHandler
 		}
 
 		flyActor[hand] = null;
+		flyHold[hand]  = 0;
 		if (RS_Reach.Flag("rs_hold_debug", p, true))
 			Console.Printf("[RSPULL] hand %d CAUGHT %s (%s)", hand, a.GetClassName(), rule.why);
 		return true;
@@ -469,6 +504,7 @@ class RS_Pull : EventHandler
 			a.Vel = (0, 0, 0);
 		}
 		flyActor[hand] = null;
+		flyHold[hand]  = 0;
 	}
 
 	void AbortAll()
@@ -504,7 +540,7 @@ class RS_Pull : EventHandler
 			// crushed or consumed mid-flight clears its own slot. The saved
 			// flags do not, and a stale pair of those is what the NEXT pull
 			// would hand to RS_Held.
-			if (!a) { if (flyTic[h] != 0) { flyTic[h] = 0; } continue; }
+			if (!a) { if (flyTic[h] != 0) { flyTic[h] = 0; flyHold[h] = 0; } continue; }
 
 			flyTic[h]++;
 			double t = double(flyTic[h]) / double(flyTotal[h]);
@@ -614,6 +650,22 @@ class RS_Pull : EventHandler
 
 			if (t < 1.0) continue;
 
+			// ARRIVED. Hold it on the palm rather than resolving here, so the
+			// catch test -- which runs EARLIER in the tick order than this
+			// handler -- gets real looks at the real arrival position. See
+			// flyHold's own note for why resolving in this pass made the catch
+			// impossible past arm's reach.
+			//
+			// Position keeps updating through the hold because t is clamped at
+			// 1.0 above, so e is 1.0 and the object re-solves onto the live
+			// palm every tic -- it follows your hand while you close on it
+			// instead of hanging at the point it happened to arrive.
+			if (flyHold[h] < CATCH_HOLD_TICS)
+			{
+				flyHold[h]++;
+				continue;
+			}
+
 			// THE ARC RAN OUT AND YOU DID NOT CLOSE YOUR HAND. It hits you.
 			//
 			// This used to test the object against your BODY every tic and
@@ -642,6 +694,7 @@ class RS_Pull : EventHandler
 	private void Impact(Actor a, PlayerPawn pmo, PlayerInfo p, int h)
 	{
 		flyActor[h] = null;
+		flyHold[h]     = 0;
 		a.bSPECIAL    = flySavedSpecial[h];
 		a.bNOGRAVITY  = flySavedNoGrav[h];
 		// Put back BEFORE the resolve below. Impact is where a missed pull
