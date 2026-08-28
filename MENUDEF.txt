@@ -268,11 +268,17 @@ OptionMenu "RS_GrabHoldMenu"
 	StaticText "With a voxel pack loaded, a held object becomes", 1
 	StaticText "a solid voxel you can actually turn over, then", 1
 	StaticText "goes back to a sprite when you drop it.", 1
-	StaticText "Voxels for the world are under Display Options,", 1
-	StaticText "where the engine keeps them. Turning them off", 1
-	StaticText "there is the interesting setting: the world looks", 1
-	StaticText "untouched and only what you hold goes solid.", 1
+	StaticText "World voxels live under Mod Options -> Voxel", 1
+	StaticText "Options. Turning them OFF there is the good", 1
+	StaticText "setting: the world stays flat and only what you", 1
+	StaticText "reach for goes solid.", 1
+	StaticText ""
+	StaticText "Held: while it is in your hand.", 1
 	Option "Voxel when held",           "rs_hold_voxel", "OnOff"
+	StaticText "Grabbed: the whole gesture instead -- from the", 1
+	StaticText "moment you lock on, through the flight and the", 1
+	StaticText "catch, so it never pops mid-gesture.", 1
+	Option "Voxel when grabbed",        "rs_grab_voxel", "OnOff"
 	StaticText ""
 	StaticText "Walking into a pickup collects it long before", 1
 	StaticText "your hand gets near it. On = you must reach.", 1

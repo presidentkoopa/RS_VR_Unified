@@ -178,6 +178,26 @@ class RS_Pull : EventHandler
 	private bool   flySavedInterpAng[2];
 	private double flySavedRoll[2];
 
+	// VOXEL FOR THE WHOLE GESTURE, not just the hold.
+	//
+	// RS_Held already turns a HELD object into its voxel. But the gesture the
+	// owner described is one continuous thing -- lock on, flick, watch it sail
+	// over, catch it, carry it -- and having it pop from sprite to voxel at the
+	// instant of the catch would make the seam the most visible part of it. So
+	// the override goes on at the LOCK and stays on until the object stops
+	// being yours.
+	//
+	// Two slots because a lock and a flight are different lifetimes: an object
+	// can be locked and never flown (you let go of the grip), or flown and
+	// never caught. Each needs its own saved value and its own restore, or one
+	// path hands back a value the other never took.
+	//
+	// SAVED, NEVER ASSUMED FALSE, for the same reason as every other borrowed
+	// flag here: a player running r_drawvoxels globally may lock onto something
+	// that was ALREADY a voxel, and letting go must not take that away.
+	private bool   lockSavedVoxel[2];
+	private bool   flySavedVoxel[2];
+
 	// Turns for THIS flight, read once at launch and not per tic. Read per tic
 	// and nudging the slider mid-flight would JUMP the barrel to a new angle
 	// rather than change the rate it is turning at, because the angle is the
@@ -249,6 +269,11 @@ class RS_Pull : EventHandler
 		int other = 1 - hand;
 		if (flyActor[other] == a || lockActor[other] == a) return false;
 
+		// Voxel from the moment it is yours. Free on anything without one --
+		// the engine falls through to the ordinary sprite path.
+		lockSavedVoxel[hand] = a.VoxelOverride;
+		if (RS_Reach.Flag("rs_grab_voxel", p, true)) a.VoxelOverride = true;
+
 		lockActor[hand] = a;
 		if (RS_Reach.Flag("rs_hold_debug", p, true))
 			Console.Printf("[RSPULL] hand %d LOCKED %s -- flick to pull it", hand, a.GetClassName());
@@ -258,6 +283,15 @@ class RS_Pull : EventHandler
 	void Unlock(int hand)
 	{
 		if (hand != 0 && hand != 1) return;
+
+		// Put the voxel state back. Unlock is every ending a LOCK has that is
+		// not a launch -- you opened your hand, it died, it left range, your
+		// hand filled up, grab was switched off -- so this is the one place all
+		// of them pass through. Start() takes its own copy before this runs,
+		// which is what keeps a launch from restoring a value mid-flight.
+		if (lockActor[hand]) lockActor[hand].VoxelOverride = lockSavedVoxel[hand];
+		lockSavedVoxel[hand] = false;
+
 		lockActor[hand] = null;
 	}
 
@@ -329,6 +363,14 @@ class RS_Pull : EventHandler
 		flySavedInterpAng[hand]  = a.bINTERPOLATEANGLES;
 		flySavedRoll[hand]       = a.Roll;
 		flyTurns[hand]           = RS_Reach.Num("rs_dgrab_tumble", p, 2.0);
+
+		// Its OWN copy, taken before the lock's is handed back. Start() runs
+		// while the object is still locked, so the value here is the one the
+		// LOCK imposed -- taking it now and restoring it on every flight exit
+		// is what stops a flight from ending on a stale sprite state.
+		flySavedVoxel[hand] = lockSavedVoxel[hand];
+		if (RS_Reach.Flag("rs_grab_voxel", p, true)) a.VoxelOverride = true;
+
 		ArmTumble(hand, a);
 	}
 
@@ -354,6 +396,13 @@ class RS_Pull : EventHandler
 		a.bROLLCENTER        = flySavedRollCentre[hand];
 		a.bINTERPOLATEANGLES = flySavedInterpAng[hand];
 		a.Roll               = flySavedRoll[hand];
+
+		// Every flight ending passes through here -- caught, aborted, blocked,
+		// or arrived uncaught -- which is exactly why the voxel state goes back
+		// here too. A CATCH immediately re-imposes it from RS_Held, so the
+		// object never visibly flickers; every other ending is a thing that is
+		// no longer yours and should stop being solid.
+		a.VoxelOverride      = flySavedVoxel[hand];
 	}
 
 	// Begin a pull. Returns false if it could not start, so the caller can say
@@ -650,7 +699,27 @@ class RS_Pull : EventHandler
 			//
 			// Z first, then XY, for the same reason CarryOne does it: TryMove
 			// tests at the actor's CURRENT height.
-			a.SetZ(pos.z - a.Height * 0.5);
+			//
+			// CLAMPED AGAINST THE ROOM, and without this the arc is what breaks
+			// the pull. Height is a FRACTION of the launch distance and nothing
+			// bounded it -- a 300-unit pull lifts a barrel 45 units, putting its
+			// top near 87, which is fine under a 128 ceiling and jammed under a
+			// doorway or a low room. TryMove then refuses, the flight Aborts,
+			// the flags go back and gravity drops it: the object hops and
+			// settles instead of sailing, and it does so INTERMITTENTLY,
+			// depending only on what the ceiling happens to be between you and
+			// it. Confirmed from a headset log -- "lost ExplosiveBarrel --
+			// blocked in flight" on some pulls and not others.
+			//
+			// The same clamp CarryOne already applies for the same reason, and
+			// it is the arc that gives way rather than the pull: a flatter
+			// trajectory under a low ceiling is a pull that works, while the
+			// prettier arc is a pull that fails.
+			double flyZ = pos.z - a.Height * 0.5;
+			double lo = a.floorz;
+			double hi = a.ceilingz - a.Height;
+			if (hi < lo) hi = lo;
+			a.SetZ(clamp(flyZ, lo, hi));
 			bool moved = a.TryMove((pos.x, pos.y), 1);
 			a.Vel = (0, 0, 0);
 

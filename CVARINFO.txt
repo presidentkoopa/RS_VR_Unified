@@ -245,6 +245,16 @@ user float rs_hold_haptic = 0.6;
 // inert until something is actually in your hand.
 user bool rs_hold_voxel = true;
 
+// Force a voxel for the WHOLE grab gesture, not just while held: from the
+// moment you lock onto something, through the flight, the catch and the
+// carry, until it stops being yours. Without it the object would pop from
+// sprite to voxel at the instant of the catch, which makes the seam the most
+// visible part of the gesture.
+//
+// Needs a voxel pack loaded, and does NOT need world voxels switched on --
+// that is the point. Free on anything with no voxel of its own.
+user bool rs_grab_voxel = true;
+
 // Bring your palms together and squeeze to take the other hands weapon.
 // The hand you squeeze is the hand doing the taking. Fires the same
 // SwitchWeaponHand the switchhand keybind does, so the gesture and the key
