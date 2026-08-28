@@ -1265,7 +1265,8 @@ class RS_HolsterManager : EventHandler
 		int liveClaim = isMain ? pawn.GripClaimMain : pawn.GripClaimOff;
 		Weapon prev = isMain ? pouchPreviousMain[i] : pouchPreviousOff[i];
 		bool handClaimed = (liveClaim != GRIPSUBJ_None);
-		int hand = isMain ? 0 : 1;
+		// `hand` is declared at the top of this function now -- the arbiter
+		// calls in the claim/release block above need it too.
 
 		// ENTERING THE SWAP NEEDS THE POUCH. STAYING IN IT DOES NOT.
 		//
