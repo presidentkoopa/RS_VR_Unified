@@ -220,6 +220,30 @@ class RS_GrabPolicy : EventHandler
 		Rule('ExplosiveBarrel', true, GRIPSUBJ_Magazine,
 			RS_HandWorldBase.POSE_HOLD_FOREND, true, 'Barrels', "a barrel", 4.0);
 
+		// THE OTHER BARREL, and it is not related to the one above in any way
+		// the engine can see. BurningBarrel is a plain decoration -- `class
+		// BurningBarrel : Actor` with Radius 16, Height 32 and +SOLID -- while
+		// ExplosiveBarrel is an Actor of its own lineage. Nothing inherits from
+		// anything here, so the rule above could never have covered it.
+		//
+		// Which meant the one prop in Doom that most obviously reads as "a
+		// barrel you could pick up" was the one you could not, with no reason
+		// visible in the game. Added 2026-08-28 on exactly that report.
+		//
+		// Same shape, weight and category as its cousin: it is the same object
+		// to a pair of hands, so it should compete the same way and answer the
+		// same switch. +SOLID is no obstacle -- SaveFlags borrows THRUACTORS
+		// for the duration of any hold, which is what already lets the
+		// explosive one be carried.
+		//
+		// NOT AN Inventory, and that is fine: Decide's ownership test only runs
+		// when the cast succeeds, so a decoration simply skips it. This is the
+		// first non-Inventory entry in the table and the path is worth knowing
+		// about -- every other vanilla prop is ungrabbable for want of a line
+		// exactly like this one.
+		Rule('BurningBarrel', true, GRIPSUBJ_Magazine,
+			RS_HandWorldBase.POSE_HOLD_FOREND, true, 'Barrels', "a burning barrel", 4.0);
+
 		// -- ALLOWED, general -------------------------------------------------
 
 		// Ammunition. Boxes, clips, shells, cells: objects, one hand each.
