@@ -521,13 +521,21 @@ class RS_Held : EventHandler
 			// nothing would ever turn. Same side-channel RS_HardPoints and
 			// wr_gunhud already read for the same reason.
 			//
+			// NEGATED. Confirmed in headset 2026-08-28: turning the wrist one
+			// way rolled the barrel the other. A sprite's roll and a
+			// controller's roll are measured about axes that point opposite
+			// ways -- the same class of mismatch as AttackPitch being stored
+			// pre-negated, and the same fix. Reported on a barrel because a
+			// barrel has an obvious upright; it was wrong for everything
+			// held, since this is the one line that sets it.
+			//
 			// Written raw, not smoothed: +INTERPOLATEANGLES hands it to the
 			// renderer's own deltaangle lerp, which takes the short way round
 			// the 0/360 wrap. A second smoother here could only ever disagree
 			// with it. Safe to write in WorldTick because p_tick.cpp takes each
 			// actor's PrevAngles snapshot BEFORE the hook runs, so last tic's
 			// roll is still intact when this overwrites it.
-			a.Roll = (hand == HAND_MAIN) ? pmo.MainHandRoll : pmo.OffhandRoll;
+			a.Roll = -((hand == HAND_MAIN) ? pmo.MainHandRoll : pmo.OffhandRoll);
 		}
 		else
 		{
