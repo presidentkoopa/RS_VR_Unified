@@ -674,7 +674,8 @@ class RR_Reload : EventHandler
 	// The name this package identifies itself by to the arbiter. A string the
 	// caller picks for itself and never registers anywhere -- see the arbiter's
 	// own note on why nameArg works that way.
-	const RR_ARB_OWNER = 'RR_Reload';
+	// NOT A const -- ZScript has no Name constants (see rs_held.zs).
+	// Inlined as a literal at each call site instead.
 
 	// SET while carrying, and clear ONLY a value that is ours. More than one mod
 	// writes GripClaim* -- the pouch, rs_hands' grab family, this -- and clearing
@@ -698,7 +699,7 @@ class RR_Reload : EventHandler
 		// Doubles as a renewal: re-asserting an existing claim refreshes its
 		// lease, and Claim is already called every tic while carrying.
 		if (arbiter)
-			arbiter.GetInt("grip.claim", "", feeder, subj, pmo, RR_ARB_OWNER);
+			arbiter.GetInt("grip.claim", "", feeder, subj, pmo, 'RR_Reload');
 	}
 
 	private void Abort(Actor a)
@@ -708,7 +709,7 @@ class RR_Reload : EventHandler
 		{
 			bool ours;
 			if (arbiter)
-				ours = arbiter.GetInt("grip.mine", "", feeder, 0, pmo, RR_ARB_OWNER) == 1;
+				ours = arbiter.GetInt("grip.mine", "", feeder, 0, pmo, 'RR_Reload') == 1;
 			else
 				ours = ((feeder == 0) ? pmo.GripClaimMain : pmo.GripClaimOff) == claimed;
 
@@ -725,7 +726,7 @@ class RR_Reload : EventHandler
 			// field already reset by P_SetupPsprites and the old value compare
 			// therefore silently declined to clean up after itself.
 			if (arbiter)
-				arbiter.GetInt("grip.release", "", feeder, 0, pmo, RR_ARB_OWNER);
+				arbiter.GetInt("grip.release", "", feeder, 0, pmo, 'RR_Reload');
 		}
 		if (pmo && pmo.player) RR_Ammo.Hide(pmo.player, feeder);
 

@@ -203,7 +203,8 @@ class RS_HolsterManager : EventHandler
 
 	const RS_ARB_RETRY = 350;    // ~10s at 35Hz; only a miss re-arms it
 	const RS_ARB_IDENT = 1;      // the arbiter's frozen IDENTITY, not its PROTOCOL
-	const RS_ARB_OWNER = 'RS_Holsters';
+	// NOT A const -- ZScript has no Name constants (see rs_held.zs).
+	// Inlined as a literal at each call site instead.
 
 	private void ArbiterFind()
 	{
@@ -1213,7 +1214,7 @@ class RS_HolsterManager : EventHandler
 			else        { pawn.GripClaimOff  = GRIPSUBJ_Pouch; pouchClaimedOff[i]  = true; }
 
 			if (arbiter)
-				arbiter.GetInt("grip.claim", "", hand, GRIPSUBJ_Pouch, pawn, RS_ARB_OWNER);
+				arbiter.GetInt("grip.claim", "", hand, GRIPSUBJ_Pouch, pawn, 'RS_Holsters');
 		}
 		else if (nowInPouch && claimedByUs)
 		{
@@ -1221,7 +1222,7 @@ class RS_HolsterManager : EventHandler
 			// is already right -- but the arbiter's lease has to be refreshed or
 			// a hand parked in the pouch for two seconds would read as free.
 			if (arbiter)
-				arbiter.GetInt("grip.claim", "", hand, GRIPSUBJ_Pouch, pawn, RS_ARB_OWNER);
+				arbiter.GetInt("grip.claim", "", hand, GRIPSUBJ_Pouch, pawn, 'RS_Holsters');
 		}
 		else if (!nowInPouch && claimedByUs)
 		{
@@ -1236,7 +1237,7 @@ class RS_HolsterManager : EventHandler
 			// fourth consumer picking the same subject would break it silently.
 			bool ours;
 			if (arbiter)
-				ours = arbiter.GetInt("grip.mine", "", hand, 0, pawn, RS_ARB_OWNER) == 1;
+				ours = arbiter.GetInt("grip.mine", "", hand, 0, pawn, 'RS_Holsters') == 1;
 			else
 				ours = (isMain ? pawn.GripClaimMain : pawn.GripClaimOff) == GRIPSUBJ_Pouch;
 
@@ -1247,7 +1248,7 @@ class RS_HolsterManager : EventHandler
 			}
 
 			if (arbiter)
-				arbiter.GetInt("grip.release", "", hand, 0, pawn, RS_ARB_OWNER);
+				arbiter.GetInt("grip.release", "", hand, 0, pawn, 'RS_Holsters');
 
 			if (isMain) pouchClaimedMain[i] = false;
 			else        pouchClaimedOff[i]  = false;

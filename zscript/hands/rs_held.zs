@@ -98,7 +98,9 @@ class RS_Held : EventHandler
 
 	const RS_ARB_RETRY = 350;    // ~10s at 35Hz; a miss re-checks, a hit does not
 	const RS_ARB_IDENT = 1;      // the arbiter's frozen IDENTITY, never its PROTOCOL
-	const RS_ARB_OWNER = 'RS_Held';
+	// NOT A const: ZScript constants may only be int, float, string or bool,
+	// so a Name const fails at load with "Bad type for constant definiton".
+	// The owner name is inlined as a literal at each call site instead.
 
 	// A COUNTDOWN, NOT A DEADLINE. ServiceIterator.Find allocates a fresh
 	// iterator per call, so a game without the arbiter would otherwise build one
@@ -539,7 +541,7 @@ class RS_Held : EventHandler
 			// Doubles as a renewal -- this runs every tic while holding, which
 			// is exactly what keeps the lease alive.
 			if (arbiter)
-				arbiter.GetInt("grip.claim", "", h, hSubject[h], pmo, RS_ARB_OWNER);
+				arbiter.GetInt("grip.claim", "", h, hSubject[h], pmo, 'RS_Held');
 
 			// And tell the hand model what shape to be, when the world hands are
 			// the ones on screen. One tic behind, because the pose handler is
@@ -590,7 +592,7 @@ class RS_Held : EventHandler
 			// unchanged behaviour, not a new risk.
 			bool ours;
 			if (arbiter)
-				ours = arbiter.GetInt("grip.mine", "", h, 0, pmo, RS_ARB_OWNER) == 1;
+				ours = arbiter.GetInt("grip.mine", "", h, 0, pmo, 'RS_Held') == 1;
 			else
 				ours = ((h == HAND_MAIN) ? pmo.GripClaimMain : pmo.GripClaimOff) == hClaimed[h];
 
@@ -605,7 +607,7 @@ class RS_Held : EventHandler
 			// emptied by death or by switching grab off mid-hold cannot leave a
 			// lease standing for the rest of the level.
 			if (arbiter)
-				arbiter.GetInt("grip.release", "", h, 0, pmo, RS_ARB_OWNER);
+				arbiter.GetInt("grip.release", "", h, 0, pmo, 'RS_Held');
 
 			hClaimed[h] = GRIPSUBJ_None;
 
