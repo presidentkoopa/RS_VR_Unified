@@ -397,6 +397,15 @@ class wr_Rig : EventHandler
 	// wasteful thirty-five times a second.
 	Class<Weapon> mSheetShown;
 	bool          mSheetValid;
+	// Last tic the sheet's rows were restrung, so live countdowns can be
+	// refreshed on a cadence instead of only when the weapon changes.
+	int           mSheetBuiltTic;
+	// The same, for the inspect card, which has no lock timer at all.
+	int           mInspectBuiltTic;
+	// What the card was last filled AGAINST, so switching the held weapon or
+	// flipping between sheet and compare rebuilds it -- see tickInspect.
+	Weapon        mInspectMine;
+	bool          mInspectCompare;
 	int           mSheetUsed;     // pool slots carrying a row this pass
 
 	// The fan that opens out of a multi-weapon slot.
@@ -662,7 +671,19 @@ class wr_Rig : EventHandler
 	private int pageCount()
 	{
 		bool ms; string arche, donor; int pick, cnt;
-		[ms, arche, pick, cnt, donor] = wr_CompatModelSwapper.StateOf(0);
+		// THIS RIG'S HAND, not hand 0. Every other consumer of this shim resolves
+		// the hand from the rig -- gatherModels and commitModel both do
+		// `(mRigHand == 1) ? 1 : 0`, and the sheet's MODEL row resolves it from
+		// whichever hand actually holds the weapon. Only this one asked the main
+		// hand and then answered for both.
+		//
+		// Both ways round were wrong. Off hand has a shelf and the main does not:
+		// two pages, so the Models page for the gun actually in that hand is
+		// unreachable. Main has one and the off hand does not: three pages, the
+		// player pages to Models, gatherModels asks hand 1, gets nothing, and the
+		// ring comes up completely empty with no explanation and no fallback.
+		// Audit finding #38.
+		[ms, arche, pick, cnt, donor] = wr_CompatModelSwapper.StateOf((mRigHand == 1) ? 1 : 0);
 		return ms ? 3 : 2;
 	}
 
@@ -1095,7 +1116,28 @@ class wr_Rig : EventHandler
 		if (shown == null) shown = pmo.player.ReadyWeapon;
 
 		Class<Weapon> nowCls = shown ? shown.GetClass() : null;
-		if (mSheetValid && nowCls == mSheetShown) return;
+
+		// REBUILT ON A CADENCE, not only when the weapon CHANGES.
+		//
+		// The per-class gate came from a rationale that is no longer true: it was
+		// written when a text change meant destroying and recreating every row
+		// billboard, so rebuilding per tic was unthinkable. sheetRow restrings in
+		// place with SetBillboardText now, and buildSheetRows' own header says so
+		// -- "RESTRUNG, NOT REBUILT ... a hover change costs two calls per row".
+		// A stale reason was left guarding a rebuild that had become cheap.
+		//
+		// The cost of that gate is that every countdown on the sheet is frozen at
+		// the value it held when the selector landed: RELOADING, DESPAWN, SPELL
+		// CD, OVERHEATED, DODGE, INVULN, and every HEAT/MANA/HP meter. The
+		// DESPAWN row's own comment calls it "the row with a deadline on it".
+		// Audit findings #25 and #40.
+		//
+		// Every SHEET_TICK tics rather than every tic: a second's worth of rows is
+		// what a countdown printed in whole seconds can actually show, and it
+		// keeps the rebuild off the hot path for the other nine tics in ten.
+		bool due = (level.maptime - mSheetBuiltTic) >= SHEET_TICK;
+		if (mSheetValid && nowCls == mSheetShown && !due) return;
+		mSheetBuiltTic = level.maptime;
 
 		mSheetShown = nowCls;
 		mSheetValid = true;
@@ -3131,6 +3173,16 @@ class wr_Rig : EventHandler
 	// twice.
 	private void gatherInventory(PlayerPawn pmo)
 	{
+		// NO FANS ON THIS PAGE. mFansEnabled is written in exactly one place --
+		// gatherWeaponCards -- so a ring opened on the weapons page with a big
+		// loadout carried it true straight across a page flip. The dwell trigger
+		// is gated on mFansEnabled and not on mPage, so resting on an INVENTORY
+		// card unfolded a fan of weapon cards out of it: both non-weapon gatherers
+		// push slot 0 for every card, so expandSlot resolved slot 0's weapons.
+		// Pressing fire on one of those is then swallowed and dropped, so the
+		// trigger is consumed and nothing happens. Audit finding #23 / #28.
+		mFansEnabled = false;
+
 		for (Inventory it = pmo.Inv; it != null; it = it.Inv)
 		{
 			if (!it.bInvBar || it.Amount <= 0) continue;
@@ -3158,6 +3210,16 @@ class wr_Rig : EventHandler
 	// which is the whole reason mCardLabel exists.
 	private void gatherModels(PlayerPawn pmo)
 	{
+		// NO FANS ON THIS PAGE. mFansEnabled is written in exactly one place --
+		// gatherWeaponCards -- so a ring opened on the weapons page with a big
+		// loadout carried it true straight across a page flip. The dwell trigger
+		// is gated on mFansEnabled and not on mPage, so resting on an INVENTORY
+		// card unfolded a fan of weapon cards out of it: both non-weapon gatherers
+		// push slot 0 for every card, so expandSlot resolved slot 0's weapons.
+		// Pressing fire on one of those is then swallowed and dropped, so the
+		// trigger is consumed and nothing happens. Audit finding #23 / #28.
+		mFansEnabled = false;
+
 		let held = (mRigHand == 1) ? pmo.player.OffhandWeapon : pmo.player.ReadyWeapon;
 		if (held == null) return;
 
@@ -6570,12 +6632,35 @@ class wr_Rig : EventHandler
 		bool wantCompare = (foundW != null && mine != null && mine != foundW
 		                    && cv("wr_inspect_delta", 1.0) > 0.0);
 
-		// Built once and only re-strung when the target changes -- neither
-		// fill is cheap enough to run every tic for a card that is not
-		// moving between weapons.
-		if (mInspectWpn != found)
+		// Re-strung when the target changes, AND on a cadence while it does not.
+		//
+		// Neither fill is cheap enough for every tic, but once-only was worse:
+		// inspect mode has no lock timer, so a floor weapon's DESPAWN clock -- the
+		// row whose own comment calls it "the row with a deadline on it" -- sat at
+		// whatever second it read when the dwell completed, indefinitely. Same
+		// cadence the ring's sheet uses. Audit finding #25.
+		// THE HELD WEAPON AND THE MODE COUNT AS CHANGES TOO.
+		//
+		// `mine` and `wantCompare` are recomputed every tic, but only a change of
+		// the FLOOR weapon triggered a re-fill -- so switching what you are
+		// holding while still pointing at the same pickup left the card reading
+		// "vs PISTOL", with the HELD column and every better/worse verdict still
+		// about the pistol. The card silently lied about the one question it
+		// exists to answer.
+		//
+		// wantCompare flipping is the worse half: with no rebuild, layoutCompare
+		// runs with mCmpPlate == 0 (or layoutInspect with mSheetPlate == 0, since
+		// the compare branch called clearSheet), both early-return, and whichever
+		// card IS on screen stops being positioned and hangs frozen in mid-air.
+		// Audit finding #21 / #24.
+		bool inspDue = (level.maptime - mInspectBuiltTic) >= SHEET_TICK;
+		if (mInspectWpn != found || mInspectMine != mine
+		    || mInspectCompare != wantCompare || inspDue)
 		{
-			mInspectWpn = found;
+			mInspectWpn     = found;
+			mInspectMine    = mine;
+			mInspectCompare = wantCompare;
+			mInspectBuiltTic = level.maptime;
 
 			if (wantCompare)
 			{
@@ -8932,6 +9017,10 @@ class wr_Rig : EventHandler
 	// instead of being a fixed size that stops matching the moment either is
 	// touched. Deliberately much larger than a card -- it is one panel you
 	// read, not one of nine you glance at.
+	// How often a shown sheet is restrung, in tics. Ten is roughly three times
+	// a second -- finer than a countdown printed in whole seconds can show, and
+	// nine tics in ten still skip the rebuild entirely.
+	const SHEET_TICK       = 10;
 	const SHEET_W_CARDS    = 2.6;
 	// Grown from 3.2 -- the stat tracker (wr_stattracker.zs) added three
 	// more possible rows (kills/shots/accuracy, damage/rate of fire,

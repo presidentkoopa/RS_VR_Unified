@@ -265,11 +265,21 @@ class wr_StatEvents : EventHandler
 		let pawn = players[consoleplayer].mo;
 		if (!pawn.player) return;
 
-		trackFire(pawn, pawn.player.ReadyWeapon);
-		trackFire(pawn, pawn.player.OffhandWeapon);
+		// WHICH HAND, passed in, because the ammo pool cannot say.
+		//
+		// Weapon.Ammo1 points at the player's single Inventory item of that ammo
+		// class, so two weapons sharing a pool -- pistol and chaingun, shotgun and
+		// SSG, plasma and BFG, or any two copies of the same gun, which is the
+		// flagship case of a dual-wield rig -- read the identical drain and BOTH
+		// conclude they fired. Both then stamp the same lastFireTic, attribution
+		// sees tA == tB and fails closed on every damage, death and marker event
+		// after it, so kills, hits and headshots sat at zero forever while SHOTS
+		// counted double. Audit finding #32.
+		trackFire(pawn, pawn.player.ReadyWeapon,  false);
+		trackFire(pawn, pawn.player.OffhandWeapon, true);
 	}
 
-	private void trackFire(PlayerPawn pawn, Weapon w)
+	private void trackFire(PlayerPawn pawn, Weapon w, bool offhand)
 	{
 		if (!w) return;
 
@@ -293,7 +303,20 @@ class wr_StatEvents : EventHandler
 		// own note. Ammo2 is the magazine where a weapon has one; the check
 		// against Ammo1 being a DIFFERENT item is what distinguishes a real
 		// magazine from a weapon whose Ammo1 and Ammo2 are the same pool.
-		if (w.Ammo2 != null && w.Ammo1 != w.Ammo2 && a2 > s.magHigh) s.magHigh = a2;
+		// THE ALT-FIRE EXCLUSION, which this third copy never got.
+		//
+		// Ammo2 is overloaded: a magazine on one weapon, a separate alt-fire pool
+		// on another. wr_Rig.hasMagazine is the authoritative test and adds
+		// `if (hasAltFire(w)) return false;` for exactly that reason; wr_gunhud's
+		// copy was fixed to match and says so in its own comment. This one stayed
+		// in the pre-fix two-part form.
+		//
+		// The result is a MAG row whose two halves come from DIFFERENT pools --
+		// the numerator through the three-part test (Ammo1) and the denominator
+		// through this one (Ammo2) -- printing nonsense like "MAG 187 / 12":
+		// 187 rounds over a capacity of 12 grenades. Audit finding #33.
+		if (w.Ammo2 != null && w.Ammo1 != w.Ammo2 && !wr_Rig.hasAltFire(w)
+		    && a2 > s.magHigh) s.magHigh = a2;
 
 		if (!s.seenAmmo)
 		{
@@ -312,6 +335,34 @@ class wr_StatEvents : EventHandler
 		// than double what one shot costs). Anything outside that band is
 		// ambiguous and simply becomes the new baseline, uncounted.
 		bool fired = (down1 > 0 && down1 <= use1 * 2) || (down2 > 0 && down2 <= use1 * 2);
+
+		// AND THIS HAND'S TRIGGER HAS TO BE DOWN.
+		//
+		// The drain alone cannot say which weapon spent it when both draw from
+		// the same pool -- the band test passes for both, so both count a shot
+		// and both stamp the same tic, which is what poisons attribution for
+		// everything downstream.
+		//
+		// The buttons CAN say. A hand whose trigger is not held did not fire the
+		// round that just left the pool, whatever the ammo count did.
+		//
+		// The alt-fire twin counts too: a weapon firing on alt still spends ammo
+		// and is still that hand pulling a trigger.
+		//
+		// FAILS OPEN when neither hand shows a button, rather than dropping the
+		// shot: a mod that fires from a state function without the engine seeing
+		// a press would otherwise lose every stat it has. The ambiguity this
+		// exists to break is BOTH hands claiming one shot, and that is still
+		// broken -- one of them is holding a trigger and the other is not.
+		if (fired)
+		{
+			int btn = pawn.player.cmd.buttons;
+			bool mainDown = (btn & (BT_ATTACK | BT_ALTATTACK)) != 0;
+			bool offDown  = (btn & (BT_OFFHANDATTACK | BT_OFFHANDALTATTACK)) != 0;
+
+			if (mainDown || offDown)
+				fired = offhand ? offDown : mainDown;
+		}
 
 		s.lastAmmo1 = a1;
 		s.lastAmmo2 = a2;
