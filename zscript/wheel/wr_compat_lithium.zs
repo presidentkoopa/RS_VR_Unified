@@ -590,7 +590,14 @@ class wr_CompatLithium
 	// FOUND, CHARGE.
 	static bool, int ChargeFistOf(Weapon w)
 	{
-		if (!ready(w)) return false, 0;
+		// Same shape, same fix: Lith_FistCharge is player-owned, so the Marine's
+		// CHARGE row printed on every Lithium weapon card. Audit finding #39.
+		// PREFIX, not an exact name: the only reference in this file is
+		// "Lith_FistPickup", so the weapon class itself is inferred rather than
+		// confirmed. A prefix still catches a variant and still refuses every
+		// other Lithium weapon, which is the whole point -- an exact name that
+		// turned out wrong would trade a visible leak for a silent absence.
+		if (!ready(w) || Left(clsOf(w), 9) != "Lith_Fist") return false, 0;
 		int n = amountOf(w.Owner, "Lith_FistCharge");
 		if (n <= 0) return false, 0;
 		return true, n;
@@ -723,7 +730,15 @@ class wr_CompatLithium
 	// FOUND, HEAT, MAX, LOCKED OUT.
 	static bool, int, int, bool SmgHeatOf(Weapon w)
 	{
-		if (!ready(w)) return false, 0, 0, false;
+		// CLASS-GATED, like every sibling reader here -- SmgSpreadOf, IonChargeOf,
+		// WindUpOf, RemsOf, ShrapnelOf and ComboOf all carry one and this did not.
+		//
+		// Lith_SMGHeat is a PLAYER-owned pool, so reading it off w.Owner succeeds
+		// for any Lithium weapon that reaches it: every card in the ring showed
+		// the SMG's heat, and once past 450 showed LOCKED in dry-ammo red on
+		// weapons that were not locked out at all. It also claimed the sheet's
+		// single gauge, so the bar read another gun's heat. Audit finding #39.
+		if (!ready(w) || clsOf(w) != "Lith_SMG") return false, 0, 0, false;
 		bool got; int n, mx;
 		[got, n, mx] = itemOf(w.Owner, "Lith_SMGHeat");
 		if (!got) return false, 0, 0, false;

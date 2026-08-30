@@ -195,14 +195,22 @@ class wr_CompatCombinedArms
 			// mutually exclusive states sharing one row: locked out after
 			// use, currently transformed, or charging toward it.
 			//
-			// StrikerTimer and StrikerReset both drain 1 per 3 tics, so
-			// seconds are tics/3/35 -- written as /105 rather than /35 the
-			// way the 1-per-tic counters below are.
+			// StrikerTimer and StrikerReset both drain 1 per 3 tics -- so the
+			// counter is not in tics, and each unit is worth THREE of them.
+			// Remaining tics = counter * 3, seconds = counter * 3 / 35.
+			//
+			// It used to divide by 105, which is counter/(3*35) -- the formula for
+			// a counter measured in tics that drains 3 per tic, the exact opposite
+			// mechanism. Nine times too small. This file's own header carries the
+			// check value: StrikerMeter grants StrikerReset 600, "a fifty-second
+			// lockout". 600*3/35 = 51s, which matches; 600/105+1 = 6s, which is
+			// what was printed, and then crawled at one displayed second per nine
+			// real ones. Audit finding #37.
 			int reset = amountOf(o, "StrikerReset");
-			if (reset > 0) return true, String.Format("STRIKER LOCKED %ds", reset / 105 + 1);
+			if (reset > 0) return true, String.Format("STRIKER LOCKED %ds", reset * 3 / 35 + 1);
 
 			int timer = amountOf(o, "StrikerTimer");
-			if (timer > 0) return true, String.Format("STRIKER ACTIVE %ds", timer / 105 + 1);
+			if (timer > 0) return true, String.Format("STRIKER ACTIVE %ds", timer * 3 / 35 + 1);
 
 			if (!hasItem(o, "StrikerModule")) return false, "";
 			int chg = amountOf(o, "StrikerCharge");

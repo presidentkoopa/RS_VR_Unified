@@ -89,7 +89,11 @@ class wr_CompatFinalDoomer
 		if (Left(wc, 8)  == "FDAliens")        return true, "ALIENS TC";
 		if (Left(wc, 6)  == "FDPlut")          return true, "PLUTONIA";
 		if (Left(wc, 5)  == "FDTNT")           return true, "TNT";
-		if (Left(wc, 8)  == "FDDoom2")         return true, "DOOM II";
+		// 7, NOT 8 -- "FDDoom2" is seven characters. Left(wc,8) on a real class
+		// returned the eight-char "FDDoom2S", which can never equal the seven-char
+		// literal, so the DOOM II set was the one set that never identified. Every
+		// other prefix here is counted correctly. Audit finding #35.
+		if (Left(wc, 7)  == "FDDoom2")         return true, "DOOM II";
 		if (Left(wc, 6)  == "FDJPCP")          return true, "JPCP";
 		if (Left(wc, 6)  == "FDBTSX")          return true, "BTSX";
 		if (Left(wc, 11) == "FDHellbound")     return true, "HELLBOUND";

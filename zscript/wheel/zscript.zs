@@ -1533,9 +1533,18 @@ class wr_Rig : EventHandler
 		// most one of the two DURA rows can ever fire for a given weapon
 		// -- they share the same label on purpose, since the player is
 		// never looking at both mods' weapons in the same hand at once.
+		// ONLY IF INSURRECTION DID NOT ALREADY PRINT ONE.
+		//
+		// The comment above is wrong and was wrong by construction: the two
+		// DurabilityOf functions are byte-identical -- same cvar gate, same four
+		// reflected field names, no class check anywhere. Reflection is BY NAME,
+		// so whichever weapon satisfies one satisfies the other, and every
+		// durable Pandemonia weapon printed DURA twice, adjacent and identical.
+		// Both copies also burned a slot from a fixed pool that silently drops
+		// overflow. Audit finding #36.
 		bool hasDuraP; int duraP, duraMaxP; bool duraBrokenP;
 		[hasDuraP, duraP, duraMaxP, duraBrokenP] = wr_CompatPandemonia.DurabilityOf(w);
-		if (hasDuraP)
+		if (hasDuraP && !hasDuraI)
 			sheetRow(String.Format("DURA %d/%d", duraP, duraMaxP),
 			         duraBrokenP ? color(SHEET_LOCK)
 			                     : (duraMaxP > 0 && duraP * 4 < duraMaxP) ? color(COLOR_AMMO_DRY) : color(SHEET_MEAS));
@@ -2019,7 +2028,19 @@ class wr_Rig : EventHandler
 			// reasons that have nothing to do with where you were aiming.
 			// Only shown once there are hits to be a share OF -- until then
 			// the bare count is the whole truth.
+			// CLAMPED, because the two counters are not bounded the same way and
+			// the share of hits could read above 100%.
+			//
+			// hits is capped at one per detected shot -- it needs a 12-tic window
+			// that is closed the moment it fires. headshots has no such window: it
+			// counts one per marker inside a 35-tic attribution window with no
+			// per-shot cap. So a shotgun blast landing several head pellets is one
+			// hit and several headshots, and a headshot arriving 13-35 tics after
+			// the shot -- a rocket or a slow bolt in flight -- is a headshot with no
+			// hit at all. "HEADSHOTS 5 (500%)" on a headline row is worse than a
+			// slightly conservative number. Audit finding #34.
 			int hsPct = trHits > 0 ? (trHs * 100 / trHits) : 0;
+			if (hsPct > 100) hsPct = 100;
 			sheetRow(hasBasics && trHits > 0
 			           ? String.Format("HEADSHOTS %d  (%d%%)", trHs, hsPct)
 			           : String.Format("HEADSHOTS %d", trHs),
@@ -6845,7 +6866,10 @@ class wr_Rig : EventHandler
 		// Pandemonia base
 		bool pdHas; int pdCur, pdMax; bool pdBroken;
 		[pdHas, pdCur, pdMax, pdBroken] = wr_CompatPandemonia.DurabilityOf(w);
-		if (pdHas)
+		// Guarded against Insurrection's identical reader -- see the note on the
+		// sheet's copy. Two DURA labels here meant the merge loop emitted two
+		// identical comparison rows. Audit finding #36.
+		if (pdHas && !insDHas)
 		{
 			labels.Push("DURA");
 			values.Push(pdBroken ? "BROKEN" : String.Format("%d/%d", pdCur, pdMax));
@@ -7569,7 +7593,21 @@ class wr_Rig : EventHandler
 		}
 		else
 		{
-			reach = cv("wr_radius", 5.0) * cv("wr_scale", 1.0) * 1.6;
+			// AS FAR AS THE RING IS, not as far as the ring is WIDE.
+			//
+			// wr_radius is the orbit radius, not the distance from the hand, and
+			// 5 * 1.6 = 8 was "just past the ring" back when the ring was centred
+			// on the wrist at radius 5. The ring now hangs at wr_forward -- 34 units
+			// -- so between two cards the dusty beam collapsed to a stub near your
+			// hand, a quarter of the way there, while the engine's own thin laser
+			// carried on to the wall. Two pointers disagreeing about where you are
+			// aiming, on every card-to-card crossing, and no beam reaching the ring
+			// at exactly the moment you need to see where the pointer is.
+			//
+			// Measured from the standoff the ring is actually placed at, plus a
+			// little so the miss case reads as slightly past the cards rather than
+			// stopping short of them. Audit finding #22.
+			reach = (cv("wr_forward", 34.0) + cv("wr_radius", 5.0) * cv("wr_scale", 1.0)) * 1.15;
 		}
 
 		// Only the dot is ours now; the beam is the engine laser.
@@ -7931,6 +7969,25 @@ class wr_Rig : EventHandler
 
 		if (readoutKind() == LevelLocals.BB_WG13)
 		{
+			// DIGITS ONLY, and now actually counted that way.
+			//
+			// The comment below has always said the separator is not counted, and
+			// nothing ever stripped it. BB_WG13 reads its number out of `data` and
+			// never renders `text` at all, but the WIDTH came from the full string
+			// -- so ammoText's "8|112" measured six characters and saturated the
+			// 0.90 ceiling, giving a magazine weapon a badge nearly edge to edge
+			// with one small digit floating in it, next to a card showing the same
+			// count at 0.54. Audit finding #29.
+			int digits = 0;
+			for (int i = 0; i < text.Length(); ++i)
+			{
+				int c = text.ByteAt(i);
+				if (c >= 48 && c <= 57) ++digits;
+				else break;   // the badge shows the FIRST number only
+			}
+			if (digits < 1) digits = 1;
+			chars = digits;
+
 			// The lozenge's own rule, and it takes DIGITS -- a badge showing a
 			// separator is not a case it has, so the separator is not counted.
 			//
@@ -8314,6 +8371,22 @@ class wr_Rig : EventHandler
 		if (hit == mHovered)
 		{
 			if (mHovered == 0) return;
+
+			// A HAND STILL ON A CARD IS STILL DECIDING -- reset the fold-away
+			// clock every tic it stays there, not only on the tic it arrives.
+			//
+			// The only other reset lives below the `hit == mHovered` early return,
+			// so it fires when the hovered id CHANGES and never again while it
+			// stays the same. Holding one card therefore gave exactly wr_locktics
+			// -- four seconds -- from the moment you landed on it, then faded and
+			// closed mid-decision. A 28-row DOOM Infinite sheet cannot be read in
+			// four seconds, so the only way to finish reading one was to jiggle
+			// the pointer off the card and back on to restart the clock.
+			//
+			// Both this file's own comment and CVARINFO describe continuous-hover
+			// behaviour ("Hovering a card resets it"). This is the line that makes
+			// that true. Audit finding #19.
+			mLockTics = int(cv("wr_locktics", 140.0));
 
 			++mHoverTics;
 			++mDwellTics;
@@ -8923,7 +8996,20 @@ class wr_Rig : EventHandler
 	// different mods, where nothing merges and every row doubles up. Rows
 	// past this pool are silently dropped, same as the sheet's own pool --
 	// not an error, just a card that has genuinely run out of plate.
-	const CMP_ROW_POOL  = 26;
+	// 23, NOT 26 -- the number the PLATE holds, not the number the content
+	// estimate wanted.
+	//
+	// Derived rather than guessed: rows start at CMP_ROWS_TOP from the top and
+	// step CMP_ROW_FRAC * CMP_ROW_PITCH each, so the last row that still has its
+	// bottom edge on the plate is index 22. Rows 24, 25 and 26 were drawn as
+	// free-floating text BELOW the card with no background behind them, which is
+	// worse than the honest truncation the pool comment promised ("silently
+	// dropped ... a card that has genuinely run out of plate").
+	//
+	// The data sheet's equivalent numbers were kept in step when SHEET_H_CARDS
+	// grew; this pool was picked from a content estimate and never was. Audit
+	// finding #26.
+	const CMP_ROW_POOL  = 23;
 
 	// How many row billboards the sheet allocates, once, up front.
 	//

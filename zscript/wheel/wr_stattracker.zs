@@ -423,7 +423,19 @@ class wr_StatEvents : EventHandler
 			// -- a floor on the true count, never the spread itself. Only
 			// the original hits count; a headshot bonus would inflate a
 			// single-pellet weapon to two.
-			if (s.pendingHitUntilTic > 0 && level.maptime <= s.pendingHitUntilTic)
+			// THE SHOT'S OWN WINDOW, not the hit-credit token.
+			//
+			// pendingHitUntilTic is deliberately SINGLE USE -- the first damage
+			// event that lands inside it takes the hit credit and closes it four
+			// lines below. Sharing it here meant pellet one raised the count to 1
+			// and shut the window, and pellets two through eight of the same blast
+			// all failed this test. pelletRun could only ever hold 0 or 1, so the
+			// PELLETS row never drew and DPS multiplied by one: a vanilla shotgun
+			// read a seventh of its real damage, an SSG a twentieth.
+			//
+			// Measured against lastFireTic instead, which is the shot's own span
+			// and is not consumed by anything. Audit finding #31.
+			if (level.maptime <= s.lastFireTic + HIT_WINDOW)
 				s.pelletRun++;
 		}
 
