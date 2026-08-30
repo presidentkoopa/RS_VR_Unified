@@ -94,6 +94,23 @@ class RS_Held : EventHandler
 	private bool   hSavedInterpAng[2];
 	private double hSavedRoll[2];
 
+	// YAW AND PITCH TOO, ONCE THE THING IS SOLID.
+	//
+	// Roll stood alone for as long as a held object was a billboard, and that
+	// was correct: a sprite turns to face you, so its yaw is unobservable, and
+	// nothing in the renderer reads a sprite's pitch at all. Neither is true of
+	// a voxel. A voxel has a front and a top, so all three angles are visible
+	// and a barrel that answers only one of them reads as broken in a way the
+	// sprite never did.
+	//
+	// Saved for the same reason roll is: Angle is not decorative on every
+	// actor. A monster's facing is live gameplay state, and dropping one that
+	// has been turned to match a wrist would leave it aiming somewhere it never
+	// chose. Restored on release, on hand-off, and the instant the toggle goes
+	// off mid-hold.
+	private double hSavedPitch[2];
+	private double hSavedAngle[2];
+
 	// A HELD THING BECOMES A REAL 3D OBJECT, if a voxel exists for it.
 	//
 	// The roll trick above makes a billboard READ as something turning over,
@@ -414,6 +431,8 @@ class RS_Held : EventHandler
 		hSavedRollCentre[hand] = false;
 		hSavedInterpAng[hand]  = false;
 		hSavedRoll[hand]       = 0.0;
+		hSavedPitch[hand]      = 0.0;
+		hSavedAngle[hand]      = 0.0;
 		hSavedVoxel[hand]      = false;
 	}
 
@@ -443,6 +462,8 @@ class RS_Held : EventHandler
 		hSavedRollCentre[hand] = a.bROLLCENTER;
 		hSavedInterpAng[hand]  = a.bINTERPOLATEANGLES;
 		hSavedRoll[hand]       = a.Roll;
+		hSavedPitch[hand]      = a.Pitch;
+		hSavedAngle[hand]      = a.Angle;
 		hSavedVoxel[hand]      = a.VoxelOverride;
 
 		// SPECIAL cleared is the one that is not optional. An item in your hand
@@ -489,6 +510,8 @@ class RS_Held : EventHandler
 		hSavedRollCentre[to]   = hSavedRollCentre[from];
 		hSavedInterpAng[to]    = hSavedInterpAng[from];
 		hSavedRoll[to]         = hSavedRoll[from];
+		hSavedPitch[to]        = hSavedPitch[from];
+		hSavedAngle[to]        = hSavedAngle[from];
 		hSavedVoxel[to]        = hSavedVoxel[from];
 		hOwnsFlags[from]       = false;
 	}
@@ -512,6 +535,12 @@ class RS_Held : EventHandler
 		a.bROLLCENTER        = hSavedRollCentre[hand];
 		a.bINTERPOLATEANGLES = hSavedInterpAng[hand];
 		a.Roll               = hSavedRoll[hand];
+
+		// Pitch and Angle with it. Angle especially: it is the one of the three
+		// that other code reads. Put a turned barrel down and it should sit the
+		// way it sat, not aimed wherever your wrist finished.
+		a.Pitch              = hSavedPitch[hand];
+		a.Angle              = hSavedAngle[hand];
 
 		// Back to whatever it was, which is not always false: a player running
 		// r_drawvoxels globally may have picked up something that was already
@@ -615,6 +644,48 @@ class RS_Held : EventHandler
 			// actor's PrevAngles snapshot BEFORE the hook runs, so last tic's
 			// roll is still intact when this overwrites it.
 			a.Roll = -((hand == HAND_MAIN) ? pmo.MainHandRoll : pmo.OffhandRoll);
+
+			// ALL THREE AXES ONCE IT IS SOLID.
+			//
+			// Gated on VoxelOverride and not on the toggle, because that is
+			// exactly the condition under which the other two become visible.
+			// A billboard has no observable yaw and the renderer reads no
+			// sprite pitch, so writing either on a sprite would cost a tic of
+			// work to change nothing -- and writing Angle in particular is not
+			// free of consequence, since other code reads an actor's facing.
+			//
+			// Pitch comes from RS_Reach.HandPitch rather than a second negation
+			// written out here. AttackPitch and OffhandPitch are both stored
+			// pre-negated by the VR backends, that function is where the tree
+			// already undoes it, and a private copy of the sign would be one
+			// more place to disagree with the ray that tested the grab.
+			//
+			// Yaw is taken raw. AttackAngle and OffhandAngle are absolute world
+			// yaws in the same convention Actor.Angle uses, so unlike the other
+			// two there is no sign to undo -- turning the wrist left turns the
+			// barrel left.
+			if (a.VoxelOverride)
+			{
+				a.Pitch = RS_Reach.HandPitch(pmo, hand);
+				a.Angle = (hand == HAND_MAIN) ? pmo.AttackAngle : pmo.OffhandAngle;
+			}
+
+			// WHAT THIS PATH ACTUALLY WROTE.
+			//
+			// The engine-side [RSVOX] trace reports the angles it finds on the
+			// actor, which is the OUTCOME. When those came back as exact zeroes
+			// on a tracked wrist there was no way to tell from outside whether
+			// this block had run and written zero, or never run at all -- the
+			// carry could equally have been a distance-grab flight, where
+			// RS_Pull owns the actor and nothing here executes.
+			//
+			// One line a second per hand, so the two traces can be read against
+			// each other: if this prints and [RSVOX] still shows zeroes, the
+			// write is being overwritten downstream.
+			if (Flag("rs_hold_debug", p, true) && (level.time % 35) == 0)
+				Console.Printf("[RSHOLD] hand %d carrying %s  vox=%d  wrote yaw=%.1f pitch=%.1f roll=%.1f",
+					hand, a.GetClassName(), a.VoxelOverride ? 1 : 0,
+					a.Angle, a.Pitch, a.Roll);
 		}
 		else
 		{
@@ -626,6 +697,8 @@ class RS_Held : EventHandler
 			a.bROLLCENTER        = hSavedRollCentre[hand];
 			a.bINTERPOLATEANGLES = hSavedInterpAng[hand];
 			a.Roll               = hSavedRoll[hand];
+			a.Pitch              = hSavedPitch[hand];
+			a.Angle              = hSavedAngle[hand];
 		}
 	}
 

@@ -298,6 +298,16 @@ class RS_HardPointProp : Actor
 		Height 1;
 	}
 
+	// Same borrowed-model problem as RS_HolsterProp, same fix -- see the long
+	// note there. A mounted item wears the real item's MODELDEF, that
+	// definition opts into yaw only, and the pitch and roll this subsystem
+	// writes at RS_HardPoints.zs:1961-1965 were discarded before drawing.
+	override void PostBeginPlay()
+	{
+		Super.PostBeginPlay();
+		ForceModelAngles = true;
+	}
+
 	// The class currently displayed, so a re-show with the same weapon does
 	// not rebind the model every tic.
 	// The class currently displayed, so a re-show with the same item does not

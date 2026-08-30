@@ -266,7 +266,11 @@ user bool rs_swap_overlap = true;
 // past yourself, loose enough that you do not have to be precise about it.
 user float rs_swap_overlap_dist = 8.0;
 
-user bool rs_hold_debug = false;
+// ON while hand rotation is being worked out (2026-08-28). Every mod-side hand
+// diagnostic hangs off this one cvar, and it defaulting off is why a test run
+// that exercised the swap gesture and four grabs produced not one line about
+// either. Put it back to false once held rotation is settled.
+user bool rs_hold_debug = true;
 
 // ---- WHAT IS GRABBABLE --------------------------------------------------
 //

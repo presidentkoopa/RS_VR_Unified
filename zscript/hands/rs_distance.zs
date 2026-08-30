@@ -113,6 +113,20 @@ class RS_Pull : EventHandler
 	private int     flyTotal[2];
 	private Vector3 flyStart[2];
 
+	// THE ARC THIS PARTICULAR PULL IS ALLOWED, decided once at launch.
+	//
+	// It used to be recomputed every tic as a flat fraction of the pull
+	// distance, with no idea what was overhead, and then clamped against the
+	// local ceiling when it did not fit. Clamping is the wrong remedy: it does
+	// not lower the arc, it SQUASHES it, pinning the object to whatever surface
+	// it met and dragging it there. Every "it hops and settles instead of
+	// sailing" report is that clamp doing its job.
+	//
+	// Deciding up front against the LOWEST ceiling anywhere on the route means
+	// a pull under a low doorway is simply a flatter pull that still arrives,
+	// rather than a pretty arc that fails. See MeasureArc.
+	private double  flyArc[2];
+
 	// TICS THE OBJECT WAITS ON YOUR PALM BEFORE IT RESOLVES AS A MISS.
 	//
 	// Without this the catch could not be made at any real range, and the reason
@@ -405,6 +419,71 @@ class RS_Pull : EventHandler
 		a.VoxelOverride      = flySavedVoxel[hand];
 	}
 
+	// HOW HIGH THIS PULL CAN ARC WITHOUT MEETING A CEILING.
+	//
+	// Walks the straight line the object is about to travel and asks each point
+	// what is overhead, keeping the WORST answer -- one low doorway halfway
+	// along governs the whole flight, because the object has to fit through it.
+	//
+	// Returns the arc height that fits, which the caller then takes as a cap on
+	// the arc it wanted. Never negative, and zero is a perfectly good answer: it
+	// means a flat pull, which still arrives.
+	//
+	// SAMPLED, NOT SWEPT. A real swept-volume test is what TryMove already does
+	// per tic; this only has to be right about the ROOF, and the roof changes at
+	// sector boundaries. Sampling densely enough to land in every sector the
+	// line crosses gets the same answer far more cheaply, and this runs once per
+	// pull rather than once per tic.
+	//
+	// The floor matters too: the object cannot start below the highest floor on
+	// the route either, and headroom is the gap between those two.
+	private double MeasureArc(Actor a, Vector3 from, Vector3 to)
+	{
+		// One sample per 24 units, bounded. A Doom doorway is 64 wide and the
+		// narrowest sector worth noticing is smaller than that, so this lands
+		// inside anything that could actually stop the object.
+		double span = (to - from).Length();
+		int samples = clamp(int(span / 24.0), 4, 48);
+
+		double minCeil =  1e30;
+		double maxFloor = -1e30;
+
+		for (int i = 0; i <= samples; i++)
+		{
+			double t = double(i) / double(samples);
+			Vector2 pt = (from.x + (to.x - from.x) * t,
+			              from.y + (to.y - from.y) * t);
+
+			Sector sec = level.PointInSector(pt);
+			if (!sec) continue;
+
+			double c = sec.ceilingplane.ZatPoint(pt);
+			double f = sec.floorplane.ZatPoint(pt);
+			if (c < minCeil)  minCeil = c;
+			if (f > maxFloor) maxFloor = f;
+		}
+
+		// Nothing sampled cleanly -- refuse to invent a number and let the
+		// caller keep the arc it asked for. The per-tic clamp is still there as
+		// the backstop it was always meant to be.
+		if (minCeil > 1e29 || maxFloor < -1e29) return -1.0;
+
+		// A margin, because the object is a box and not a point: its top corners
+		// reach higher than its centre when it tumbles, and the tumble is on by
+		// default.
+		double margin = 8.0;
+		double room = minCeil - maxFloor - a.Height - margin;
+
+		// The arc rides ON TOP of the line between the two ends, so the height
+		// already spent getting from the floor up to the higher end is not
+		// available to the arc.
+		double lineTop = max(from.z, to.z);
+		double avail   = (minCeil - a.Height - margin) - lineTop;
+
+		double cap = min(room, avail);
+		return cap > 0.0 ? cap : 0.0;
+	}
+
 	// Begin a pull. Returns false if it could not start, so the caller can say
 	// so rather than silently doing nothing.
 	bool Start(int hand, Actor a, PlayerPawn pmo, PlayerInfo p)
@@ -432,6 +511,14 @@ class RS_Pull : EventHandler
 		if (lo < 1) lo = 1;
 		if (hi < lo) hi = lo;
 		double tics = clamp(dist / upt, lo, hi);
+
+		// The arc it WANTS, then the arc the route allows. Measured against the
+		// palm rather than the player's feet, because the palm is where the
+		// flight actually ends.
+		Vector3 palm = RS_Reach.Centre(pmo, p, hand);
+		double wantArc = dist * RS_Reach.Num("rs_dgrab_arc", p, 0.15);
+		double capArc  = MeasureArc(a, mid0, palm);
+		flyArc[hand] = (capArc < 0.0) ? wantArc : min(wantArc, capArc);
 
 		lockActor[hand] = null;
 		flyActor[hand] = a;
@@ -483,6 +570,27 @@ class RS_Pull : EventHandler
 		SaveTumble(hand, a, p);
 
 		a.Vel = (0, 0, 0);
+
+		// WHAT LAUNCHED, AND WITH WHAT ROOM TO DO IT IN.
+		//
+		// "Armour and barrels sail, corpses and stimpacks hop" is a report about
+		// two classes of object behaving differently, and nothing above treats
+		// them differently -- so the difference has to be in their numbers, not
+		// in the code path. These are the numbers the arc is then clamped
+		// against: an object whose ceiling room is smaller than the arc it was
+		// given cannot fly, and will be squashed onto the floor and dragged
+		// there instead, which is what a hop looks like.
+		//
+		// Printed at launch rather than per tic: one line per pull, naming the
+		// thing, how far it has to come, how long it has been given, and how
+		// much vertical room it actually has.
+		if (RS_Reach.Flag("rs_hold_debug", p, true))
+			Console.Printf("[RSPULL] hand %d launched %s  dist=%.0f tics=%d  r=%.0f h=%.0f  floorz=%.0f ceilz=%.0f headroom=%.0f  arc=%.0f",
+				hand, a.GetClassName(), dist, int(tics),
+				a.Radius, a.Height, a.floorz, a.ceilingz,
+				a.ceilingz - a.floorz - a.Height,
+				flyArc[hand]);
+
 		return true;
 	}
 
@@ -688,7 +796,12 @@ class RS_Pull : EventHandler
 			// On e, the shape in SPACE is a clean symmetric parabola whatever
 			// the speed curve is doing, and the acceleration is free to be
 			// whatever feels right without bending the arc out of shape.
-			double arcH = flyDist[h] * RS_Reach.Num("rs_dgrab_arc", p, 0.15);
+			// Decided at launch by MeasureArc against the whole route, not
+			// recomputed here from the distance alone. The old line could not
+			// know what was overhead, so a pull under a low ceiling asked for an
+			// arc that did not fit and got squashed flat by the clamp below --
+			// which is a drag along the floor, not a flight.
+			double arcH = flyArc[h];
 			pos.z += 4.0 * arcH * e * (1.0 - e);
 
 			// TRYMOVE, NOT SETORIGIN. The object is a real thing crossing the
@@ -728,9 +841,25 @@ class RS_Pull : EventHandler
 			// anything.
 			if (!moved)
 			{
+				// WHERE AND WHEN, not just that it happened.
+				//
+				// "Blocked in flight" is true of an object that died on its
+				// first tic still sitting on its own floor, and of one that
+				// crossed most of the room and clipped a doorframe -- and those
+				// are completely different bugs. Dying on tic 0 or 1 means it
+				// never left, which points at the launch position or the Z
+				// clamp rather than at anything it hit on the way.
+				//
+				// zclamp reports whether the arc was squashed by the room this
+				// tic: if the height it wanted is not the height it got, the
+				// object is being dragged along a surface instead of flying,
+				// which is what a hop looks like from the outside.
 				if (RS_Reach.Flag("rs_hold_debug", p, true))
-					Console.Printf("[RSPULL] hand %d lost %s -- blocked in flight",
-						h, a.GetClassName());
+					Console.Printf("[RSPULL] hand %d lost %s -- blocked on tic %d/%d  at (%.0f %.0f %.0f)  wanted z=%.0f got z=%.0f  floorz=%.0f ceilz=%.0f  zclamp=%d",
+						h, a.GetClassName(), flyTic[h], flyTotal[h],
+						a.Pos.x, a.Pos.y, a.Pos.z,
+						flyZ, a.Pos.z, a.floorz, a.ceilingz,
+						(flyZ < lo || flyZ > hi) ? 1 : 0);
 				Abort(h);
 				continue;
 			}

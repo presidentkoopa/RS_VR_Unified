@@ -997,10 +997,50 @@ class RS_GrabHandler : EventHandler
 
                 if ((mine - other).Length() <= near)
                 {
-                    pmo.SwitchWeaponHand(hand);
-                    level.VRHaptic(hand, 0.5, 35.0);
-                    if (dbg) Console.Printf("[RSSWAP] hand %d took the other hand's weapon", hand);
-                    continue;
+                    // THERE HAS TO BE SOMETHING WORTH TAKING.
+                    //
+                    // SwitchWeaponHand nulls BOTH weapon slots before it
+                    // repopulates them, and it only ever restores two things:
+                    // the weapon it lifted out of the source slot, and
+                    // PickNextWeapon's answer. Anything sitting in the
+                    // DESTINATION slot is not among them -- it is orphaned
+                    // unless PickNextWeapon happens to name it.
+                    //
+                    // Which is exactly what a second press does. Pass a gun
+                    // main->off and the main hand is left holding a fist; press
+                    // again with the hands still together and the source is now
+                    // that fist, both slots are nulled, the fist comes back, and
+                    // the GUN -- the thing in the destination hand -- is gone
+                    // completely. Reported 2026-08-28, reproduced from the
+                    // engine source above.
+                    //
+                    // Refusing when the source hand holds nothing but a fist is
+                    // both the fix and the right rule anyway: passing a fist is
+                    // not a thing anyone means to do, and a second squeeze with
+                    // the hands still overlapped means "I already did this",
+                    // not "throw the gun away".
+                    //
+                    // The source is resolved the same way SwitchWeaponHand
+                    // resolves it -- destination `hand` takes from the OTHER
+                    // slot -- so this cannot disagree with what the call does.
+                    Weapon src = (hand == 0) ? p.OffhandWeapon : p.ReadyWeapon;
+                    bool passable = src && !src.bNoHandSwitch
+                                        && !RS_HandFist.IsFistClass(src.GetClass());
+
+                    if (passable)
+                    {
+                        pmo.SwitchWeaponHand(hand);
+                        level.VRHaptic(hand, 0.5, 35.0);
+                        if (dbg) Console.Printf("[RSSWAP] hand %d took %s from the other hand", hand, src.GetClassName());
+                        continue;
+                    }
+
+                    if (dbg)
+                    {
+                        String srcName = "nothing";
+                        if (src) srcName = src.GetClassName();
+                        Console.Printf("[RSSWAP] hand %d refused: other hand holds %s", hand, srcName);
+                    }
                 }
             }
 

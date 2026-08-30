@@ -381,6 +381,28 @@ class RS_HolsterProp : Actor
 		Height 1;
 	}
 
+	// A HOLSTERED WEAPON IS WEARING SOMEONE ELSE'S MODEL.
+	//
+	// A_ChangeModel binds the real weapon's MODELDEF to this prop, and that
+	// definition opts into actor YAW only -- MDL_USEACTORPITCH and
+	// MDL_USEACTORROLL are per-definition opt-ins, and no weapon declares them,
+	// because a weapon in your hand is posed by the psprite path instead.
+	//
+	// So the pitch and roll this subsystem carefully computes and writes every
+	// tic (RS_Holsters.zs:1715) were discarded by the renderer before anything
+	// could be drawn. That is the whole of "only the yaw slider does anything":
+	// the other two were moving numbers nothing ever read.
+	//
+	// Setting the flags on the borrowed definition is not available -- it is
+	// shared with the weapon itself, so trimming how a pistol SITS IN A HOLSTER
+	// would change how that pistol is drawn in your hand. ForceModelAngles is
+	// the per-actor opt-in added for this, 2026-08-28.
+	override void PostBeginPlay()
+	{
+		Super.PostBeginPlay();
+		ForceModelAngles = true;
+	}
+
 	// The class currently displayed, so a re-show with the same weapon does
 	// not rebind the model every tic. Actor, not Weapon: this is now the
 	// RESOLVED model class from level.GetActorModelClass(w), which can be a
