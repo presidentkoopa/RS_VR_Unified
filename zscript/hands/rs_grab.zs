@@ -22,6 +22,17 @@
 // load, not a warning.
 class RS_Basis
 {
+    // An angle folded into -180..180, so a distance-from-target comparison
+    // means what it says either side of the wrap. Lives here because RS_Basis
+    // is already the shared home for angle work both the drawn and the tested
+    // side read.
+    static double NormDeg(double a)
+    {
+        while (a >  180.0) a -= 360.0;
+        while (a < -180.0) a += 360.0;
+        return a;
+    }
+
     static Vector3 Fwd(double yaw, double pit, double rol)
     {
         return ( cos(yaw)*cos(pit), sin(yaw)*cos(pit), -sin(pit) );
@@ -671,7 +682,27 @@ class RS_GrabHandler : EventHandler
             // The cone is only asked when the palm is empty-handed AND empty of
             // anything to close on. Direct reach always wins: a thing you are
             // already touching is unambiguously the thing you meant.
-            if (!nearTarget[hand] && useCone)
+            // PALM DOWN OR NO REACH, not merely no laser.
+            //
+            // The beam is drawn from farTarget, so gating only the drawing
+            // hid the ray and left the grab reaching exactly as before -- the
+            // hand still pulled things across the room in a gun grip, with
+            // nothing on screen to say it was about to. Gating the TARGET is
+            // what actually moves the feature onto the gesture: no target, no
+            // beam, no lock, no pull.
+            //
+            // Same numbers the beam uses, read the same way, so what you see
+            // and what will happen cannot disagree.
+            bool palmOk = true;
+            if (RS_Reach.Flag("rs_dgrab_palm", p, true))
+            {
+                double rl  = abs(RS_Basis.NormDeg((hand == 0) ? pmo.MainHandRoll : pmo.OffhandRoll));
+                double tgt = RS_Reach.Num("rs_dgrab_palm_roll", p, 90.0);
+                double tol = RS_Reach.Num("rs_dgrab_palm_tol",  p, 30.0);
+                palmOk = (abs(rl - tgt) <= tol);
+            }
+
+            if (!nearTarget[hand] && useCone && palmOk)
                 farTarget[hand] = RS_Cone.Best(pmo, p, hand);
         }
 

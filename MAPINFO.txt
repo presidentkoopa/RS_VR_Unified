@@ -21,7 +21,6 @@
 //   1  RS_HandsAlwaysOn ... RS_GrabViz   hands publish pose/basis and resolve
 //                                        their own grab before anyone reads it
 //   2  RS_HolsterManager, StartLoadout   torso anchors + spawn loadout
-//   3  RS_HardPointManager               arm anchors (shares the grab netevent
 //                                        with the holster manager)
 //   4  RR_Reload                         consumes hands' basis AND the pouch,
 //                                        so it must see both already updated
@@ -79,5 +78,5 @@
 // rather than a merge fix, so it stays the owner's call.
 GameInfo
 {
-	AddEventHandlers = "RS_HandsAlwaysOn", "RS_HandWorldHandler", "RS_GrabPolicy", "RS_GrabHandler", "RS_Swing", "RS_Held", "RS_Pull", "RS_Route", "RS_GrabViz", "RS_HolsterManager", "RS_HardPointManager", "RR_Reload", "wr_Rig"
+	AddEventHandlers = "RS_HandsAlwaysOn", "RS_HandWorldHandler", "RS_GrabPolicy", "RS_GrabHandler", "RS_Swing", "RS_Held", "RS_Pull", "RS_Route", "RS_GrabViz", "RS_HolsterManager", "RR_Reload", "wr_Rig"
 }

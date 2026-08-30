@@ -88,10 +88,50 @@ Model RS_HandIdleOff
 // the model take its transform from GetWeaponTransform at DRAW time, instead of
 // from wherever script last put the actor at 35Hz.
 //
-// Scale 0.196035, NOT 1.0. The psprite blocks above sit at Scale 1.0 because the HUD
-// path works out to 173.44 units per metre and this mesh is baked 1875x oversized
-// to suit it. The world path uses vr_vunits_per_meter -- 34 units per metre -- so
-// a 0.19 m hand must occupy 6.46 map units: 6.46 / 32.9533 = 0.196035.
+// Scale 0.01. MEASURED, not derived from a target size, and it is one clean
+// number because the two render paths differ by exactly one factor of 100.
+//
+// BOTH PATHS START FROM THE SAME MATRIX. GetWeaponTransform (hw_vrmodes.cpp:1483)
+// hands back the controller pose with mat->scale(vr_vunits_per_meter) already
+// applied (vk_openxrdevice.cpp:5926), so downstream of it mesh space is METRES on
+// both paths. They then diverge in one place and one place only:
+//
+//   HUD path   RenderHUDModel applies a further scale(0.01f) (models.cpp:934-937),
+//              documented there as the model-unit conversion every hud model needs.
+//   WORLD path ObjectToWorldMatrix applies no such factor -- MODELDEF Scale goes
+//              straight into step 3 (models.cpp:849).
+//
+// So a world Scale of 0.01 draws a followed model at EXACTLY the size the same
+// mesh draws at on a psprite with Scale 1.0. That is the whole derivation, and it
+// needs no anatomy: the psprite hands are the size that was signed off in a
+// headset, and this matches them by construction.
+//
+// Cross-check against the mesh. hand_left.iqm bbox extent measured from its
+// POSITION vertex array is 14.9882 x 9.0510 x 32.9533, longest axis 32.9533.
+//   psprite: 32.9533 * 1.0 (MODELDEF) * 1.0 (rs_hand_scale -> psp.scale,
+//            rs_hands.zs:392-396 -> pspScale, models.cpp:985) * 0.01 = 0.3295 m
+//   world:   32.9533 * 0.01 * 1.0 (rs_hw_*_scale -> wPlaceScale) = 0.3295 m
+//
+// WHAT WAS HERE BEFORE, AND WHY IT DREW NOTHING AT ALL. This line read 0.196035,
+// derived as "a 0.19 m hand must occupy 6.46 map units: 6.46 / 32.9533". That is
+// two compounding mistakes, and they multiply out exactly:
+//
+//   x34.0000  spends vr_vunits_per_meter a second time, when GetWeaponTransform
+//             has already spent it -- the file header's own "100x class of bug".
+//   x0.5766   targets 0.19 m, but the psprite hand these are meant to match is
+//             0.3295 m: this mesh is a hand AND forearm (bbox runs -22.35 to
+//             +10.60 on its long axis), not a bare palm.
+//   ------
+//   x19.6035  net. And 0.196035 / 0.01 = 19.6035. The two readings agree to six
+//             figures, so nothing else is going on here.
+//
+// The symptom was NOT a big hand. 32.9533 * 0.196035 = 6.46 m, centred on a
+// controller roughly half a metre from the face: the camera sits inside the mesh,
+// and a surface seen from inside is backface-culled away. World hands read as
+// "never drawn anywhere", indistinguishable from the feature being unwired. That
+// is why it survived -- and why the tuning sliders could not find it either, since
+// rs_hw_main_scale / rs_hw_off_scale bottom out at 0.05 (MENUDEF.txt:69, :78)
+// while the correction needed was 1/19.6 = 0.051. Just out of reach.
 //
 // The main hand keeps the negative X. These are ONE mesh mirrored, and this path
 // watches for a negative scale product to flip face culling to match; dropping
@@ -103,11 +143,39 @@ Model RS_HandWorldMain
 	Path "models/hands"
 	Model 0 "hand_left.iqm"
 	PlacementCVars rs_hw_main
-	Scale -0.196035 0.196035 0.196035
-	Offset 0.0 0.0 0.0
+	// SKIN IS LOAD-BEARING, AND ITS ABSENCE IS SILENT.
+	// IQMModel::RenderFrame (models_iqm.cpp:521-537) resolves a mesh skin in three
+	// steps -- MODELDEF Skin, then SurfaceSkin, then the material name baked into
+	// the IQM -- and if all three miss it hits "continue" and SKIPS THE MESH. Not a
+	// white model, not a warning: no draw at all, nothing in the log.
+	// hand_left.iqm names its material "aiStandardSurface1", a Maya default that
+	// exists nowhere in this pk3, so these two blocks drew nothing from the day they
+	// were written. Both psprite blocks above always carried a Skin, which is why
+	// only the world hands were affected.
+	Skin 0 "hand_basecolor.png"
+
+	// PLACEMENT, FOUND IN A HEADSET 2026-08-30 AND FOLDED IN HERE.
+	//
+	// These are not guesses: they are the rs_hw_*_ofs_* / _pitch / _roll values
+	// that were dialled in on the sliders until the mesh sat correctly on the
+	// controller, transferred verbatim. That transfer is exact rather than
+	// approximate -- ObjectToWorldMatrix sums the slider into the SAME translate
+	// and rotate calls as these fields (models.cpp:855-861), which is the whole
+	// reason the placement cvars were built to fold in rather than apply after.
+	//
+	// So the sliders go back to zero and nothing moves. Anyone tuning from here
+	// starts from neutral instead of from someone else's correction.
+	//
+	// Both hands take the SAME numbers. They are one mesh mirrored on X, and a
+	// mirror does not change which way is forward or up -- only the sign of the
+	// scale, which stays on the Scale line where it belongs.
+	//
+	// Scale stayed at slider 1.0, so the derived 0.01 was right and is unchanged.
+	Scale -0.01 0.01 0.01
+	Offset 0.0 0.1 -0.05
 	AngleOffset 0.0
-	PitchOffset 0.0
-	RollOffset 0.0
+	PitchOffset 90.0
+	RollOffset -90.0
 	NOAUTOREVERSE
 	FollowMainHand
 	BaseFrame
@@ -118,11 +186,39 @@ Model RS_HandWorldOff
 	Path "models/hands"
 	Model 0 "hand_left.iqm"
 	PlacementCVars rs_hw_off
-	Scale 0.196035 0.196035 0.196035
-	Offset 0.0 0.0 0.0
+	// SKIN IS LOAD-BEARING, AND ITS ABSENCE IS SILENT.
+	// IQMModel::RenderFrame (models_iqm.cpp:521-537) resolves a mesh skin in three
+	// steps -- MODELDEF Skin, then SurfaceSkin, then the material name baked into
+	// the IQM -- and if all three miss it hits "continue" and SKIPS THE MESH. Not a
+	// white model, not a warning: no draw at all, nothing in the log.
+	// hand_left.iqm names its material "aiStandardSurface1", a Maya default that
+	// exists nowhere in this pk3, so these two blocks drew nothing from the day they
+	// were written. Both psprite blocks above always carried a Skin, which is why
+	// only the world hands were affected.
+	Skin 0 "hand_basecolor.png"
+
+	// PLACEMENT, FOUND IN A HEADSET 2026-08-30 AND FOLDED IN HERE.
+	//
+	// These are not guesses: they are the rs_hw_*_ofs_* / _pitch / _roll values
+	// that were dialled in on the sliders until the mesh sat correctly on the
+	// controller, transferred verbatim. That transfer is exact rather than
+	// approximate -- ObjectToWorldMatrix sums the slider into the SAME translate
+	// and rotate calls as these fields (models.cpp:855-861), which is the whole
+	// reason the placement cvars were built to fold in rather than apply after.
+	//
+	// So the sliders go back to zero and nothing moves. Anyone tuning from here
+	// starts from neutral instead of from someone else's correction.
+	//
+	// Both hands take the SAME numbers. They are one mesh mirrored on X, and a
+	// mirror does not change which way is forward or up -- only the sign of the
+	// scale, which stays on the Scale line where it belongs.
+	//
+	// Scale stayed at slider 1.0, so the derived 0.01 was right and is unchanged.
+	Scale 0.01 0.01 0.01
+	Offset 0.0 0.1 -0.05
 	AngleOffset 0.0
-	PitchOffset 0.0
-	RollOffset 0.0
+	PitchOffset 90.0
+	RollOffset -90.0
 	NOAUTOREVERSE
 	FollowOffHand
 	BaseFrame
@@ -258,43 +354,6 @@ Model RS_HolsterMarker
 }
 
 
-// ============================================================
-// from RS_HardPoints  (MODELDEF)
-// ============================================================
-Model RS_HardPointMarker
-{
-	Path "models"
-	Model 0 "rs_hp_bracket.obj"
-	Skin 0 "rs_hp_wire_idle.png"
-	Model 1 "rs_hp_bracket.obj"
-	Skin 1 "rs_hp_wire_hot.png"
-	// Unit-radius mesh, same convention rs_hp_wiresphere.obj used -- this Scale
-	// is what makes the reticle's true size match hsRadius exactly, the same
-	// "what you see is the actual volume" property the sphere had.
-	Scale 3.0 3.0 3.0
-
-	// FLAGS MUST PRECEDE THE FrameIndex LINES. Each FrameIndex immediately
-	// pushes a COPY of the in-progress model frame into the render table
-	// (r_data/models.cpp: SpriteModelFrames.Push(smf), inside the FrameIndex
-	// branch), capturing whatever flags are set AT THAT MOMENT. Flags written
-	// after the last FrameIndex mutate a template nothing reads again -- they
-	// parse without error and apply to nothing.
-	USEACTORPITCH
-	USEACTORROLL
-
-	// Idle spin, entirely engine-driven -- no per-tic script needed. The
-	// mesh is flat in its own local XY plane (every vertex z=0), so spinning
-	// around local Z keeps the whole reticle in-plane, like a rotating dial,
-	// rather than tumbling it out of the plane the player is meant to read it
-	// in. Speed 0.2 is a full turn roughly every 1000 tics (~28s at 35
-	// tics/sec) -- present, but not distracting.
-	Rotating
-	Rotation-Speed 0.2
-	Rotation-Vector 0 0 1
-
-	FrameIndex RSHP A 0 0
-	FrameIndex RSHP B 1 0
-}
 
 
 
@@ -419,5 +478,3 @@ Model RR_AmmoBelt
 	AngleOffset 0.0
 	BaseFrame
 }
-
-

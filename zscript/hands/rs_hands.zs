@@ -296,6 +296,22 @@ class RS_HandsAlwaysOn : EventHandler
 	//
 	// Returns -1 for "nothing claimed", which falls through to the button
 	// poses below.
+	// Local copies rather than a reach into RS_Reach: this class is registered
+	// first in MAPINFO and a cross-class static call at load order zero is a way
+	// to fail the whole package for no gain. Two lines each.
+	static double RS_Hands_Num(String n, PlayerInfo p, double d)
+	{
+		let c = CVar.GetCVar(n, p);
+		return c ? c.GetFloat() : d;
+	}
+
+	static double RS_Hands_NormDeg(double a)
+	{
+		while (a >  180.0) a -= 360.0;
+		while (a < -180.0) a += 360.0;
+		return a;
+	}
+
 	private int PoseForSubject(int subj, bool holding)
 	{
 		// A hand with its own weapon in it is not supporting anything, whatever

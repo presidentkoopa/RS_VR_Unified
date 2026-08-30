@@ -2526,7 +2526,41 @@ class wr_Rig : EventHandler
 
 		double ss = sheetScale();
 		double sw = panelW * SHEET_W_CARDS * ss;
-		double sh = panelH * SHEET_H_CARDS * ss;
+
+		// THE PLATE IS AS TALL AS ITS CONTENT, not as tall as the worst case.
+		//
+		// SHEET_H_CARDS is 8.6 because a fully-loaded DOOM Infinite weapon can
+		// emit close to thirty rows -- but the plate was that size ALWAYS, so a
+		// six-row pistol got a thirty-row sheet. That is the panel that swallows
+		// the ring: at defaults it renders 30.96 units tall, hung on the hand
+		// with no forward standoff, and the cards orbit inside it.
+		//
+		// shFull stays the authored size and is what every ROW metric is measured
+		// against, so a row keeps exactly the absolute height it has today -- this
+		// is a shorter plate holding the same-size rows, never the same plate with
+		// the text squashed. sh is what actually gets drawn.
+		//
+		// The fractions are the authored layout read back: rows begin at
+		// SHEET_ROWS_TOP from the top and march down at ROW_FRAC * ROW_PITCH
+		// each. Thirty rows comes to 0.21 + 30*0.0204*1.3 = 1.006 -- the whole
+		// plate, which is what confirms these constants describe the real layout.
+		double shFull = panelH * SHEET_H_CARDS * ss;
+
+		int rowsShown = mSheetUsed;
+		if (rowsShown > mSheetRows.Size()) rowsShown = mSheetRows.Size();
+		int barsShown = mSheetBars.Size();
+
+		double usedFrac = SHEET_ROWS_TOP
+			+ (rowsShown + barsShown) * SHEET_ROW_FRAC * SHEET_ROW_PITCH
+			+ 0.04;   // a row's worth of daylight under the last line
+
+		// Never taller than authored, and never so short the title has nowhere to
+		// sit -- SHEET_ROWS_TOP is where the first row begins, so anything below
+		// that would draw the title off its own plate.
+		if (usedFrac > 1.0) usedFrac = 1.0;
+		if (usedFrac < SHEET_ROWS_TOP + 0.08) usedFrac = SHEET_ROWS_TOP + 0.08;
+
+		double sh = shFull * usedFrac;
 
 		// DEAD CENTRE, where the centre cell used to be. Zero degrees off the
 		// view axis no matter how large the ring grows, and out of reach of
@@ -2565,11 +2599,11 @@ class wr_Rig : EventHandler
 		double top = sh * 0.5;
 
 		level.MoveBillboard(mSheetAccent, centre + lift + (0, 0, top - sh * 0.03));
-		level.ResizeBillboard(mSheetAccent, sw * 0.94, sh * 0.025);
+		level.ResizeBillboard(mSheetAccent, sw * 0.94, shFull * 0.025);
 		level.OrientBillboard(mSheetAccent, yaw, tilt, LevelLocals.BBF_FIXED);
 
-		double titleH = sh * SHEET_TITLE_FRAC;
-		level.MoveBillboard(mSheetTitle, centre + lift + (0, 0, top - sh * 0.10));
+		double titleH = shFull * SHEET_TITLE_FRAC;
+		level.MoveBillboard(mSheetTitle, centre + lift + (0, 0, top - shFull * 0.10));
 		level.ResizeBillboard(mSheetTitle, sw * 0.9, titleH);
 		level.OrientBillboard(mSheetTitle, yaw, tilt, LevelLocals.BBF_FIXED);
 
@@ -2577,8 +2611,11 @@ class wr_Rig : EventHandler
 		// division of the remaining space: the row height then does not change
 		// when a row is added, which is what keeps the sheet readable as the
 		// real thing grows past seven rows.
-		double rowH = sh * SHEET_ROW_FRAC;
-		double y    = top - sh * SHEET_ROWS_TOP;
+		// Measured against shFull, NOT the shrunk plate -- otherwise shortening
+		// the sheet would shrink the text with it, which is the one thing the
+		// growth comments on SHEET_H_CARDS were careful never to do.
+		double rowH = shFull * SHEET_ROW_FRAC;
+		double y    = top - shFull * SHEET_ROWS_TOP;
 
 		for (int i = 0; i < mSheetRows.Size(); ++i)
 		{
@@ -2592,7 +2629,7 @@ class wr_Rig : EventHandler
 		for (int i = 0; i < mSheetBars.Size(); ++i)
 		{
 			level.MoveBillboard(mSheetBars[i], centre + lift + (0, 0, y));
-			level.ResizeBillboard(mSheetBars[i], sw * 0.86, sh * 0.028);
+			level.ResizeBillboard(mSheetBars[i], sw * 0.86, shFull * 0.028);
 			level.OrientBillboard(mSheetBars[i], yaw, tilt, LevelLocals.BBF_FIXED);
 			y -= rowH * SHEET_ROW_PITCH;
 		}
@@ -5767,6 +5804,33 @@ class wr_Rig : EventHandler
 		if (cv("wr_sheet", 1.0) > 0.0)
 		{
 			double sheetR = panelW * (SHEET_W_CARDS * sheetScale() * 0.5 + 0.5 + SHEET_GAP_CARDS);
+
+			// HEIGHT AS WELL AS WIDTH, and only width was ever considered.
+			//
+			// The ring is a circle of cards around a plate standing in the middle
+			// of it, so cards sit ABOVE and BELOW the sheet as well as beside it.
+			// Flooring the radius on half-width alone clears the three and nine
+			// oclock cards and does nothing for twelve and six -- which is exactly
+			// the sheet reaching up into the cards and swallowing them.
+			//
+			// Same content-driven height layoutSheet now draws, computed the same
+			// way from the same row count, so the two cannot drift: shrink the
+			// sheet and the ring closes in with it, grow it and the ring opens out.
+			int sRows = mSheetUsed;
+			if (sRows > mSheetRows.Size()) sRows = mSheetRows.Size();
+
+			double sFrac = SHEET_ROWS_TOP
+				+ (sRows + mSheetBars.Size()) * SHEET_ROW_FRAC * SHEET_ROW_PITCH
+				+ 0.04;
+			if (sFrac > 1.0) sFrac = 1.0;
+			if (sFrac < SHEET_ROWS_TOP + 0.08) sFrac = SHEET_ROWS_TOP + 0.08;
+
+			// CARD_STRETCH, because a card is drawn taller than it is authored and
+			// the clearance has to be measured against what is actually on screen.
+			double sheetHalfH = panelH * SHEET_H_CARDS * sheetScale() * sFrac * 0.5 * CARD_STRETCH;
+			double sheetRV = sheetHalfH + panelH * (0.5 * CARD_STRETCH + SHEET_GAP_CARDS);
+			if (sheetRV > sheetR) sheetR = sheetRV;
+
 			if (sheetR > ringR) ringR = sheetR;
 		}
 

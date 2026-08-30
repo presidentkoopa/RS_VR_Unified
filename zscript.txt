@@ -82,9 +82,6 @@ version "5.0.0"
 #include "zscript/holsters/RS_HolsterProp.zs"
 #include "zscript/holsters/RS_Holsters.zs"
 
-// -- hardpoints: arm anchors -------------------------------------------------
-#include "zscript/hardpoints/RS_HardPointProp.zs"
-#include "zscript/hardpoints/RS_HardPoints.zs"
 
 // -- reload: needs hands' basis and holsters' pouch --------------------------
 #include "zscript/reload/rr_point.zs"

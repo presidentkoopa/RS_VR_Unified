@@ -477,6 +477,31 @@ class RS_GrabViz : EventHandler
 
         for (int h = 0; h < 2; h++)
         {
+            // PALM DOWN, OR NO LASER.
+            //
+            // A hand held the way you hold a gun is not reaching for anything
+            // across the room -- it is aiming a weapon, or just hanging at your
+            // side. Turning the wrist over so the palm faces the floor, the way
+            // you take hold of a handlebar, is a deliberate act and nothing else
+            // asks for that shape, so it is safe to hang the reach on.
+            //
+            // Compared as a distance from the target using the ABSOLUTE roll:
+            // a right wrist turning palm-down rolls one way and a left wrist the
+            // other, so one number covers both hands with no per-hand sign.
+            // A gun grip sits near zero, so the two are ~90 degrees apart and
+            // cannot be confused.
+            if (RS_Reach.Flag("rs_dgrab_palm", p, true))
+            {
+                double rl = abs(RS_Basis.NormDeg((h == 0) ? pmo.MainHandRoll : pmo.OffhandRoll));
+                double tgt = RS_Reach.Num("rs_dgrab_palm_roll", p, 90.0);
+                double tol = RS_Reach.Num("rs_dgrab_palm_tol",  p, 30.0);
+                if (abs(rl - tgt) > tol)
+                {
+                    Level.SetBeam(h, (0,0,0), (0,0,0), 0, 0, 0x000000, 0);
+                    continue;
+                }
+            }
+
             // A HAND FULL OF SOMETHING IS NOT AIMING. Nothing else silences it.
             if (held && held.HandIsFull(h))
             {

@@ -22,6 +22,37 @@ user float rs_hand_scale  = 1.0;
 // renderer did with it.
 user bool rs_hands_debug = false;
 
+// ---- CONTROLLER ORIENTATION CHOOSES THE HAND POSE ----------------------
+//
+// Where the hand IS, not what it is doing. Everything else in the pose logic
+// asks which weapon is held, which button is down, what the arbiter claimed --
+// none of it asked which way the wrist is turned, so rolling your hand over
+// changed nothing about its shape.
+//
+// Roll is compared as a distance from a target using the ABSOLUTE roll, so one
+// number covers both wrists: a right hand turning palm-out rolls one way and a
+// left hand the other.
+
+// RAW CONTROLLER ORIENTATION TO THE LOG, every tic, both hands. ON while the
+// palm-out thresholds are being measured rather than guessed. Loud by design --
+// a held position has to show up as a long run of near-identical numbers, which
+// needs every tic, not a sample.
+
+// How far off a target still counts. Generous on purpose -- these are gross
+// wrist positions, not precision aiming.
+
+// PALM OUT, a quarter turn. Shows the reach pose, and it is the same number the
+// wrist mounts arm on, so what you see and what is armed cannot disagree.
+
+// alone is not safe: an idle hand rests within a tolerance of the roll target,
+// and pitch is what has no overlap.
+
+// PALM UP, rolled all the way over. Negative disables the zone.
+
+// POINTING DOWN, in degrees below level. Negative disables it. Off by default
+// because a hand hanging at your side already sits around 40 degrees down, so a
+// useful value here is steep.
+
 // Overrides pose selection so a frame can be inspected without pressing
 // anything -- the point being to separate "the pose never renders" from "the
 // input never arrives", which look identical from inside a headset.
@@ -315,7 +346,23 @@ user bool rs_hand_debug = false;
 // cycle, the ready=none state, and whether held rotation is landing.
 //
 // Turn off with the rest once hands are closed out.
-user bool rs_hand_trace = true;
+// OFF, 2026-08-30, with hands closed out. It was on for the voxel-axis and
+// pickup diagnosis, and while it stays on it is player-visible text during
+// ordinary play -- which is audit findings #1 and #8, the very thing this file
+// was corrected for. Both menu rows remain, so turning it back on for a
+// specific hunt costs one toggle.
+user bool rs_hand_trace = false;
+
+// DISTANCE GRAB LIVES ON THE BELOW-WRIST MOUNT, one per arm (0 main, 3 off).
+//
+// Off means those two mounts are ordinary weapon holsters again and distance
+// grab goes back to being available whenever a squeeze finds nothing in the
+// palm -- which is how it behaved before 2026-08-30, and which grabs things the
+// player did not mean to.
+//
+// On, it takes an armed arm to reach, and arming is an open palm. A closed hand
+// cannot drag something across the room by accident. The two SIDE mounts are
+// untouched either way and still hold weapons to swap in and out.
 
 // ---- WHAT IS GRABBABLE --------------------------------------------------
 //
@@ -362,6 +409,19 @@ user bool rs_grab_nowalkover = false;
 // Only ever consulted when your palm is empty -- something you are already
 // touching is unambiguously the thing you meant.
 user bool rs_dgrab = true;
+// THE LASER ONLY SHOWS WITH THE PALM DOWN.
+//
+// A hand held the way you hold a gun is not reaching across the room -- it is
+// aiming, or hanging at your side. Turning the wrist over so the palm faces the
+// floor, the way you take a handlebar, is deliberate and nothing else wants
+// that shape, so the reach can hang off it without ever firing by accident.
+//
+// Measured as a distance from the target using the ABSOLUTE roll, so one number
+// covers both wrists. A gun grip sits near zero, ninety degrees away.
+user bool  rs_dgrab_palm = true;
+user float rs_dgrab_palm_roll = 90.0;
+user float rs_dgrab_palm_tol = 30.0;
+
 
 // REACH AND SPREAD ARE SEPARATE NUMBERS on purpose. How FAR you can pull from
 // and how PRECISELY you must point are different complaints with different
@@ -369,7 +429,11 @@ user bool rs_dgrab = true;
 // order to get the other right. 34 units is a metre, so 512 is about 15m.
 user float rs_dgrab_reach = 512.0;
 // HALF-angle, degrees. 12 is a cone about the width of a doorway at 10 metres.
-user float rs_dgrab_spread = 12.0;
+// WIDENED 12 -> 25, 2026-08-30. Twelve degrees is forgiving at arm's length
+// and a needle at range, and a log run ended with four squeezes and four
+// "cone found nothing" in a row. Pointing a tracked controller at a clip on a
+// floor ten metres away does not have twelve degrees of precision in it.
+user float rs_dgrab_spread = 25.0;
 
 // HOW FAST IT TRAVELS, metres per second -- not how long it takes. Flight time
 // is derived from the distance, so a thing across the room and a thing at your
@@ -668,7 +732,6 @@ user bool rs_holster_markers = true;
 // gets before the same multiplier.
 user float rs_holster_prop_scale = 1.0;
 
-// Vestigial: the forearm/wrist rig this sized moved out to RS_HardPoints,
 // which declares its own. Kept declared because holsterPropScaleArm() is
 // still called from a branch that is now unreachable (see isHandAnchored
 // in RS_Holsters.zs) -- removing the cvar would leave that call reading a
@@ -800,7 +863,6 @@ user bool rs_holster_pouch_enabled = true;
 user bool rs_holster_pouch_glow = true;
 
 // Developer instrumentation, OFF by default. Added 2026-08-26 alongside the
-// same switch in RS_HardPoints (rs_hardpoint_verbose) -- one gate per repo,
 // same meaning, so a tuning session turns both on together.
 //
 // Until this existed, a PERMANENT INSTRUMENTATION LAYER shipped switched on
@@ -816,10 +878,8 @@ user bool rs_holster_pouch_glow = true;
 // this file's own diagnostic for one such question -- its pose printf
 // documented that OffhandPitch is stored negated, and was the lead on
 // whether the hand-anchored basis in RS_Holsters.zs shares that bug (the
-// same bug class RS_HardPoints.zs fixed on 2026-08-28: AttackPitch/
 // OffhandPitch read raw instead of negated). RS_HolsterFlashlight was
 // removed 2026-08-28 (its purpose -- testing arm/wrist mounts -- moved to
-// RS_HardPoints, and the mounts themselves are disabled pending player IK),
 // so that probe is gone too. The question it was investigating was never
 // answered -- worth checking RS_Holsters.zs's own hand-anchored basis
 // against the same negation bug directly, next time this file's pitch math
@@ -836,26 +896,18 @@ user bool rs_holster_verbose = false;
 
 
 // ============================================================
-// from RS_HardPoints  (CVARINFO.txt)
 // ============================================================
-// Show a model of the stored item at each OCCUPIED hardpoint anchor.
-user bool rs_hardpoint_props = true;
 
-// Show the wireframe marker at each hardpoint anchor -- the ring or bracket
 // that tells you where the mount is, and lights up when a hand is in range.
 //
 // SPLIT OUT 2026-08-26, matching RS_Holsters. This used to be part of
-// rs_hardpoint_props under a menu row labelled "Show hardpoint markers" that
 // did the opposite of its name: it hid the stored ITEMS and left the markers
 // visible and frozen where they last were, no longer tracking the arm.
-user bool rs_hardpoint_markers = true;
 
-// Hardpoint prop appearance. Live-tunable because the right values are found
 // by looking at them in the headset, not by reasoning about model units.
 // A weapon's MODELDEF Scale is tuned for the HUD projection, so reusing it on
 // a world actor renders it enormous -- hence the shrink.
 //
-// DECLARED 2026-08-26. RS_HardPointProp.holsterPropScale() has always READ
 // this name, and no CVARINFO in this pk3 had ever declared it -- so
 // CVar.GetCVar returned null every time and the function silently fell
 // through to its hardcoded 0.18 fallback forever. The slider did not exist,
@@ -864,48 +916,31 @@ user bool rs_hardpoint_markers = true;
 // the merge back with RS_Holsters), which is why nobody noticed: everything
 // on screen here comes from _scale_arm below. Declaring it costs nothing and
 // stops the two files disagreeing about what exists.
-user float rs_hardpoint_prop_scale = 0.18;
 
 // Separate, smaller default for the forearm/wrist mounts, which in this fork
 // is every mount there is: a utility item on a wrist should read as compact
 // gear, not as a full holstered sidearm.
-user float rs_hardpoint_prop_scale_arm = 0.08;
 
-// Fraction of a hardpoint's own claim radius that a stored item's MEASURED
 // bounding radius (level.GetModelBoundsHint) gets scaled to fill, so a BFG
 // and a pistol read as "the same size in the ring" instead of both taking
 // the same flat multiplier regardless of how big either model actually is.
 // Only takes effect when the native finds real geometry to measure;
-// rs_hardpoint_prop_scale_arm above remains the exact fallback for anything
 // it can't measure. Under 1.0 on purpose -- an item that exactly touches the
 // marker's edge reads as clipping out of it, not as filling it.
-user float rs_hardpoint_prop_fill = 0.55;
 
-// Trim on top of each hardpoint's own pitch/roll (RS_HardPoints.zs,
 // GetHolster). Every weapon MODELDEF block that carries USEACTORPITCH/
 // USEACTORROLL honours these; without those flags the renderer ignores both
 // axes entirely, which is a property of that weapon's MODELDEF, not of this.
-user float rs_hardpoint_prop_pitch = 0.0;
-user float rs_hardpoint_prop_roll  = 0.0;
 
 // Centring trim, on top of the AUTOMATIC correction (level.GetModelOffsetHint,
-// read per-item in RS_HardPointProp.ShowWeapon). Residual only, not the whole
 // mechanism -- an item's baked MODELDEF Offset is measured and cancelled
 // automatically; these three exist for whatever that does not fully resolve.
-user float rs_hardpoint_prop_up   = 0.0;
-user float rs_hardpoint_prop_fwd  = 0.0;
-user float rs_hardpoint_prop_side = 0.0;
 
 // Yaw trim, plus the automatic mirror-flip and AngleOffset cancellation
 // (level.GetModelOrientationHint) applied ahead of it.
-user float rs_hardpoint_prop_yaw = 0.0;
 
-// The store/draw confirm sound (RS_HardPoints.zs doSwap).
-user bool rs_hardpoint_sound = true;
 
-// Which sound plays: 0 = the mechanical clunk (rs_hardpoint_fx_store, a
 // $random over three takes), 1 = the ready-to-fire cadence beep
-// (rs_hardpoint_fx_ready).
 //
 // REWIRED 2026-08-26. This used to name rs_fx_holster / rs_allclear_ready
 // and the comment here claimed that was safe because "whichever loaded
@@ -914,44 +949,30 @@ user bool rs_hardpoint_sound = true;
 // resolves an undefined sound to silence rather than to an error, so this
 // entire setting selected between two silences. The audio now ships in this
 // pk3 under its own names (see SNDINFO.txt), so both options actually sound.
-user int rs_hardpoint_sound_style = 0;
 
 // Store/draw uses GZDoom's own CF_INSTANTWEAPSWITCH cheat flag (constants.zs),
 // set transiently around the MoveWeaponToHand call and restored right after
-// (RS_HardPoints.zs, moveWeaponInstant) -- so ordinary weapon switching (number
-// keys, the wheel) is untouched, only a hardpoint-triggered swap is instant.
 // Also what makes two-hand near-simultaneous store/draw work: with this on,
 // the whole lower-then-raise cycle resolves the same tic instead of over
 // ~16 tics, so there is no shared-PendingWeapon window for a second hand's
 // swap to collide with.
-user bool rs_hardpoint_instant_switch = true;
 
 // Marker look. Shape reads at SetHot's next re-check (immediate, since
-// SetHot's guard watches this cvar too -- RS_HardPointProp.zs). Color is a
 // class choice, not a field, so a change respawns the marker the next tic
-// (RS_HardPoints.zs updateProps) rather than tinting an existing one live.
 // 0 = bracket reticle, 1 = the original wireframe sphere, 2 = wireframe
-// diamond (HardPoints-only shape -- lets a hand tell arm-mounted gear apart
 // from torso holster gear on sight).
-user int rs_hardpoint_marker_shape = 0;
 // Cold (idle) marker color. 0 = default (untinted), 1 = blue, 2 = red,
 // 3 = gold, 4 = purple, 5 = orange, 6 = green, 7 = cyan, 8 = pink. Applies
 // to whichever shape is selected above -- color is a Translation on the
 // class, independent of which model A_ChangeModel binds.
-user int rs_hardpoint_marker_color = 0;
 // Hot (hand-in-range) marker color, same palette, independent cvar --
 // two states that look identical defeat the point of a color cue.
-user int rs_hardpoint_marker_color_hot = 0;
 // Flat marker size multiplier, on top of the proximity-tighten Tick()
-// already does (RS_HardPointProp.zs). 1.0 is the authored unit-radius mesh
 // at MODELDEF's Scale 3.0 -- unchanged from before this cvar existed.
-user float rs_hardpoint_marker_scale = 1.0;
 
 // WHICH MOUNTS ARE LIVE, one pair of settings per arm
-// (RS_HardPoints.zs, wristCount / holsterActive).
 //
 // RE-SHAPED 2026-08-26, replacing a single four-valued cvar,
-// rs_hardpoint_arm_active_count (0 off / 1 forearm only / 2 wrist only /
 // 3 both). That mode existed because the six mounts were all on ONE arm --
 // three forearm at indices 0-2 and three wrist at 3-5 -- so "wrist only"
 // meant the TOP half of the table and a plain "first N active" count could
@@ -964,7 +985,6 @@ user float rs_hardpoint_marker_scale = 1.0;
 //
 // The old cvar is deliberately NOT declared any more. Leaving it declared
 // would leave a live setting in the console that nothing reads, which is the
-// exact failure rs_hardpoint_prop_scale was fixed for in the other direction
 // (read by code, declared nowhere). An ini line setting it is harmless --
 // GZDoom keeps unknown archived cvars and nothing consults it.
 //
@@ -977,26 +997,36 @@ user float rs_hardpoint_marker_scale = 1.0;
 // surface -- a default that showed nothing would mean loading it and seeing
 // nothing at all -- and 3+3 is exactly the six anchors the single-arm layout
 // already shipped, so the default is a re-layout rather than a growth.
-user bool rs_hardpoint_wrist_main = true;
-user int  rs_hardpoint_wrist_main_count = 3;
-user bool rs_hardpoint_wrist_off = true;
-user int  rs_hardpoint_wrist_off_count = 3;
+// HOW BIG THE MOUNT VOLUMES ARE, as a multiple of their authored radius.
+//
+// The authored radius is 2.0 on every wrist mount -- about six centimetres --
+// and until 2026-08-30 there was no way to change it at all. That is a twelve
+// centimetre sphere you must land a tracked controller inside, with the three
+// mounts only 2.5 to 3 units apart, on a wrist that moves as you reach for it.
+// Hip holsters are 3.0 and sit nine units apart, which is why those have always
+// been easy to hit and these were not.
+// A LASER DOWN EACH ARMED MOUNT'S FIRING LINE, for calibration.
+//
+// It draws from the mount's own anchor along the arm's forward axis -- the
+// exact origin and direction the shot uses -- so if the beam and the bullet
+// disagree, that difference IS the bug. Only while an arm is armed.
+// Fire from the MOUNT along the arm, instead of from the hand along its own
+// aim. Off, because the handlebar grip already leaves the hand pointing
+// forward -- computing a second firing line only creates a way for the drawn
+// one and the shot to disagree. On for a mount oriented across the arm.
+
 
 // GESTURE-CAST master switch. DEFAULTS OFF, and that default is the entire
 // reason this cvar exists.
 //
-// Arming is a pure roll test against rs_hardpoint_gesture_roll_target below,
 // which defaults to 0.0 with a 30-degree tolerance -- and a hand hanging at
 // rest reads an OffhandRoll near zero. So the feature was ON AT REST for
-// everyone who loaded the pk3: HardpointClaimOff pinned true from the first
-// tic (updateClaims ORs the armed flag in), rs_hands held in POSE_REACH
 // forever, and the three gesture netevents live -- while KEYCONF's own
 // comment still calls their binds PLACEHOLDERS, because the engine-side
 // button gating they need does not exist yet.
 //
 // Two more gates ride alongside this one, per arm, in updateGestureArm /
 // updateGestureArmMain, and cannot be switched off separately: THAT ARM'S
-// BANK has to be live (rs_hardpoint_wrist_main / _off above -- an arm's
 // gesture fires that arm's three mounts and nothing else), and edit mode has
 // to be OFF, so sphere placement and live fire can never happen at the same
 // time.
@@ -1005,9 +1035,12 @@ user int  rs_hardpoint_wrist_off_count = 3;
 // either controller and there is no reason to want it on one hand only;
 // per-arm master switches would be two more rows in the menu for a
 // distinction nobody asked for.
-user bool rs_hardpoint_gesture_enable = false;
+// ON, 2026-08-30. It shipped off because arming was a roll test against a
+// target of 0 -- which a hand at rest passes -- so switching it on pinned the
+// grip claim and locked that hand into the reach pose permanently. Arming is
+// now a quarter turn palm-out, which a resting hand never reaches, so there is
+// nothing left to protect the player from.
 
-// GESTURE-CAST arming (RS_HardPoints.zs, updateGestureArm /
 // updateGestureArmMain). Roll-only -- rolling a wrist away from a normal
 // weapon grip toward palm-out/open-palm arms THAT ARM's trio for HP1/HP2/HP3
 // fire. Both are live sliders because the right raw roll value for "palm
@@ -1021,8 +1054,21 @@ user bool rs_hardpoint_gesture_enable = false;
 // out" on one and "palm in" on the other. If the dump shows the two arms
 // reading opposite signs for the same physical pose, this becomes two
 // sliders -- do not guess it either way from here.
-user float rs_hardpoint_gesture_roll_target = 0.0;
-user float rs_hardpoint_gesture_roll_tolerance = 30.0;
+// 90, NOT 0. Zero is a hand hanging at your side, so the old default armed the
+// arm permanently and pinned the grip claim -- the file's own menu text says
+// "arming is a roll test that a hand at rest already passes". 90 is palm-out, a
+// quarter turn, tested as a distance from 90 of the ABSOLUTE roll so it works
+// on both wrists without needing a per-hand sign.
+// 120, MEASURED not guessed. A log of the owner's controllers held still in
+// each position, 2026-08-30: normal grip roll +3.5 pitch +6.6; palm out roll
+// +120 pitch -65. Guessed at 90 twice before anyone looked.
+
+// AND THE HAND MUST BE PITCHED AT LEAST THIS FAR, which is the half of the test
+// that makes it safe. The same log shows the idle OFF hand resting at roll -50
+// for its whole length -- four degrees outside a 35 tolerance around 90 -- so a
+// roll-only test would arm an idle hand on the first shrug. Pitch has no such
+// overlap: +6 at rest against -65 palm-out, a seventy degree gap with nothing
+// in it. -35 sits in the middle with thirty degrees of margin either side.
 
 // The throttled wrist-pitch dump referenced just above. OFF by default,
 // added 2026-08-26 -- it was previously unconditional, so it printed two
@@ -1043,16 +1089,13 @@ user float rs_hardpoint_gesture_roll_tolerance = 30.0;
 // than one ambiguous set of numbers.
 //
 // NAMED _wristdump, NOT _debug: KEYCONF:35 already binds an alias called
-// rs_hardpoint_debug, and a cvar sharing that name would collide in the
 // console namespace.
-user bool rs_hardpoint_wristdump = false;
 
 // Developer instrumentation, OFF by default. Added 2026-08-26 alongside the
 // same switch in RS_Holsters (rs_holster_verbose) -- one gate per repo, same
 // meaning, so a tuning session turns both on together.
 //
 // Covers the two things this mod printed on its own during ordinary play:
-//   - the "main/off hand ENTERED/left hardpoint range" edge lines, one pair
 //     per boundary crossing, on a rig of six overlapping anchors;
 //   - the automatic seven-line prop-orientation dump fired one tic after
 //     EVERY store ("record as I play"), which is a tuning session's want and
@@ -1060,13 +1103,9 @@ user bool rs_hardpoint_wristdump = false;
 //
 // The HAPTIC that accompanies a range entry is deliberately NOT gated -- that
 // is player feedback, not instrumentation. Neither is the manual dump
-// (netevent rs-hardpoint-debug / the Diagnostics menu row): asking for it is
 // the whole gesture.
 //
-// NAMED _verbose, NOT _debug, for the same reason rs_hardpoint_wristdump is:
-// KEYCONF binds an ALIAS called rs_hardpoint_debug, and a cvar sharing that
 // name would collide in the console namespace.
-user bool rs_hardpoint_verbose = false;
 
 
 // ============================================================

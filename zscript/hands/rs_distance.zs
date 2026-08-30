@@ -798,6 +798,7 @@ class RS_Pull : EventHandler
 			return;
 		}
 
+
 		ValidateLock(0, pmo, p);
 		ValidateLock(1, pmo, p);
 
