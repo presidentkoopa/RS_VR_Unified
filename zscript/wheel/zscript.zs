@@ -284,6 +284,23 @@ class wr_Rig : EventHandler
 	// readout itself already makes, not a fresh per-tic Weapon lookup.
 	// Read every tic by the gauge's own shimmer (layout()), never
 	// written there.
+	// THE UI-SIDE MIRROR of the two alternate layouts. InputProcess runs in ui
+	// scope, where neither a cvar read through the play-side cv() helper nor a
+	// call into a layout's Commit() is legal, so the play tick parks what it
+	// needs here: 0 ring, 1 honeycomb, 2 star chart, and whether that layout has
+	// a card lit right now. Reading play data from ui is fine; calling into the
+	// playsim and writing to it are what are not.
+	int  mAltLayout;
+	bool mAltHot;
+
+	// AN ALTERNATE LAYOUT IS UP. Deliberately not mOpen: mOpen means "the
+	// RING is built", and several hundred lines downstream act on that --
+	// card arrays, the sheet, the fan, the flip animation, none of which
+	// exist here. What the chart and the comb share with the ring is the
+	// SESSION, not the ring: the same hand, the same laser, the same claim
+	// on the sticks, the same bullet time. That is what this tracks.
+	bool mAltOpen;
+
 	Array<bool> mLowAmmo;
 
 	int mOpenTics;                // drives the grow-in
@@ -410,6 +427,10 @@ class wr_Rig : EventHandler
 
 	// The fan that opens out of a multi-weapon slot.
 	Array<int>   mSubIds;
+	// The fan's hit quads, one per sub-card. Separate from the plate for the
+	// reason spawnPanels states: a billboard draws taller than it is authored,
+	// so a quad that is both picture and target has dead bands you can see.
+	Array<int>   mSubHits;
 	Array<int>   mSubIcons;
 	Array<int>   mSubAmmos;
 	Array<int>   mSubLabels;
@@ -781,6 +802,26 @@ class wr_Rig : EventHandler
 	// under the hand. Any wider and opening the rig would deaden your trigger.
 	override bool InputProcess(InputEvent e)
 	{
+		// THE CHART TAKES THE PRESS FIRST when it is the layout in use, and for
+		// the same reason this function exists at all: by the time the playsim
+		// sees the button the shot has already happened, so the only place to
+		// stop it is here. Its own hover test is the narrow one -- nothing lit,
+		// nothing consumed, and the trigger is yours again.
+		// mAltLayout/mAltHot rather than cv() and Commit(), because THIS FUNCTION
+		// IS UI. It cannot read a cvar through the play-side cv() helper and it
+		// cannot run the pick itself; both are playsim work. So the play tick
+		// leaves the two facts here that the decision needs -- which layout is up,
+		// and whether it has something lit right now -- and the press crosses over
+		// as a network event, exactly like the ring's own grab further down.
+		if (e.Type == InputEvent.Type_KeyDown && mAltLayout != 0 && mAltHot
+			&& (wr_Keybind.isKeyFor(e.KeyScan, "+attack")
+			 || wr_Keybind.isKeyFor(e.KeyScan, "+oh_attack")
+			 || wr_Keybind.isKeyFor(e.KeyScan, "+use")))
+		{
+			EventHandler.SendNetworkEvent(mAltLayout == 2 ? "rs-chart-pick" : "rs-comb-pick");
+			return true;
+		}
+
 		if (!mOpen || mHovered == 0) return false;
 		if (e.Type != InputEvent.Type_KeyDown) return false;
 
@@ -882,8 +923,29 @@ class wr_Rig : EventHandler
 	// second) so it cannot be mistaken for a normal, considered close:
 	// outside that window, the same press closes instantly, exactly as
 	// it always has.
+	// The two alternate layouts have to reach back here when they commit, to
+	// hand the session in. Same shape as their own Get().
+	static wr_Rig Get()
+	{
+		return wr_Rig(EventHandler.Find("wr_Rig"));
+	}
+
 	private void toggle(int hand)
 	{
+		// THE ALTERNATE LAYOUTS CLOSE ON THE SAME KEY, and before this existed
+		// they did not close at all: the branch below tests mOpen, which only
+		// the ring ever sets, so a second press of the key that raised the
+		// chart fell through to openRig and built a second one on top.
+		if (mAltOpen)
+		{
+			int prev = mRigHand;
+			closeAlt();
+			// Pressed with the other hand: move it across rather than just
+			// closing, which is what the ring does two branches down.
+			if (prev != hand) openRig(hand);
+			return;
+		}
+
 		if (mOpen && mRigHand == hand)
 		{
 			int window = int(cv("wr_recenter_window", 10.0));
@@ -913,6 +975,57 @@ class wr_Rig : EventHandler
 		// A ring still folding away from the last open is finished off now, or
 		// its handles leak the moment the arrays below are cleared.
 		if (mClosingTics > 0) { destroyPanels(); mClosingTics = 0; }
+
+		// THE CHART IS A LAYOUT, NOT A SECOND SYSTEM.
+		//
+		// wr_layout 2 hands this open straight to the star chart and returns, so
+		// the same key that raises the ring raises the sky and the same key picks
+		// from it. Asking the player to bind a second set for what is really a
+		// different arrangement of the same arsenal would be an admission that it
+		// is a different feature, and it is not.
+		// THE SESSION IS THE SAME FOR ALL THREE, and the first version of this
+		// branch returned before any of it ran.
+		//
+		// Opening a layout is not just building its shapes. It is claiming the
+		// hand, turning on the pointing laser, taking the sticks away from snap
+		// turn and movement, and slowing the world -- and every one of those is
+		// set up below, past the early return. So the chart and the comb opened
+		// with no laser to point with, the sticks still walking the player
+		// around, and no way to close again, because closeRig() is reached
+		// through a flag this path never set.
+		//
+		// They are LAYOUTS. They get the session.
+		int lay = int(cv("wr_layout", 0.0));
+		if (lay != 0)
+		{
+			mRigHand  = hand;
+			mPokeHand = hand;
+
+			bool built = false;
+			if (lay == 2)
+			{
+				let ch = wr_Constellation.Get();
+				if (ch) { ch.Open(hand); built = ch.IsOpen(); }
+			}
+			else
+			{
+				let hc = wr_Honeycomb.Get();
+				if (hc) { hc.Open(hand); built = hc.IsOpen(); }
+			}
+
+			// An empty arsenal builds nothing. Claiming the sticks and the laser
+			// for something with no contents would leave the player unable to
+			// move, pointing at nothing, with no card to press to get out.
+			if (!built) return;
+
+			mAltOpen  = true;
+			mOpenTics = 0;
+			level.SuppressVRInput(true);
+			engineLaser(true);
+			bulletTime(true);
+			feedback(Sound("wristrig/open"), 0.22, 45);
+			return;
+		}
 
 		// Same hand wears the cards and catches them. Reaching across with your
 		// gun hand to arm your other one was backwards: it occupies the hand you
@@ -1040,10 +1153,43 @@ class wr_Rig : EventHandler
 		}
 	}
 
+	// THE ALTERNATE LAYOUTS' TEARDOWN, and it is deliberately its own function
+	// rather than a branch inside closeRig(). closeRig undoes the RING -- card
+	// arrays, groups, models, the sheet, the fold-away animation -- none of
+	// which was ever built here. What has to come back is the session: the
+	// sticks, the laser, the clock.
+	void closeAlt(bool quiet = false)
+	{
+		if (!mAltOpen) return;
+		mAltOpen = false;
+
+		let chc = wr_Constellation.Get();
+		if (chc) chc.Close();
+		let hcc = wr_Honeycomb.Get();
+		if (hcc) hcc.Close();
+
+		// UNCONDITIONALLY, and in this order. Every one of these is global
+		// state the player cannot recover on their own: a laser left forced on,
+		// sticks left suppressed and a world left slowed are all unrecoverable
+		// from inside the game.
+		engineLaser(false);
+		level.SuppressVRInput(false);
+		bulletTime(false);
+
+		if (!quiet) feedback(Sound("wristrig/close"), 0.18, 35);
+	}
+
 	// quiet is for the close that follows a commit, which has already made the
 	// louder noise of its own -- two sounds a frame apart read as a stutter.
 	private void closeRig(bool quiet = false)
 	{
+		// The chart, if that is what is up. Harmless when it is not: Close on
+		// an already-closed chart does nothing.
+		let chc = wr_Constellation.Get();
+		if (chc) chc.Close();
+		let hcc = wr_Honeycomb.Get();
+		if (hcc) hcc.Close();
+
 		if (!quiet) feedback(Sound("wristrig/close"), 0.18, 35);
 
 		// THE RING FOLDS AWAY RATHER THAN BLINKING OUT.
@@ -2610,8 +2756,8 @@ class wr_Rig : EventHandler
 		double shFull = panelH * SHEET_H_CARDS * ss;
 
 		int rowsShown = mSheetUsed;
-		if (rowsShown > mSheetRows.Size()) rowsShown = mSheetRows.Size();
-		int barsShown = mSheetBars.Size();
+		if (rowsShown > int(mSheetRows.Size())) rowsShown = int(mSheetRows.Size());
+		int barsShown = int(mSheetBars.Size());
 
 		double usedFrac = SHEET_ROWS_TOP
 			+ (rowsShown + barsShown) * SHEET_ROW_FRAC * SHEET_ROW_PITCH
@@ -3023,8 +3169,8 @@ class wr_Rig : EventHandler
 	// path (the PST_LIVE check) already closes hard for exactly this reason --
 	// "dying is not a moment for an animation" -- so this is the two remaining
 	// paths agreeing with it rather than a new rule.
-	override void WorldUnloaded(WorldEvent e) { mHardClose = true; closeRig(); mHardClose = false; level.SuppressVRInput(false); }
-	override void PlayerDied(PlayerEvent e)  { mHardClose = true; closeRig(); mHardClose = false; level.SuppressVRInput(false); }
+	override void WorldUnloaded(WorldEvent e) { closeAlt(true); mHardClose = true; closeRig(); mHardClose = false; level.SuppressVRInput(false); }
+	override void PlayerDied(PlayerEvent e)  { closeAlt(true); mHardClose = true; closeRig(); mHardClose = false; level.SuppressVRInput(false); }
 
 	// Open on level start while iterating, so testing a change is one launch
 	// instead of a launch and a keypress. Off for everyone else.
@@ -3515,10 +3661,34 @@ class wr_Rig : EventHandler
 			}
 			mSubShadows.Push(sshad);
 
-			int sid = level.AddBillboardPersistent(
+			// THE HIT QUAD IS NOT THE PICTURE -- the rule spawnPanels states and the
+			// ring obeys, which the fan never got.
+			//
+			// A billboard draws 1.2x taller than it is authored, so a quad that is
+			// both the plate and the target answers across only the middle 83% of
+			// what you can see: 8% dead at the top of every fan card and 8% at the
+			// bottom, with no horizontal margin at all where a ring card gets a
+			// twelfth of its width each side.
+			//
+			// Worse than merely missing, because InputProcess early-returns on
+			// mHovered == 0 WITHOUT consuming the press -- so aiming at a dead band
+			// and pulling the trigger fires the gun in your hand instead of taking
+			// the weapon. Audit finding #15 / #27.
+			//
+			// Created BEFORE the plate so it sits behind it in the billboard order,
+			// same as the ring's.
+			int shit = level.AddBillboardPersistent(
 				(0, 0, 0), 3.5, 2.5, 0, 0,
 				LevelLocals.BBF_FIXED, plateKind(), plateShape(),
 				srest, 0, 0, "");
+			level.SetBillboardAlpha(shit, 0.0);
+			level.SetBillboardGroup(shit, mFanGroup);
+			mSubHits.Push(shit);
+
+			int sid = level.AddBillboardPersistent(
+				(0, 0, 0), 3.5, 2.5, 0, 0,
+				LevelLocals.BBF_FIXED, plateKind(), plateShape(),
+				srest, LevelLocals.BBFL_NOHIT, 0, "");
 			level.SetBillboardGradient(sid, sdry ? GRAD_DRY : GRAD_IDLE);
 			level.SetBillboardGroup(sid, mFanGroup);
 			mSubIds.Push(sid);
@@ -3701,6 +3871,7 @@ class wr_Rig : EventHandler
 		for (int i = 0; i < mSubIds.Size(); ++i)
 		{
 			if (mSubIds[i]) level.RemoveBillboard(mSubIds[i]);
+			if (i < mSubHits.Size() && mSubHits[i]) level.RemoveBillboard(mSubHits[i]);
 		}
 		for (int i = 0; i < mSubIcons.Size(); ++i)
 		{
@@ -3736,6 +3907,7 @@ class wr_Rig : EventHandler
 		mFanGroup = 0;
 
 		mSubIds.Clear();
+		mSubHits.Clear();
 		mSubIcons.Clear();
 		mSubAmmos.Clear();
 		mSubLabels.Clear();
@@ -3935,9 +4107,11 @@ class wr_Rig : EventHandler
 
 	private int subIndexOf(int id) const
 	{
-		for (int i = 0; i < mSubIds.Size(); ++i)
+		// THE HIT QUAD IS WHAT THE POINTER FINDS, so that is what an id resolves
+		// against now. The plate is BBFL_NOHIT and can never be hovered.
+		for (int i = 0; i < mSubHits.Size(); ++i)
 		{
-			if (mSubIds[i] == id) return i;
+			if (mSubHits[i] == id) return i;
 		}
 		return -1;
 	}
@@ -4106,7 +4280,7 @@ class wr_Rig : EventHandler
 			// layout loop: lit/pulse/cardAlpha/roll), computed once here
 			// instead of never. Everything below threads these four through,
 			// same shape as the main loop.
-			bool slit = (mSubIds[i] == mHovered);
+			bool slit = (i < mSubHits.Size() && mSubHits[i] == mHovered);
 
 			double spulse = 1.0;
 			if (slit)
@@ -4152,6 +4326,19 @@ class wr_Rig : EventHandler
 				level.OrientBillboard(mSubShadows[i], faceYaw, tilt, LevelLocals.BBF_FIXED);
 				level.RollBillboard(mSubShadows[i], subRoll);
 				level.SetBillboardAlpha(mSubShadows[i], hSubShadow * subAlpha);
+			}
+
+			// The hit quad tracks the plate but is sized to what is DRAWN, plus the
+			// same forgiving pad a ring card gets. Not scaled by spulse: the pulse
+			// is the card breathing, and a target that breathes with it would drift
+			// in and out from under a steady pointer.
+			if (i < mSubHits.Size() && mSubHits[i] != 0)
+			{
+				level.MoveBillboard(mSubHits[i], pos);
+				level.ResizeBillboard(mSubHits[i], panelW * HIT_PAD,
+				                                   panelH * CARD_STRETCH * HIT_PAD);
+				level.OrientBillboard(mSubHits[i], faceYaw, tilt, LevelLocals.BBF_FIXED);
+				level.RollBillboard(mSubHits[i], subRoll);
 			}
 
 			level.MoveBillboard(mSubIds[i], pos);
@@ -4264,9 +4451,9 @@ class wr_Rig : EventHandler
 		if (mExpanded < 0) return false;
 		if (mExpanded < mIds.Size() && mIds[mExpanded] == id) return true;
 
-		for (int i = 0; i < mSubIds.Size(); ++i)
+		for (int i = 0; i < mSubHits.Size(); ++i)
 		{
-			if (mSubIds[i] == id) return true;
+			if (mSubHits[i] == id) return true;
 		}
 		return false;
 	}
@@ -5900,10 +6087,10 @@ class wr_Rig : EventHandler
 			// way from the same row count, so the two cannot drift: shrink the
 			// sheet and the ring closes in with it, grow it and the ring opens out.
 			int sRows = mSheetUsed;
-			if (sRows > mSheetRows.Size()) sRows = mSheetRows.Size();
+			if (sRows > int(mSheetRows.Size())) sRows = int(mSheetRows.Size());
 
 			double sFrac = SHEET_ROWS_TOP
-				+ (sRows + mSheetBars.Size()) * SHEET_ROW_FRAC * SHEET_ROW_PITCH
+				+ (sRows + int(mSheetBars.Size())) * SHEET_ROW_FRAC * SHEET_ROW_PITCH
 				+ 0.04;
 			if (sFrac > 1.0) sFrac = 1.0;
 			if (sFrac < SHEET_ROWS_TOP + 0.08) sFrac = SHEET_ROWS_TOP + 0.08;
@@ -7365,7 +7552,10 @@ class wr_Rig : EventHandler
 		            cv("wr_rise", 2.0), 0.0, panelW, panelH, 0.0);
 	}
 
-	private static Vector3 handPos(PlayerPawn pmo, int hand)
+	// NOT private: the star chart and the honeycomb point with the same ray
+	// the ring does. Duplicating this would be duplicating the definition of
+	// where a player's hand is, and the two copies would drift.
+	static Vector3 handPos(PlayerPawn pmo, int hand)
 	{
 		if (pmo.OverrideAttackPosDir)
 		{
@@ -7412,7 +7602,7 @@ class wr_Rig : EventHandler
 		return pmo.angle, -pmo.pitch;
 	}
 
-	private static Vector3 handDir(PlayerPawn pmo, int hand)
+	static Vector3 handDir(PlayerPawn pmo, int hand)
 	{
 		double y, p;
 
@@ -7451,6 +7641,38 @@ class wr_Rig : EventHandler
 
 	override void WorldTick()
 	{
+		// Refreshed before anything else can early-out, because the ui side reads
+		// it on every keypress whether or not the RING is open -- and whenever a
+		// layout other than the ring is up, the ring is not open by definition.
+		{
+			mAltLayout = int(cv("wr_layout", 0.0));
+			mAltHot    = false;
+
+			// AND THE LASER HAS TO BE TOLD WHERE TO STOP, every tic, exactly as
+			// the ring tells it. The engine's own trace cannot see a billboard,
+			// so with no range the beam goes straight through the star and lands
+			// on the wall behind it -- which reads as the laser ignoring the
+			// thing it is selecting. Republished rather than set once: a stale
+			// value would clamp the player's laser for the rest of the session.
+			double altReach = 0.0;
+			if (mAltLayout == 2)
+			{
+				let ch = wr_Constellation.Get();
+				if (ch) { mAltHot = ch.Hot(); altReach = ch.LaserReach(); }
+			}
+			else if (mAltLayout == 1)
+			{
+				let hc = wr_Honeycomb.Get();
+				if (hc) { mAltHot = hc.Hot(); altReach = hc.LaserReach(); }
+			}
+
+			if (mAltOpen)
+			{
+				++mOpenTics;
+				level.SetVRLaserRange(altReach);
+			}
+		}
+
 		if (mWantAutoOpen)
 		{
 			let p = players[consoleplayer];
@@ -8064,7 +8286,7 @@ class wr_Rig : EventHandler
 			// with one small digit floating in it, next to a card showing the same
 			// count at 0.54. Audit finding #29.
 			int digits = 0;
-			for (int i = 0; i < text.Length(); ++i)
+			for (int i = 0; i < int(text.Length()); ++i)
 			{
 				int c = text.ByteAt(i);
 				if (c >= 48 && c <= 57) ++digits;

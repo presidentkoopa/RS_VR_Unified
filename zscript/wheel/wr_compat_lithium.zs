@@ -597,7 +597,10 @@ class wr_CompatLithium
 		// confirmed. A prefix still catches a variant and still refuses every
 		// other Lithium weapon, which is the whole point -- an exact name that
 		// turned out wrong would trade a visible leak for a silent absence.
-		if (!ready(w) || Left(clsOf(w), 9) != "Lith_Fist") return false, 0;
+		// Mid(0,n), not Left(): this file has no Left helper -- that one is private
+		// to wr_compat_finaldoomer.
+		string fc = clsOf(w);
+		if (!ready(w) || fc.Length() < 9 || fc.Mid(0, 9) != "Lith_Fist") return false, 0;
 		int n = amountOf(w.Owner, "Lith_FistCharge");
 		if (n <= 0) return false, 0;
 		return true, n;

@@ -890,6 +890,11 @@ OptionMenu wr_Options
 	// card count, so every extra weapon tightens every gap; a comb grows
 	// outward at a spacing that never tightens -- nineteen cells by its second
 	// ring. Both keep a fixed place per slot, so either stays learnable.
+	StaticText "How the arsenal is arranged. The same key opens each,", "DarkGray"
+	StaticText "and the same key picks from it -- these are layouts,", "DarkGray"
+	StaticText "not separate features.", "DarkGray"
+	Option "Layout",                      "wr_layout",     "wr_LayoutKind"
+	StaticText " "
 	Option "Honeycomb instead of ring",   "wr_hex",        "OnOff"
 	Slider "  Rings arrive apart by (tics)", "wr_hex_stagger", 0, 12, 1, 0
 
@@ -1335,4 +1340,11 @@ OptionValue wr_ToggleHandPref
 	-1, "Whichever bind you press"
 	0,  "Main hand"
 	1,  "Off hand"
+}
+
+OptionValue "wr_LayoutKind"
+{
+	0, "Ring"
+	1, "Honeycomb"
+	2, "Star chart"
 }

@@ -1981,3 +1981,38 @@ user int   wr_gun_placehand = 0;
 // report on your actual runtime. Leave it at 1; if the readout rolls the
 // wrong way when you turn the gun over, set it to -1.
 user int   wr_gun_rollsign = 1;
+
+// ---- THE STAR CHART ----------------------------------------------------
+//
+// The arsenal as a night sky, drawn in real depth around the player. See
+// zscript/wheel/wr_constellation.zs for why it exists next to the ring: an arc
+// runs out of arc length and a volume does not.
+// WHICH ARRANGEMENT THE WHEEL USES. 0 ring, 1 honeycomb, 2 star chart.
+//
+// A layout, not a separate feature -- the same key opens it and the same key
+// picks from it, because it is the same arsenal arranged differently.
+user int   wr_layout = 0;
+
+user float wr_chart_link_thick = 0.12;
+user float wr_chart_link_alpha = 0.45;
+
+// The pointer ray. AimBillboard returns the nearest hittable billboard in the
+// WORLD, not the nearest of the chart's -- so anything a hand or a holster
+// leaves in front of it wins the ray and the sky stops answering. Set to 1 to
+// have the chart say so when that is what happened.
+user int   wr_chart_debug = 0;
+
+// ---- THE HONEYCOMB -----------------------------------------------------
+//
+// Every weapon at once, packed edge to edge and coloured by slot. Shows
+// everything because a grid has no arc length to run out of -- see
+// zscript/wheel/wr_honeycomb.zs.
+user float wr_hive_scale = 1.0;
+user float wr_hive_dist  = 1.0;
+
+// HOW HARD THE COMB CURVES, as a multiple of how far away it hangs. The
+// cells sit on a sphere centred on your eye -- a flattened soccerball --
+// and this is the flattening: 1.0 wraps a full bowl around you and puts
+// the outer cells beside your ears, higher numbers flatten it toward a
+// wall. Under about 0.5 it closes behind your head.
+user float wr_hive_dome  = 1.7;
