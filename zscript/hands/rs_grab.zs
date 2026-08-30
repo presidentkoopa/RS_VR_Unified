@@ -529,11 +529,55 @@ class RS_GrabHandler : EventHandler
     // fired and skipped every release path below it. The hand could never let go.
     //
     // One function, so a fifth state added later cannot be added to one of them.
-    private bool GripSpokenFor(int hand, RS_Held held, RS_Pull pull) const
+    private bool GripSpokenFor(int hand, RS_Held held, RS_Pull pull,
+                               PlayerPawn pmo, PlayerInfo p) const
     {
         if (!held) return false;
         return held.HandIsFull(hand) || TargetFor(hand) != null
-            || (pull && (pull.Flying(hand) || pull.Locked(hand) != null));
+            || (pull && (pull.Flying(hand) || pull.Locked(hand) != null))
+            || SwapPoised(hand, held, pmo, p);
+    }
+
+    // THE FIFTH STATE, and the one the comment above predicted.
+    //
+    // Hands brought together to pass a weapon is a grip that MEANS something,
+    // and it was not on the list -- so the main hand's squeeze fell all the way
+    // through the engine's context ladder to GRIPCTX_Modifier
+    // (vk_openxrdevice.cpp:3750). The modifier remaps the thumbstick's
+    // direction keys to a different set entirely, so the player stops dead for
+    // as long as the grip is held.
+    //
+    // That is the whole of "passing a weapon to the main hand stops me, but
+    // passing to the off hand does not": only isMain reaches the modifier
+    // branch, so only that direction freezes. Diagnosed by the user, 2026-08-29.
+    //
+    // The engine already solved this exact class of bug once -- GRIPCTX_Object
+    // was deliberately moved ABOVE the modifier so that closing a fist round a
+    // magazine would stop standing analog turning down. This is the same fault
+    // with a different trigger, and it is fixed the same way: claim the grip,
+    // and the ladder never reaches the shift layer.
+    //
+    // The conditions are the SWAP GESTURE'S OWN, deliberately. A claim that
+    // fired on proximity alone would kill the modifier every time the hands
+    // passed near each other; this fires only when a squeeze would actually
+    // swap, so the modifier is given up exactly when it is not what the grip
+    // means.
+    private bool SwapPoised(int hand, RS_Held held, PlayerPawn pmo, PlayerInfo p) const
+    {
+        if (!pmo || !p) return false;
+        if (!RS_Reach.Flag("rs_swap_overlap", p, true)) return false;
+
+        // Carrying anything makes this a two-handed join, not a pass.
+        if (held.HandIsFull(hand) || held.HandIsFull(1 - hand)) return false;
+        if (nearTarget[hand]) return false;
+
+        Weapon src = (hand == 0) ? p.OffhandWeapon : p.ReadyWeapon;
+        if (!src || src.bNoHandSwitch || RS_HandFist.IsFistClass(src.GetClass()))
+            return false;
+
+        Vector3 mine  = RS_Reach.Centre(pmo, p, hand);
+        Vector3 other = RS_Reach.Centre(pmo, p, 1 - hand);
+        return (mine - other).Length() <= RS_Reach.Num("rs_swap_overlap_dist", p, 8.0);
     }
 
     override void WorldTick()
@@ -589,7 +633,12 @@ class RS_GrabHandler : EventHandler
         }
 
         bool toggle = RS_Reach.Flag("rs_hold_toggle", p, true);
-        bool dbg    = RS_Reach.Flag("rs_hold_debug", p, true);
+        bool dbg    = RS_Reach.Flag("rs_hand_debug", p, true);
+        // The focused channel. "The cone found nothing" is one of the five
+        // answers to "why did my pull do nothing", and the other four are in
+        // RS_Pull.Start -- so it has to be readable without turning the noisy
+        // half on, or the set is incomplete exactly when it is being read.
+        bool trace  = RS_Reach.Flag("rs_hand_trace", p, true);
         bool useCone = RS_Reach.Flag("rs_dgrab", p, true);
         let pull = RS_Pull.Get();
 
@@ -648,8 +697,8 @@ class RS_GrabHandler : EventHandler
         // having hold of something at range are all "this grip is spoken for" --
         // stated once, in GripSpokenFor, because the stand-down below needs the
         // same four conditions and used to carry its own copy of three of them.
-        pmo.GrabClaimMain = GripSpokenFor(0, held, pull);
-        pmo.GrabClaimOff  = GripSpokenFor(1, held, pull);
+        pmo.GrabClaimMain = GripSpokenFor(0, held, pull, pmo, p);
+        pmo.GrabClaimOff  = GripSpokenFor(1, held, pull, pmo, p);
 
         for (int hand = 0; hand < 2; hand++)
         {
@@ -739,7 +788,7 @@ class RS_GrabHandler : EventHandler
             // Dir(...)` in rs_distance.zs is exactly that and has always worked
             // -- but it reads as a definition of the thing it is calling, and
             // this is not the file to spend a headset run finding that out in.
-            bool spokenFor = GripSpokenFor(hand, held, pull);
+            bool spokenFor = GripSpokenFor(hand, held, pull, pmo, p);
             if ((ctx == GRIPCTX_Holster || ctx == GRIPCTX_Hardpoint) && !spokenFor)
             {
                 if (press && dbg)
@@ -794,7 +843,7 @@ class RS_GrabHandler : EventHandler
                         Console.Printf("[RSGRIP] hand %d had %s in the cone and Lock REFUSED it (ctx=%d)",
                             hand, farTarget[hand].GetClassName(), ctx);
                 }
-                else if (press && dbg && grip && !locked && !farTarget[hand] && !nearTarget[hand])
+                else if (press && trace && grip && !locked && !farTarget[hand] && !nearTarget[hand])
                 {
                     Console.Printf("[RSGRIP] hand %d: cone found nothing (ctx=%d)", hand, ctx);
                 }

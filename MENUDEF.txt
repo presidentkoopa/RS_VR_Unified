@@ -59,19 +59,37 @@ OptionMenu "RS_HandsOptions"
 	Slider "Blend tics",        "rs_handworld_blend", 1, 20, 1, 0
 	Option "Log pose changes",  "rs_handworld_debug", "OnOff"
 
+
+	// RANGE AND STEP ARE IN METRES, NOT MAP UNITS.
+	//
+	// These six used to read -60..60 in steps of 0.5, which was the map-unit
+	// range every other placement slider in this file uses. It is the wrong
+	// space for a FOLLOWED model: GetHandTransform bakes vr_vunits_per_meter
+	// into the matrix before MODELDEF Scale is reached, and step 4 of
+	// ObjectToWorldMatrix divides the offset back out by that same scale -- so
+	// the number here lands in world space one for one, in METRES.
+	//
+	// That made the old slider ~120 metres of travel in half-metre notches, with
+	// no usable setting anywhere in it: the first notch threw the hand across
+	// the room. A metre either way is already further than an arm reaches, and
+	// 0.01 is a centimetre, which is the resolution this actually needs.
+	//
+	// Same metres/map-units confusion that hid the world hands entirely (see the
+	// world-hand block in MODELDEF.txt). The rotation sliders below are degrees
+	// and were never affected.
 	StaticText "  main hand", 1
-	Slider "M Left / Right",   "rs_hw_main_ofs_x", -60, 60, 0.5, 2
-	Slider "M Forward / Back", "rs_hw_main_ofs_y", -60, 60, 0.5, 2
-	Slider "M Down / Up",      "rs_hw_main_ofs_z", -60, 60, 0.5, 2
+	Slider "M Left / Right",   "rs_hw_main_ofs_x", -1.0, 1.0, 0.01, 2
+	Slider "M Forward / Back", "rs_hw_main_ofs_y", -1.0, 1.0, 0.01, 2
+	Slider "M Down / Up",      "rs_hw_main_ofs_z", -1.0, 1.0, 0.01, 2
 	Slider "M Yaw",            "rs_hw_main_yaw",  -180, 180, 1, 1
 	Slider "M Pitch",          "rs_hw_main_pitch",-180, 180, 1, 1
 	Slider "M Roll",           "rs_hw_main_roll", -180, 180, 1, 1
 	Slider "M Scale",          "rs_hw_main_scale", 0.05, 5.0, 0.05, 2
 
 	StaticText "  off hand", 1
-	Slider "O Left / Right",   "rs_hw_off_ofs_x", -60, 60, 0.5, 2
-	Slider "O Forward / Back", "rs_hw_off_ofs_y", -60, 60, 0.5, 2
-	Slider "O Down / Up",      "rs_hw_off_ofs_z", -60, 60, 0.5, 2
+	Slider "O Left / Right",   "rs_hw_off_ofs_x", -1.0, 1.0, 0.01, 2
+	Slider "O Forward / Back", "rs_hw_off_ofs_y", -1.0, 1.0, 0.01, 2
+	Slider "O Down / Up",      "rs_hw_off_ofs_z", -1.0, 1.0, 0.01, 2
 	Slider "O Yaw",            "rs_hw_off_yaw",  -180, 180, 1, 1
 	Slider "O Pitch",          "rs_hw_off_pitch",-180, 180, 1, 1
 	Slider "O Roll",           "rs_hw_off_roll", -180, 180, 1, 1
@@ -352,7 +370,12 @@ OptionMenu "RS_GrabThrowMenu"
 	StaticText "is the PEAK of the last 180ms, not the instant", 1
 	StaticText "of release -- your arm is already slowing by then.", 1
 	Option "Throwing",                  "rs_throw", "OnOff"
-	Slider "  Strength",                "rs_throw_scale", 0.1, 3, 0.05, 2
+	StaticText ""
+	StaticText "Arm strength. 1.0 throws as hard as you actually", 1
+	StaticText "threw; higher is the Doom marine doing it for you.", 1
+	StaticText "Your own movement is added AFTER this, so running", 1
+	StaticText "does not get multiplied.", 1
+	Slider "  Throw strength",          "rs_throw_scale", 0.1, 10, 0.1, 1
 	Slider "  Drop below (m/s)",        "rs_throw_min", 0, 5, 0.1, 1
 }
 
@@ -412,7 +435,8 @@ OptionMenu "RS_GrabFeedMenu"
 	Option "Show the face volume",      "rs_use_face_viz", "OnOff"
 
 	StaticText ""
-	Option "Log holding and grabbing",  "rs_hold_debug",   "OnOff"
+	Option "Log holding and grabbing",  "rs_hand_debug",   "OnOff"
+	Option "Log weapon slot and carry", "rs_hand_trace",   "OnOff"
 }
 
 //======================================================================

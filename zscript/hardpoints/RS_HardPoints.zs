@@ -2010,10 +2010,30 @@ class RS_HardPointManager : EventHandler
 			double nFwd  = RS_HardPointProp.holsterPropFwd();
 			double nSide = RS_HardPointProp.holsterPropSide();
 
+			// TRIMMED IN THE BODY'S FRAME, NOT THE MOUNTED ITEM'S.
+			//
+			// Identical to the fix in RS_Holsters.updateProps -- see the long
+			// note there. These rode the local basis built from
+			// finalAngle/finalPitch, so a mount whose item sits pitched (which
+			// is most of them) permuted the three sliders against each other:
+			// up/down moved it sideways, forward/back moved it up and down.
+			// That is audit finding #14, "the Stored item up/down slider moves
+			// the prop DOWN when you raise it".
+			//
+			// bodyYaw is the frame the MOUNT itself is placed in, so the trim
+			// now agrees with the thing it trims. Confirmed working on the
+			// holster side in a headset, 2026-08-29, before being copied here.
+			//
+			// The item-frame basis above is untouched: the automatic centring
+			// correction is still derived in it.
+			double trimYaw = bodyYaw[i];
+			double bFwdX =  cos(trimYaw), bFwdY =  sin(trimYaw);
+			double bRgtX =  sin(trimYaw), bRgtY = -cos(trimYaw);
+
 			Vector3 placed = (
-				at.X - worldOffX + (nFwd * localFwdX) + (nUp * localUpX) + (nSide * rightX),
-				at.Y - worldOffY + (nFwd * localFwdY) + (nUp * localUpY) + (nSide * rightY),
-				at.Z - worldOffZ + (nFwd * localFwdZ) + (nUp * localUpZ)
+				at.X - worldOffX + (nFwd * bFwdX) + (nSide * bRgtX),
+				at.Y - worldOffY + (nFwd * bFwdY) + (nSide * bRgtY),
+				at.Z - worldOffZ + nUp
 			);
 			p.SetOrigin(placed, true);
 		}

@@ -1761,10 +1761,35 @@ class RS_HolsterManager : EventHandler
 			double nFwd  = RS_HolsterProp.holsterPropFwd();
 			double nSide = RS_HolsterProp.holsterPropSide();
 
+			// TRIMMED IN THE BODY'S FRAME, NOT THE WEAPON'S.
+			//
+			// These three used to ride the local basis built above from
+			// finalAngle/finalPitch, on the reasoning that "push it forward"
+			// should mean forward-relative-to-the-gun. In practice that is
+			// wrong, and reported as such 2026-08-29: every torso holster sets
+			// hsPitch to 90 (barrel down), which rotates the weapon's frame a
+			// quarter turn against the body -- so the up/down slider moved the
+			// prop sideways, forward/back moved it up and down, and side moved
+			// it forward and back. A clean 3-cycle, and no amount of care with
+			// the sliders can undo it because the labels and the maths are
+			// describing different frames.
+			//
+			// bodyYaw is the same frame the holster ANCHOR is placed in (hsFwd
+			// and hsSide are already body-relative), so the trim now agrees
+			// with the thing it is trimming. Up is world up, forward is where
+			// your chest points, side is your right -- regardless of how the
+			// weapon inside the holster happens to be posed.
+			//
+			// The weapon-frame basis above is left alone: it is still what the
+			// automatic centring correction is derived in.
+			double trimYaw = bodyYaw[i];
+			double bFwdX =  cos(trimYaw), bFwdY =  sin(trimYaw);
+			double bRgtX =  sin(trimYaw), bRgtY = -cos(trimYaw);
+
 			Vector3 placed = (
-				at.X - worldOffX + (nFwd * localFwdX) + (nUp * localUpX) + (nSide * rightX),
-				at.Y - worldOffY + (nFwd * localFwdY) + (nUp * localUpY) + (nSide * rightY),
-				at.Z - worldOffZ + (nFwd * localFwdZ) + (nUp * localUpZ)
+				at.X - worldOffX + (nFwd * bFwdX) + (nSide * bRgtX),
+				at.Y - worldOffY + (nFwd * bFwdY) + (nSide * bRgtY),
+				at.Z - worldOffZ + nUp
 			);
 			p.SetOrigin(placed, true);
 		}

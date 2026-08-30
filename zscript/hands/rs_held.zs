@@ -111,6 +111,11 @@ class RS_Held : EventHandler
 	private double hSavedPitch[2];
 	private double hSavedAngle[2];
 
+	// Edge detector for the ReadyWeapon watch in WorldTick. Not per-player:
+	// the trace is a console print for the local player and nothing else reads
+	// it, same as every other diagnostic in this file.
+	private bool wasReadyNull;
+
 	// A HELD THING BECOMES A REAL 3D OBJECT, if a voxel exists for it.
 	//
 	// The roll trick above makes a billboard READ as something turning over,
@@ -403,7 +408,7 @@ class RS_Held : EventHandler
 				a.Vel = v;
 				let sw = RS_Swing.Get();
 				if (sw) sw.Forget(hand);
-				if (Flag("rs_hold_debug", p, true))
+				if (Flag("rs_hand_debug", p, true))
 					Console.Printf("[RSTHROW] hand %d threw %s at %.1f m/s",
 						hand, a.GetClassName(),
 						RS_Swing.UnitsPerTicToMetresPerSec(v.Length()));
@@ -666,7 +671,22 @@ class RS_Held : EventHandler
 			// barrel left.
 			if (a.VoxelOverride)
 			{
-				a.Pitch = RS_Reach.HandPitch(pmo, hand);
+				// NEGATED, confirmed in a headset 2026-08-30: tilting the hand
+				// toward you tipped the barrel away and the other way round.
+				//
+				// HandPitch is TRUE-SIGNED -- positive is tipping up -- because
+				// that is what a direction ray needs, and it exists precisely so
+				// the ray and the tested volume cannot disagree about the sign.
+				// Actor.Pitch is the opposite convention: positive means looking
+				// DOWN, the same as the player's own pitch. The renderer says so
+				// too, applying pitch POSITIVE while it negates both yaw and roll
+				// (models.cpp, the actor rotation block).
+				//
+				// So the negation belongs here, at the point where a ray-space
+				// number is written into an actor field, and NOT inside HandPitch
+				// -- that would flip every grab ray in the package to fix one
+				// barrel.
+				a.Pitch = -RS_Reach.HandPitch(pmo, hand);
 				a.Angle = (hand == HAND_MAIN) ? pmo.AttackAngle : pmo.OffhandAngle;
 			}
 
@@ -682,10 +702,47 @@ class RS_Held : EventHandler
 			// One line a second per hand, so the two traces can be read against
 			// each other: if this prints and [RSVOX] still shows zeroes, the
 			// write is being overwritten downstream.
-			if (Flag("rs_hold_debug", p, true) && (level.time % 35) == 0)
-				Console.Printf("[RSHOLD] hand %d carrying %s  vox=%d  wrote yaw=%.1f pitch=%.1f roll=%.1f",
+			if (Flag("rs_hand_trace", p, true) && (level.time % 35) == 0)
+			{
+				// WEAPON STATE ALONGSIDE THE CARRY.
+				//
+				// "Firing while gripping a held object starts an endless firing
+				// cycle", reported 2026-08-29. Nothing in this mod presses the
+				// attack button or sets a weapon state, so the loop is being
+				// driven by something the carry does to the weapon slots rather
+				// than by input -- and refire climbing, or PendingWeapon never
+				// clearing, would each produce exactly this symptom by a
+				// different route. Printed together so one run tells them apart.
+				String wn = "none";
+				if (p.ReadyWeapon) wn = p.ReadyWeapon.GetClassName();
+				String on = "none";
+				if (p.OffhandWeapon) on = p.OffhandWeapon.GetClassName();
+				String pn = "-";
+				if (p.PendingWeapon && p.PendingWeapon != WP_NOCHANGE) pn = p.PendingWeapon.GetClassName();
+
+				// THE CONTROLLER NEXT TO THE ACTOR, which is the whole point.
+				//
+				// Three sign errors were found in this block on 2026-08-29/30 --
+				// roll, then the body-axis wrap, then pitch -- and every one of
+				// them cost a headset run to find, because the trace printed
+				// what was WRITTEN and the engine trace printed what was READ,
+				// and neither printed what the HAND WAS DOING. A sign error is
+				// invisible in either half alone and obvious across the pair.
+				//
+				// hand* are the raw controller numbers, true-signed the way the
+				// rest of the package reads them. actor* are what this block
+				// wrote. If the hand tips one way and the actor number moves the
+				// other, that is the bug, on one line, with nobody in a headset.
+				double hYaw = (hand == HAND_MAIN) ? pmo.AttackAngle  : pmo.OffhandAngle;
+				double hPit = RS_Reach.HandPitch(pmo, hand);
+				double hRol = (hand == HAND_MAIN) ? pmo.MainHandRoll : pmo.OffhandRoll;
+
+				Console.Printf("[RSHOLD] hand %d carrying %s  vox=%d  | hand yaw=%.1f pitch=%.1f roll=%.1f  -> actor yaw=%.1f pitch=%.1f roll=%.1f  | ready=%s off=%s pending=%s refire=%d attackdown=%d",
 					hand, a.GetClassName(), a.VoxelOverride ? 1 : 0,
-					a.Angle, a.Pitch, a.Roll);
+					hYaw, hPit, hRol,
+					a.Angle, a.Pitch, a.Roll,
+					wn, on, pn, p.refire, p.attackdown ? 1 : 0);
+			}
 		}
 		else
 		{
@@ -770,6 +827,49 @@ class RS_Held : EventHandler
 		if (!p || !p.mo) { return; }
 		let pmo = p.mo;
 
+		// WATCH THE MAIN HAND'S WEAPON SLOT GO EMPTY.
+		//
+		// A run on 2026-08-29 showed ready=none for 14 of 34 carry samples --
+		// the main hand's ReadyWeapon sitting null while something was held. A
+		// null ready weapon is the state the engine reacts to by trying to bring
+		// SOMETHING up, so it is a live candidate for all three of the endless
+		// firing cycle, the momentary stop when a weapon is passed to the main
+		// hand, and whatever else reads that slot.
+		//
+		// Sampling once a second could only ever say it HAPPENED. This catches
+		// the tic it happens on and prints what else was true right then, which
+		// is what actually names the cause. Prints on the EDGE only, so a hand
+		// that is legitimately empty for a while costs one line, not one a tic.
+		if (Flag("rs_hand_trace", p, true))
+		{
+			bool nowNull = (p.ReadyWeapon == null);
+			if (nowNull != wasReadyNull)
+			{
+				wasReadyNull = nowNull;
+				String on = "none";
+				if (p.OffhandWeapon) on = p.OffhandWeapon.GetClassName();
+				String pn = "-";
+				if (p.PendingWeapon && p.PendingWeapon != WP_NOCHANGE) pn = p.PendingWeapon.GetClassName();
+
+				// ASSIGNED, NOT TERNARIED -- GetClassName returns a Name and
+				// "NULL"/"-" are Strings, and ?: will not mix the two. An
+				// assignment coerces Name to String fine; a ternary has to
+				// settle on one type before the assignment happens. This file
+				// already carries this warning once, in the [RSGRIP] print, and
+				// it was made again anyway.
+				String rn = "NULL";
+				if (!nowNull) rn = p.ReadyWeapon.GetClassName();
+				String h0 = "-";
+				if (hActor[0]) h0 = hActor[0].GetClassName();
+				String h1 = "-";
+				if (hActor[1]) h1 = hActor[1].GetClassName();
+
+				Console.Printf("[RSWEAP] tic %d: ReadyWeapon -> %s  | off=%s pending=%s  mainHolds=%s offHolds=%s  refire=%d attackdown=%d",
+					level.time, rn, on, pn, h0, h1,
+					p.refire, p.attackdown ? 1 : 0);
+			}
+		}
+
 		// BEFORE the death return below, not after: a hand emptied by dying
 		// still wants its lease released, and that path exits early.
 		ArbiterFind();
@@ -826,7 +926,7 @@ class RS_Held : EventHandler
 			// your hands apart means.
 			if (ShouldBreak(pmo, p, h, a))
 			{
-				if (Flag("rs_hold_debug", p, true))
+				if (Flag("rs_hand_debug", p, true))
 					Console.Printf("[RSHELD] hand %d lost %s -- too far from the palm",
 						h, a.GetClassName());
 				Release(h);

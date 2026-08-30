@@ -168,29 +168,47 @@ user bool  rs_volviz = true;
 // is applied outside the placement offset, so the drawn oval moves by
 // ofs * scale * master and not by ofs.
 user int rs_grab_scale_space = 0;
+
+// THE TWELVE NUMBERS BELOW ARE DIALLED IN A HEADSET, 2026-08-29, and replaced
+// the theoretical ones this file shipped with. They came out of the owner's own
+// config after tuning against the drawn oval, so they are what a hand-sized
+// grab volume actually measures rather than what it ought to.
+//
+// The master scale is the striking one: 0.025 against the old 1.0. That is not
+// a small correction, it is a fortyfold one, and it is the strongest evidence
+// yet on the rs_grab_scale_space question above -- numbers that need a 0.025
+// master to look right are not being read as map units in practice, whatever
+// space 0 nominally selects. Left at 0 because that is the reading in force and
+// the volume now measures correctly under it; noted because if anyone ever
+// flips that cvar, these twelve all have to be re-dialled with it.
+//
+// Per-axis shape changed too, and meaningfully: y (along the fingers) went 3.2
+// -> 4.0 and z (up through the hand) 1.6 -> 3.0, while x (across the palm)
+// dropped 2.2 -> 1.0. So the volume is now much narrower across the palm and
+// considerably taller -- a reach along the fingers rather than a flat disc.
 user float rs_grab_m_ofs_x = 0.0;
-user float rs_grab_m_ofs_y = 0.0;
-user float rs_grab_m_ofs_z = 0.0;
+user float rs_grab_m_ofs_y = 0.25;
+user float rs_grab_m_ofs_z = -0.75;
 user float rs_grab_m_yaw = 0.0;
 user float rs_grab_m_pitch = 0.0;
 user float rs_grab_m_roll = 0.0;
-user float rs_grab_m_scale = 1.0;
+user float rs_grab_m_scale = 0.025;
 // x across the palm, y along the fingers, z through the back of the hand.
-user float rs_grab_m_scale_x = 2.2;
-user float rs_grab_m_scale_y = 3.2;
-user float rs_grab_m_scale_z = 1.6;
+user float rs_grab_m_scale_x = 1.0;
+user float rs_grab_m_scale_y = 4.0;
+user float rs_grab_m_scale_z = 3.0;
 
 user float rs_grab_o_ofs_x = 0.0;
-user float rs_grab_o_ofs_y = 0.0;
-user float rs_grab_o_ofs_z = 0.0;
+user float rs_grab_o_ofs_y = 0.25;
+user float rs_grab_o_ofs_z = -0.75;
 user float rs_grab_o_yaw = 0.0;
 user float rs_grab_o_pitch = 0.0;
 user float rs_grab_o_roll = 0.0;
-user float rs_grab_o_scale = 1.0;
+user float rs_grab_o_scale = 0.025;
 // x across the palm, y along the fingers, z through the back of the hand.
-user float rs_grab_o_scale_x = 2.2;
-user float rs_grab_o_scale_y = 3.2;
-user float rs_grab_o_scale_z = 1.6;
+user float rs_grab_o_scale_x = 1.0;
+user float rs_grab_o_scale_y = 4.0;
+user float rs_grab_o_scale_z = 3.0;
 
 // ---- HOLDING ------------------------------------------------------------
 //
@@ -202,7 +220,16 @@ user float rs_grab_o_scale_z = 1.6;
 // fingers open, the object drops. Both exist because both are wrong somewhere
 // -- a toggle drops things you meant to keep, and hold-to-keep is a hand cramp
 // over a session.
-user bool rs_hold_toggle = true;
+//
+// OFF BY DEFAULT, 2026-08-30. Holding a barrel is a short-lived thing you do on
+// the way to throwing it, not a state you carry around a level, and a toggle
+// makes letting go a second deliberate action at exactly the moment you want
+// your hand back. Opening your fingers dropping what is in them is also the
+// thing nobody has to be taught.
+//
+// The cramp argument above still stands for anyone who carries objects for long
+// stretches, which is why the toggle stays available rather than being removed.
+user bool rs_hold_toggle = false;
 
 // A second hand on something the first hand already holds JOINS it rather than
 // stealing it. Only for objects big enough to warrant two hands.
@@ -266,11 +293,29 @@ user bool rs_swap_overlap = true;
 // past yourself, loose enough that you do not have to be precise about it.
 user float rs_swap_overlap_dist = 8.0;
 
-// ON while hand rotation is being worked out (2026-08-28). Every mod-side hand
-// diagnostic hangs off this one cvar, and it defaulting off is why a test run
-// that exercised the swap gesture and four grabs produced not one line about
-// either. Put it back to false once held rotation is settled.
-user bool rs_hold_debug = true;
+// THE NOISY ONE -- every mod-side hand diagnostic except the two below.
+// [RSPULL] launches and blocks, [RSGRIP] squeezes, [RSSWAP], [RSHELD],
+// [RSTAKE]. Useful when chasing one of those specifically, far too loud to
+// leave on: this is audit findings #1 and #8, "debug text spams the player's
+// view during ordinary play".
+//
+// RENAMED from rs_hold_debug, 2026-08-29, and the rename is deliberate. That
+// cvar was flipped to true for a day of diagnosis, which archived a true into
+// the config of anyone who ran it -- so setting the default back to false could
+// never have reached them. Same trap as vr_voxel_bodyyaw. A new name has
+// nothing archived against it.
+user bool rs_hand_debug = false;
+
+// THE FOCUSED ONE, kept separate so the noisy traces can go quiet without
+// taking the two that are actually being read with them.
+//
+// [RSWEAP] fires on the edge when ReadyWeapon goes null or comes back, and
+// [RSHOLD] prints one line a second per carried object with the angles being
+// written. Between them they cover the open questions: the endless firing
+// cycle, the ready=none state, and whether held rotation is landing.
+//
+// Turn off with the rest once hands are closed out.
+user bool rs_hand_trace = true;
 
 // ---- WHAT IS GRABBABLE --------------------------------------------------
 //
@@ -366,7 +411,14 @@ user float rs_dgrab_arc = 0.15;
 // 0 IS OFF, and off means untouched: at zero the flight never sets the render
 // flags at all, because +ROLLSPRITE is not inert at roll zero -- it changes how
 // the sprite is scaled, and +ROLLCENTER drops the sprite's own offsets.
-user float rs_dgrab_tumble = 2.0;
+//
+// DEFAULT 0.5 ON TASTE, 2026-08-29 -- "beautiful" in the headset, and two full
+// turns is a lot of motion on something you are trying to track and catch. It
+// deliberately breaks the whole-number rule above: half a turn means the roll
+// restore on arrival snaps 180 degrees. That is invisible on a barrel, which is
+// symmetric end to end, and it is what most pulled objects are. Set a whole
+// number if a snap ever shows on something that is not.
+user float rs_dgrab_tumble = 0.5;
 
 // Refuse to pull things you cannot see. Off lets you grab through walls.
 user bool rs_dgrab_sight = true;
@@ -1890,4 +1942,3 @@ user int   wr_gun_placehand = 0;
 // report on your actual runtime. Leave it at 1; if the readout rolls the
 // wrong way when you turn the gun over, set it to -1.
 user int   wr_gun_rollsign = 1;
-

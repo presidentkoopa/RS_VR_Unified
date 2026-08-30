@@ -132,6 +132,19 @@ class RS_GrabViz : EventHandler
         bool show    = RS_Reach.Flag("rs_grabviz", p, true);
         bool showVol = RS_Reach.Flag("rs_volviz",  p, true);
 
+        // NO MENU CHECK HERE, deliberately, and it was tried on 2026-08-29.
+        //
+        // The stranded-lock failure this would have papered over (audit #6) is
+        // already fixed at source: RS_Pull.WorldTick calls AbortAll the moment
+        // either rs_grab or rs_dgrab reads false, which drops both locks and
+        // puts any flight back the way it was found. Hiding the drawing would
+        // have hidden a symptom that no longer occurs.
+        //
+        // It could not have worked in any case. WorldTick does not run while a
+        // menu holds the playsim, so a check placed in it cannot fire at the one
+        // moment it is asking about -- and Menu.GetCurrentMenu is ui scope,
+        // which play cannot call at all.
+
         // ASKED ONCE, FOR BOTH DRAWINGS. RS_GrabHandler ticks ahead of this one
         // (the MAPINFO order), so its answer for this tic is already sitting
         // there -- and the note further down about not scanning twice was

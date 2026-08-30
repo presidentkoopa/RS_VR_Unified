@@ -74,7 +74,8 @@ being simulated. A grenade is the best possible reason to finally build it.
   read `MainHandRoll` / `OffhandRoll`.
 - **Logs**: `E:\UZDXREMA\build-dxr\Debug\log-debug.txt` (gameplay `Console.Printf`)
   and `doomxr-log.txt` (load order). They **truncate on every launch** — read
-  before relaunching. Mod-side hand diagnostics gate on `rs_hold_debug`.
+  before relaunching. Mod-side hand diagnostics gate on `rs_hand_debug` (the
+  noisy ones) and `rs_hand_trace` (weapon-slot and carry only).
 - Build: `E:\mERGE\RS_VR_Unified\build.ps1`, no args.
 
 ## Suggested first step

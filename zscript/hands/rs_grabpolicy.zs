@@ -471,7 +471,7 @@ class RS_GrabPolicy : EventHandler
 			if (inv && !inv.Owner)
 			{
 				bool got = inv.CallTryPickup(pmo);
-				if (Flag("rs_hold_debug", p, true))
+				if (Flag("rs_hand_debug", p, true))
 					Console.Printf("[RSTAKE] %s -- %s", a.GetClassName(),
 						got ? "ammo taken on catch" : "refused, holding it");
 				return got;
@@ -495,7 +495,7 @@ class RS_GrabPolicy : EventHandler
 			if (hinv && !hinv.Owner)
 			{
 				bool used = hinv.CallTryPickup(pmo);
-				if (Flag("rs_hold_debug", p, true))
+				if (Flag("rs_hand_debug", p, true))
 					Console.Printf("[RSTAKE] %s -- %s", a.GetClassName(),
 						used ? "used on catch" : "not needed, holding it");
 				return used;
@@ -515,7 +515,7 @@ class RS_GrabPolicy : EventHandler
 		{
 			// Stock pickup. It gives the ammo and removes the world copy.
 			bool took = w.CallTryPickup(pmo);
-			if (Flag("rs_hold_debug", p, true))
+			if (Flag("rs_hand_debug", p, true))
 				Console.Printf("[RSTAKE] %s -- already carrying two, %s",
 					a.GetClassName(), took ? "took its ammo" : "refused");
 			return took;
@@ -531,7 +531,7 @@ class RS_GrabPolicy : EventHandler
 			// gun appears already up, which reads as a glitch.
 			pmo.player.PendingWeapon = w;
 		}
-		if (Flag("rs_hold_debug", p, true))
+		if (Flag("rs_hand_debug", p, true))
 			Console.Printf("[RSTAKE] %s -- %s", a.GetClassName(),
 				took ? "equipped" : "refused, holding it instead");
 		return took;

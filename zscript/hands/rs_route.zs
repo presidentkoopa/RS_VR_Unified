@@ -77,7 +77,7 @@ class RS_Route : EventHandler
 		if (!held) return;
 
 		double reach = Num("rs_use_face_reach", p, 12.0);
-		bool dbg = Flag("rs_hold_debug", p, true);
+		bool dbg = Flag("rs_hand_debug", p, true);
 
 		for (int h = 0; h < 2; h++)
 		{

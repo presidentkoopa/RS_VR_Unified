@@ -179,6 +179,18 @@ class RS_Pull : EventHandler
 	// THE THIRD ONE, and the barrel is why -- see the note in Start.
 	private bool flySavedThruActors[2];
 
+	// THE OBJECT'S REAL SIZE, put back the moment it stops flying.
+	//
+	// A Doom pickup's radius is a PICKUP-TRIGGER volume, not a physical hull --
+	// a clip is radius 20, the same as a shotgun guy, because that is how near
+	// you have to walk to collect it. It is a few units across to look at.
+	//
+	// Flying a 40-unit-wide box through a doorway for an object the size of a
+	// fist is what produced twelve blocked pulls in one session, every one of
+	// them a radius-20 pickup and not one of them a radius-10 barrel.
+	private double flySavedRadius[2];
+	private double flySavedHeight[2];
+
 	// THE TUMBLE, saved under exactly the same discipline and for exactly the
 	// same reason. See SaveTumble.
 	//
@@ -289,7 +301,7 @@ class RS_Pull : EventHandler
 		if (RS_Reach.Flag("rs_grab_voxel", p, true)) a.VoxelOverride = true;
 
 		lockActor[hand] = a;
-		if (RS_Reach.Flag("rs_hold_debug", p, true))
+		if (RS_Reach.Flag("rs_hand_debug", p, true))
 			Console.Printf("[RSPULL] hand %d LOCKED %s -- flick to pull it", hand, a.GetClassName());
 		return true;
 	}
@@ -322,7 +334,7 @@ class RS_Pull : EventHandler
 		Vector3 mid = (a.Pos.x, a.Pos.y, a.Pos.z + a.Height * 0.5);
 		if ((mid - RS_Reach.Centre(pmo, p, hand)).Length() > reach * 1.25)
 		{
-			if (RS_Reach.Flag("rs_hold_debug", p, true))
+			if (RS_Reach.Flag("rs_hand_debug", p, true))
 				Console.Printf("[RSPULL] hand %d lost its lock on %s -- out of range",
 					hand, a.GetClassName());
 			Unlock(hand);
@@ -488,14 +500,41 @@ class RS_Pull : EventHandler
 	// so rather than silently doing nothing.
 	bool Start(int hand, Actor a, PlayerPawn pmo, PlayerInfo p)
 	{
-		if (hand != 0 && hand != 1) return false;
-		if (!a || flyActor[hand]) return false;
-
+		// EVERY REFUSAL SAYS WHY.
+		//
+		// These five guards each returned false in silence, which made "the pull
+		// did nothing" mean any of: the squeeze never arrived, the cone found
+		// nothing, this hand is full, something is already flying, or the target
+		// is in the other fist. Five different faults with one symptom and no way
+		// to tell them apart from inside a headset -- and one of them, "nothing
+		// in the cone", is not even reached here because the caller gives up
+		// first.
+		//
+		// Named rather than numbered: a log line that says "hand full" is read
+		// once, and a line that says "refused at guard 3" is read against this
+		// file forever.
 		let held = RS_Held.Get();
-		if (!held || held.HandIsFull(hand)) return false;
+		String why = "";
+
+		if (hand != 0 && hand != 1)         why = "bad hand index";
+		else if (!a)                        why = "no target";
+		else if (flyActor[hand])            why = "this hand already has something in flight";
+		else if (!held)                     why = "RS_Held missing";
+		else if (held.HandIsFull(hand))     why = "this hand is already holding something";
 		// Nor out of the other hand. Same reason as Lock: this is the call that
 		// would actually launch it.
-		if (held.IsHeld(a)) return false;
+		else if (held.IsHeld(a))            why = "target is held by a hand already";
+
+		if (why != "")
+		{
+			if (RS_Reach.Flag("rs_hand_trace", p, true))
+			{
+				String tn = "nothing";
+				if (a) tn = a.GetClassName();
+				Console.Printf("[RSPULL] hand %d refused %s -- %s", hand, tn, why);
+			}
+			return false;
+		}
 
 		// FLIGHT TIME COMES FROM THE DISTANCE, so near and far pulls travel at
 		// the same SPEED. A fixed tic count meant a thing across the room moved
@@ -531,6 +570,8 @@ class RS_Pull : EventHandler
 		flySavedSpecial[hand]    = a.bSPECIAL;
 		flySavedNoGrav[hand]     = a.bNOGRAVITY;
 		flySavedThruActors[hand] = a.bTHRUACTORS;
+		flySavedRadius[hand]     = a.Radius;
+		flySavedHeight[hand]     = a.Height;
 
 		// SPECIAL IS LEFT ALONE, and that is the whole design in one line.
 		//
@@ -564,6 +605,21 @@ class RS_Pull : EventHandler
 		// in a hand.
 		a.bTHRUACTORS = true;
 
+		// AND SHRUNK TO SOMETHING THE SIZE IT LOOKS.
+		//
+		// A_SetSize rather than writing Radius directly, because the actor has to
+		// be re-linked into the blockmap at the new size or every collision test
+		// goes on using the old one and nothing changes.
+		//
+		// CAPPED, NOT SCALED. A barrel at radius 10 already fits everywhere it
+		// needs to and there is no reason to touch it; only the oversized pickup
+		// volumes come down. Height is left alone -- it was never the problem,
+		// and shrinking it would drop the object out of its own arc.
+		//
+		// Put back on all three exits, and that matters more than usual: a clip
+		// left at radius 8 is a clip you have to stand on top of to collect.
+		if (a.Radius > 8.0) a.A_SetSize(8.0, a.Height);
+
 		// AND THE TUMBLE. Last, because it is the only one of the four that is
 		// purely cosmetic -- if it were ever to be dropped, nothing above it
 		// changes. See SaveTumble for what the three flags each do.
@@ -584,12 +640,27 @@ class RS_Pull : EventHandler
 		// Printed at launch rather than per tic: one line per pull, naming the
 		// thing, how far it has to come, how long it has been given, and how
 		// much vertical room it actually has.
-		if (RS_Reach.Flag("rs_hold_debug", p, true))
-			Console.Printf("[RSPULL] hand %d launched %s  dist=%.0f tics=%d  r=%.0f h=%.0f  floorz=%.0f ceilz=%.0f headroom=%.0f  arc=%.0f",
+		if (RS_Reach.Flag("rs_hand_trace", p, true))
+			// DROPPED AND THE Z GAP ARE THE TWO NEW COLUMNS, and they are here
+			// because of a specific observation: a clip dropped by a dead
+			// zombieman pulls, and the SAME class placed by the mapper does not.
+			// Reported 2026-08-29.
+			//
+			// Those two differ in almost nothing except bDROPPED and how they
+			// came to be standing where they are. A dropped item was placed by
+			// the playsim and had to find a position it fits in; a map-placed
+			// one was put there by a mapper and can be flush with, or slightly
+			// inside, the floor. zgap says which: anything other than 0 means
+			// the thing is not sitting where the floor says it should be, and a
+			// negative one means it is embedded -- which is a TryMove that fails
+			// on tic 1 and looks exactly like a hop.
+			Console.Printf("[RSPULL] hand %d launched %s  dist=%.0f tics=%d  r=%.0f h=%.0f  floorz=%.0f ceilz=%.0f headroom=%.0f  arc=%.0f  dropped=%d zgap=%.1f special=%d nograv=%d",
 				hand, a.GetClassName(), dist, int(tics),
 				a.Radius, a.Height, a.floorz, a.ceilingz,
 				a.ceilingz - a.floorz - a.Height,
-				flyArc[hand]);
+				flyArc[hand],
+				a.bDROPPED ? 1 : 0, a.Pos.z - a.floorz,
+				a.bSPECIAL ? 1 : 0, a.bNOGRAVITY ? 1 : 0);
 
 		return true;
 	}
@@ -617,6 +688,7 @@ class RS_Pull : EventHandler
 		a.bSPECIAL    = flySavedSpecial[hand];
 		a.bNOGRAVITY  = flySavedNoGrav[hand];
 		a.bTHRUACTORS = flySavedThruActors[hand];
+			a.A_SetSize(flySavedRadius[hand], flySavedHeight[hand]);
 		// Before the handover for the same reason as the three above, plus one
 		// of its own: RS_Held.SaveFlags does not know about the roll flags, so
 		// if flight left them set they would never come off at all.
@@ -649,7 +721,7 @@ class RS_Pull : EventHandler
 
 		flyActor[hand] = null;
 		flyHold[hand]  = 0;
-		if (RS_Reach.Flag("rs_hold_debug", p, true))
+		if (RS_Reach.Flag("rs_hand_debug", p, true))
 			Console.Printf("[RSPULL] hand %d CAUGHT %s (%s)", hand, a.GetClassName(), rule.why);
 		return true;
 	}
@@ -680,6 +752,7 @@ class RS_Pull : EventHandler
 			a.bSPECIAL    = flySavedSpecial[hand];
 			a.bNOGRAVITY  = flySavedNoGrav[hand];
 			a.bTHRUACTORS = flySavedThruActors[hand];
+			a.A_SetSize(flySavedRadius[hand], flySavedHeight[hand]);
 			RestoreTumble(hand, a);
 			a.Vel = (0, 0, 0);
 		}
@@ -834,6 +907,44 @@ class RS_Pull : EventHandler
 			if (hi < lo) hi = lo;
 			a.SetZ(clamp(flyZ, lo, hi));
 			bool moved = a.TryMove((pos.x, pos.y), 1);
+
+			// LIFT IT OUT BEFORE DRAGGING IT SIDEWAYS.
+			//
+			// A blocked FIRST tic is not the object hitting something on the way
+			// over -- it has not gone anywhere yet. It is the object still
+			// standing where it was found, in a space too tight to move
+			// sideways out of. Confirmed 2026-08-30: twelve blocked pulls, all
+			// but two on tic 1, all with zclamp=0, and every one of them a
+			// radius-20 pickup. A barrel is radius 10 and was never blocked
+			// once.
+			//
+			// That is also the whole of "map-placed clips will not pull but
+			// dropped ones will". Nothing differs about the clips -- a mapper
+			// puts ammo in alcoves and corners and against walls, where a
+			// 40-unit-wide box has nowhere to go, while a clip dropped by a
+			// dying zombieman is lying in open floor.
+			//
+			// So: try again a little higher, the way a hand would. Three steps
+			// covers a step, a kerb and a low shelf; beyond that the object is
+			// genuinely walled in and the pull SHOULD fail, because a pull that
+			// can reach through geometry is the thing TryMove is here to stop.
+			//
+			// Only on failure, so nothing that was already moving pays for it,
+			// and the Z is put back when a lift does not help -- otherwise a
+			// refused pull would leave the object hanging above where it sat.
+			if (!moved)
+			{
+				double keepZ = a.Pos.z;
+				for (int lift = 1; lift <= 3 && !moved; lift++)
+				{
+					double tryZ = keepZ + lift * 6.0;
+					if (tryZ + a.Height > a.ceilingz) break;
+					a.SetZ(tryZ);
+					moved = a.TryMove((pos.x, pos.y), 1);
+				}
+				if (!moved) a.SetZ(keepZ);
+			}
+
 			a.Vel = (0, 0, 0);
 
 			// BLOCKED. It hit geometry on the way over, so it stops there and
@@ -854,7 +965,7 @@ class RS_Pull : EventHandler
 				// tic: if the height it wanted is not the height it got, the
 				// object is being dragged along a surface instead of flying,
 				// which is what a hop looks like from the outside.
-				if (RS_Reach.Flag("rs_hold_debug", p, true))
+				if (RS_Reach.Flag("rs_hand_trace", p, true))
 					Console.Printf("[RSPULL] hand %d lost %s -- blocked on tic %d/%d  at (%.0f %.0f %.0f)  wanted z=%.0f got z=%.0f  floorz=%.0f ceilz=%.0f  zclamp=%d",
 						h, a.GetClassName(), flyTic[h], flyTotal[h],
 						a.Pos.x, a.Pos.y, a.Pos.z,
@@ -939,13 +1050,14 @@ class RS_Pull : EventHandler
 		// becomes a pickup or a hit, and both of those are ordinary Doom
 		// interactions that have to happen to an ordinary Doom actor.
 		a.bTHRUACTORS = flySavedThruActors[h];
+		a.A_SetSize(flySavedRadius[h], flySavedHeight[h]);
 		// And the same for the tumble, before the resolve. A barrel that survives
 		// the hit is an ordinary barrel again from here on, standing the way up
 		// it was standing before you pulled it.
 		RestoreTumble(h, a);
 		a.Vel = (0, 0, 0);
 
-		bool dbg = RS_Reach.Flag("rs_hold_debug", p, true);
+		bool dbg = RS_Reach.Flag("rs_hand_debug", p, true);
 
 		// A MISS JUST DROPS IT, as of 2026-08-28, and that is the owner's call
 		// rather than a technical one.

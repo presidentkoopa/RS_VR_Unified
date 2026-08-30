@@ -268,7 +268,16 @@ class RS_HolsterMarker : Actor
 		// alpha; only the one you could actually reach right now moves.
 		// Multiplied by fadeAlpha, not replaced by it, so the pulse and the
 		// fade compose instead of one clobbering the other mid-transition.
-		double baseAlpha = isHot ? (0.70 + 0.25 * sin(360.0 * ((level.time % 70) / 70.0))) : 0.85;
+		// SOLID WHEN IDLE, 2026-08-29. This was 0.85, which read in the headset
+		// as the stored weapon being see-through and got reported as a
+		// ModelSwapper texture fault -- a translucent model shows its own back
+		// faces, so a deliberate 15% became indistinguishable from a broken
+		// mesh. A cue that gets mistaken for a defect is not doing its job.
+		//
+		// The HOT pulse keeps its translucency: that one is motion as well as
+		// alpha, so it reads as a highlight rather than as a hole in the model,
+		// and it only ever applies to the single holster you could reach.
+		double baseAlpha = isHot ? (0.70 + 0.25 * sin(360.0 * ((level.time % 70) / 70.0))) : 1.0;
 
 		// The ammo glow COMBINES with proximity rather than replacing it,
 		// and the combination is a MAX, not a product. A product would mean
