@@ -1315,7 +1315,10 @@ class RS_HolsterManager : EventHandler
 		if (nowInPouch && (pouchCv == null || pouchCv.GetBool()))
 		{
 			let held = RS_Held.Get();
-			Actor carried = held ? held.HeldBy(hand) : null;
+			// RS_Held keeps ONE pair of hand slots, the console player's. For
+			// any other player this would read player 1's hand and stow (and
+			// release) whatever it holds into player i's inventory.
+			Actor carried = (held && i == consoleplayer) ? held.HeldBy(hand) : null;
 
 			// Ammo only. Everything else a hand can carry into this volume --
 			// a barrel, a corpse, a weapon -- has somewhere else to go, and

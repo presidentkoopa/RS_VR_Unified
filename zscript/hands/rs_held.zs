@@ -880,6 +880,14 @@ class RS_Held : EventHandler
 		// reconcile before anything reads the table.
 		for (int h = 0; h < 2; h++)
 			if (!hActor[h] && hRole[h] != ROLE_NONE) ClearSlot(h);
+			// A pickup can KEEP the world actor: Inventory.CreateCopy returns
+			// self when GoAway() is false, so a face-use of, say, a Cell you
+			// own no gun for turns the thing in your hand into an owned,
+			// invisible inventory item. Still pointed at from here, it would
+			// be TryMove'd every tic, keep the hand full, and take throw
+			// velocity and restored flags on release. Forget it instead.
+			let owned = Inventory(hActor[h]);
+			if (owned && owned.Owner) ClearSlot(h);
 
 		// Dead hands hold nothing. ClearClaims after ReleaseAll, never instead
 		// of it: ReleaseAll empties the slots, and this is what withdraws what

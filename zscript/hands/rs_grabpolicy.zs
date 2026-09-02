@@ -319,6 +319,7 @@ class RS_GrabPolicy : EventHandler
 	// dies or gets picked up while the record is not looking.
 
 	private bool lastNoWalk;
+	private int  lastCats;   // bitmask of the category switches, see WorldTick
 
 	private void ApplyOne(Actor a, PlayerPawn pmo, PlayerInfo p, bool noWalk)
 	{
@@ -333,7 +334,6 @@ class RS_GrabPolicy : EventHandler
 
 		let inv = Inventory(a);
 		if (!inv || inv.Owner) return;
-		if (!Decide(a, pmo, p)) return;
 
 		// Never resurrect something that was already hidden. An invisible or
 		// unrendered item is deliberately not a pickup, and handing it SPECIAL
@@ -356,7 +356,12 @@ class RS_GrabPolicy : EventHandler
 		//
 		// The `default.` accessor has precedent in the family -- RS_Reload
 		// reads w.default.AmmoGive1 at rr_feed.zs:296.
-		a.bSPECIAL = noWalk ? false : a.default.bSPECIAL;
+		// NOT an early return on a null rule. Decide() is null when the
+		// category is switched off, and a pickup whose SPECIAL was cleared
+		// while the category was ON has to get walk-over back -- otherwise
+		// it can be neither walked over nor grabbed until the next map.
+		bool grabbable = (Decide(a, pmo, p) != null);
+		a.bSPECIAL = (noWalk && grabbable) ? false : a.default.bSPECIAL;
 	}
 
 	private void Sweep(PlayerPawn pmo, PlayerInfo p, bool noWalk)
@@ -393,11 +398,19 @@ class RS_GrabPolicy : EventHandler
 		// actually moves -- there is no menu callback for a cvar, and polling a
 		// bool is cheaper than the ThinkerIterator it guards.
 		bool noWalk = Flag("rs_grab_nowalkover", p, true);
-		if (noWalk == lastNoWalk) return;
+		// The category switches move the same way, and a sweep is the only
+		// thing that applies a change to pickups already on the map.
+		int cats = (Flag("rs_grab_barrels", p, true)  ? 1 : 0)
+		         | (Flag("rs_grab_weapons", p, false) ? 2 : 0)
+		         | (Flag("rs_grab_corpses", p, false) ? 4 : 0);
+		if (noWalk == lastNoWalk && cats == lastCats) return;
+		bool walkChanged = (noWalk != lastNoWalk);
 		lastNoWalk = noWalk;
+		lastCats   = cats;
 		Sweep(p.mo, p, noWalk);
-		Console.Printf("[RSGRAB] walking over pickups is now %s",
-			noWalk ? "OFF -- reach for them" : "ON -- vanilla pickup");
+		if (walkChanged)
+			Console.Printf("[RSGRAB] walking over pickups is now %s",
+				noWalk ? "OFF -- reach for them" : "ON -- vanilla pickup");
 	}
 
 	// ---- the question ----------------------------------------------------
