@@ -219,32 +219,37 @@ class wr_Stats
 	// fraction of a number it never reaches. Declared (RS Weapon's rolled
 	// Capacity, BorderDoom's cached clip) or observed high-water, nothing
 	// else.
-	static play int, int Magazine(Weapon w)
+		// Returns source, LOADED, capacity. loaded is -1 when the caller should
+	// use its own ammoLoaded(); a mod that keeps the magazine in a plain
+	// field (Pandemonia's magCount) answers it here, because for those the
+	// ammo pool is the RESERVE and printing it over the capacity gave
+	// "MAG 187 / 30".
+static play int, int, int Magazine(Weapon w)
 	{
-		if (!w) return SRC_UNKNOWN, 0;
+		if (!w) return SRC_UNKNOWN, -1, 0;
 
 		if (isRS(w))
 		{
-			if (lockedBy(w, "LockedCapacity")) return SRC_MASKED, 0;
+			if (lockedBy(w, "LockedCapacity")) return SRC_MASKED, -1, 0;
 			int cap;
 			if (level.GetFieldInt(w, "Capacity", cap) && cap > 0)
-				return SRC_DECLARED, cap;
+				return SRC_DECLARED, -1, cap;
 		}
 
 		bool bd; int bdDmg, bdAcc, bdRof, bdRcl, bdClip, bdLvl;
 		[bd, bdDmg, bdAcc, bdRof, bdRcl, bdClip, bdLvl] = wr_CompatBorderDoom.StatsOf(w);
-		if (bd && bdClip > 0) return SRC_DECLARED, bdClip;
+		if (bd && bdClip > 0) return SRC_DECLARED, -1, bdClip;
 
 		// Pandemonia's magCount/magSize is a real declared magazine.
 		bool pm; int pmCur, pmMax;
 		[pm, pmCur, pmMax] = wr_CompatPandemonia.MagazineOf(w);
-		if (pm && pmMax > 0) return SRC_DECLARED, pmMax;
+		if (pm && pmMax > 0) return SRC_DECLARED, pmCur, pmMax;
 
 		bool got; int cap2;
 		[got, cap2] = wr_StatTracker.MagazineOf(w);
-		if (got) return SRC_OBSERVED, cap2;
+		if (got) return SRC_OBSERVED, -1, cap2;
 
-		return SRC_UNKNOWN, 0;
+		return SRC_UNKNOWN, -1, 0;
 	}
 
 	//==========================================================================

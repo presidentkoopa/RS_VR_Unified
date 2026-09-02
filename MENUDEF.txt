@@ -343,10 +343,6 @@ OptionMenu "RS_GrabDistMenu"
 	StaticText "square; 0 is off. A barrel wants about 2.", 1
 	Slider "  Tumble in flight",        "rs_dgrab_tumble", 0, 6, 0.5, 1
 
-	StaticText ""
-	StaticText "Miss the catch and it just lands at your feet.", 1
-	StaticText "Above zero instead makes a miss cost you: a", 1
-	StaticText "pickup gets used up, anything else hits you.", 1
 }
 
 //======================================================================

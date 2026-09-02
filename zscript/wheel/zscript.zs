@@ -2397,12 +2397,13 @@ class wr_Rig : EventHandler
 		// MAGAZINE. The loaded count is honest either way -- only CAPACITY
 		// can be cursed -- so this is the one row that prints a real number
 		// beside a mask rather than replacing the whole value.
-		int mSrc, cap;
-		[mSrc, cap] = wr_Stats.Magazine(w);
+		int mSrc, mLoaded, cap;
+		[mSrc, mLoaded, cap] = wr_Stats.Magazine(w);
+		int magNow = (mLoaded >= 0) ? mLoaded : ammoLoaded(w);   // the mod's own count where it keeps one
 		if (mSrc == wr_Stats.SRC_MASKED)
-			sheetRow(String.Format("MAG %d / ???", ammoLoaded(w)), SHEET_LOCK);
+			sheetRow(String.Format("MAG %d / ???", magNow), SHEET_LOCK);
 		else if (mSrc != wr_Stats.SRC_UNKNOWN)
-			sheetRow(String.Format("MAG %d / %d", ammoLoaded(w), cap), SHEET_TEXT);
+			sheetRow(String.Format("MAG %d / %d", magNow, cap), SHEET_TEXT);
 
 		int vSrc; double vel;
 		[vSrc, vel] = wr_Stats.Velocity(w);
@@ -7301,9 +7302,9 @@ class wr_Rig : EventHandler
 		}
 		else if (which == 3)
 		{
-			int ai, bi;
-			[sa, ai] = wr_Stats.Magazine(a);
-			[sb, bi] = wr_Stats.Magazine(b);
+			int ai, bi, la, lb;
+			[sa, la, ai] = wr_Stats.Magazine(a);
+			[sb, lb, bi] = wr_Stats.Magazine(b);
 			va = double(ai); vb = double(bi);
 			ta = String.Format("%d", ai);
 			tb = String.Format("%d", bi);

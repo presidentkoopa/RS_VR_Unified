@@ -23,7 +23,11 @@ addkeysection "RS VR Unified" RSVRUnified
 // gone and ONE bind is enough -- binding F13 to rs_holster_main alone already
 // an already-written config keep working; bind either, not both.
 //
-// NO DEFAULT BINDS -- bind these yourself under Customize Controls.
+// F13/F14 ARE BOUND BY DEFAULT. The engine synthesises exactly those keys
+// for an anchor-context grip (vk_openxrdevice.cpp), neither the engine's
+// binds nor any VR profile uses them, and they do not exist on a keyboard
+// -- so "bind it yourself under Customize Controls" was not a route anyone
+// could take. DefaultBind never overwrites an existing bind.
 //
 // STILL UNSOLVED, AND IT IS NOT A KEYCONF PROBLEM: the two managers arbitrate
 // purely on "your hand is only ever in one place", which nothing enforces.
@@ -35,6 +39,8 @@ alias rs_holster_main "netevent rs-vrhp-grab-main"
 
 addmenukey "Anchor: store/draw (OFF hand)" rs_holster_off
 alias rs_holster_off "netevent rs-vrhp-grab-off"
+defaultbind F13 rs_holster_main
+defaultbind F14 rs_holster_off
 
 
 // ---------------------------------------------------------------- holsters

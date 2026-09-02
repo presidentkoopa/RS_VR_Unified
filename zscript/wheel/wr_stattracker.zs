@@ -95,6 +95,7 @@ class wr_WeaponStats
 	int lastAmmo1;
 	int lastAmmo2;
 	bool seenAmmo;
+	int  lastPollTic;   // the tic this weapon's ammo was last polled -- see trackFire
 
 	// Rate of fire, as an exponential moving average of tics between shots
 	// rather than a straight average -- so a weapon's ROF reading tracks
@@ -345,15 +346,29 @@ class wr_StatEvents : EventHandler
 			return;
 		}
 
+		// A weapon that was NOT polled last tic (holstered, on the wheel's
+		// shelf, in nobody's hand) has a stale baseline: whatever another gun
+		// spent from the shared pool since then would read as this one's
+		// shot the moment it came back. Rebase, uncounted.
+		bool continuous = (s.lastPollTic == level.totaltime) || (s.lastPollTic == level.totaltime - 1);
+		s.lastPollTic = level.totaltime;
+		if (!continuous)
+		{
+			s.lastAmmo1 = a1;
+			s.lastAmmo2 = a2;
+			return;
+		}
+
 		int down1 = s.lastAmmo1 - a1;
 		int down2 = s.lastAmmo2 - a2;
 		int use1  = w.default.AmmoUse1 > 0 ? w.default.AmmoUse1 : 1;
+		int use2  = w.default.AmmoUse2 > 0 ? w.default.AmmoUse2 : use1;   // the alt pool's own cost
 
 		// A drop roughly the size of what ONE shot should cost -- not a
 		// refill (down <= 0), and not a reload-sized jump either (more
 		// than double what one shot costs). Anything outside that band is
 		// ambiguous and simply becomes the new baseline, uncounted.
-		bool fired = (down1 > 0 && down1 <= use1 * 2) || (down2 > 0 && down2 <= use1 * 2);
+		bool fired = (down1 > 0 && down1 <= use1 * 2) || (down2 > 0 && down2 <= use2 * 2);
 
 		// AND THIS HAND'S TRIGGER HAS TO BE DOWN.
 		//
