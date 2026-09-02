@@ -4003,6 +4003,10 @@ class wr_Rig : EventHandler
 		double dead = cv("wr_stickdead", 0.2);
 		if (sx * sx + sy * sy < dead * dead) return 0;
 
+		// layout() adds the wrist roll to every bearing (wr_roll); match
+		// against the same rotated bearing or the pick is off by the roll.
+		double roll = handRollOf(pmo, mRigHand) * cv("wr_roll", 0.0);
+
 		double want = atan2(sy, sx);
 
 		int best = 0;
@@ -4011,7 +4015,7 @@ class wr_Rig : EventHandler
 
 		for (int i = 0; i < n; ++i)
 		{
-			double d = want - bearingForIndex(i, n);
+			double d = want - (bearingForIndex(i, n) + roll);
 			while (d >  180) d -= 360;
 			while (d < -180) d += 360;
 			d = abs(d);
@@ -4718,13 +4722,19 @@ class wr_Rig : EventHandler
 		// Card aspect in the same units the fractions are in.
 		double aspect = sz.X / sz.Y;
 
+		// The live card ratio (wr_panel_w / wr_panel_h), not PANEL_W/PANEL_H:
+		// those constants are no longer what the card is drawn at, and every
+		// icon was squashed by the difference -- more so with tuned panels.
+		double cardAspect = panelWNow() / panelHNow();
+		if (cardAspect <= 0.0) cardAspect = PANEL_W / PANEL_H;
+
 		double w = boxWFrac;
-		double h = (w * (PANEL_W / PANEL_H)) / (aspect * CARD_STRETCH);
+		double h = (w * cardAspect) / (aspect * CARD_STRETCH);
 
 		if (h > boxHFrac)
 		{
 			h = boxHFrac;
-			w = h * aspect * CARD_STRETCH * (PANEL_H / PANEL_W);
+			w = h * aspect * CARD_STRETCH / cardAspect;
 		}
 		return w, h;
 	}
@@ -5277,7 +5287,10 @@ class wr_Rig : EventHandler
 			let held = Weapon(pmo.FindInventory(mTypes[i]));
 			if (held == null) continue;
 
-			paintFace(i, held, mCardColor[i], ammoLoaded(held) == 0, dumpNow);
+			// The card's resolved resting colour already folds wr_ammo in;
+			// asking ammoLoaded directly painted a dry face under an idle plate.
+			bool dry = (i < mBaseColor.Size()) && mBaseColor[i] == COLOR_DRY;
+			paintFace(i, held, mCardColor[i], dry, dumpNow);
 		}
 
 		if (dumpNow) mDebugPainted = true;
@@ -5435,7 +5448,8 @@ class wr_Rig : EventHandler
 			// panel behind it would be permanently unreachable.
 			string rawTag = (i < mCardLabel.Size() && mCardLabel[i].Length() > 0)
 			                  ? mCardLabel[i]
-			                  : ("" .. GetDefaultByType(mTypes[i]).GetTag());
+			                  : (heldNow != null ? ("" .. heldNow.GetTag())
+			                                     : ("" .. GetDefaultByType(mTypes[i]).GetTag()));
 			string tag = wrapLabel(rawTag, panelW * LABEL_FIT_FRAC, panelH);
 			int lid = level.AddBillboardPersistent(
 				(0, 0, 0), 3.5, 2.5, 0, 0,
@@ -6516,7 +6530,7 @@ class wr_Rig : EventHandler
 			// where that card's position has just been worked out.
 			if (i == mExpanded)
 			{
-				layoutExpansion(bearingForIndex(i, ringCount), fanSpread(ringCount),
+				layoutExpansion(bearing, fanSpread(ringCount),
 				                pos, viewRight, faceYaw, tilt, panelW, panelH, cellW);
 			}
 		}
@@ -6599,7 +6613,7 @@ class wr_Rig : EventHandler
 	{
 		// THE RING WINS. Its own sheet is already showing what the selector
 		// is on, and two sheets would be two answers to one question.
-		if (mOpen || cv("wr_inspect", 1.0) <= 0.0)
+		if (mOpen || mAltOpen || cv("wr_inspect", 1.0) <= 0.0)
 		{
 			endInspect();
 			return;
@@ -7668,6 +7682,10 @@ class wr_Rig : EventHandler
 		}
 
 		++mOpenTics;
+		// The constellation seam clock. It used to tick only inside
+		// updateHover's same-card branch, so moving the pointer off the
+		// parent card toward a star froze the lines half-drawn.
+		if (mExpanded >= 0) ++mFanTics;
 
 		// Before layout, so the artwork is queued for the same frame the cards
 		// are placed in.
@@ -8626,7 +8644,6 @@ class wr_Rig : EventHandler
 			// The constellation's own clock -- only ever ticks while an
 			// expansion is actually open, which is exactly when its lines
 			// need to know how far along they are.
-			if (mExpanded >= 0) ++mFanTics;
 
 			// Nothing to unfold when every weapon already has its own card --
 			// the fan would be a duplicate of cards already on the ring.
