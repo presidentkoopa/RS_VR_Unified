@@ -402,7 +402,7 @@ class RS_GrabPolicy : EventHandler
 		// thing that applies a change to pickups already on the map.
 		int cats = (Flag("rs_grab_barrels", p, true)  ? 1 : 0)
 		         | (Flag("rs_grab_weapons", p, false) ? 2 : 0)
-		         | (Flag("rs_grab_corpses", p, false) ? 4 : 0);
+		         | (Flag("rs_grab_corpses", p, true) ? 4 : 0);
 		if (noWalk == lastNoWalk && cats == lastCats) return;
 		bool walkChanged = (noWalk != lastNoWalk);
 		lastNoWalk = noWalk;
@@ -425,12 +425,12 @@ class RS_GrabPolicy : EventHandler
 	{
 		if (cat == 'Barrels') return Flag("rs_grab_barrels", p, true);
 		if (cat == 'Weapons') return Flag("rs_grab_weapons", p, false);
-		// FALSE, and it must match CVARINFO. This fallback is what runs when the
+		// TRUE, matching CVARINFO (rs_grab_corpses ships ON). This fallback is what runs when the
 		// cvar cannot be found at all, and a fallback that disagrees with the
 		// shipped default is a system that behaves differently depending on
 		// whether a lookup succeeded -- the worst kind of intermittent. See
 		// CVARINFO for why corpses are off: the novelty was beating the feature.
-		if (cat == 'Corpses') return Flag("rs_grab_corpses", p, false);
+		if (cat == 'Corpses') return Flag("rs_grab_corpses", p, true);
 		return true;
 	}
 

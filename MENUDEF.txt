@@ -749,10 +749,11 @@ OptionMenu "RR_Options"
 	// re-adding it; the label carries the warning because a toggle that
 	// advertises a behaviour it does not have is worse than no toggle at all.
 	// When Refill lands, this is the line to shorten back.
-	Option "Magazines (not implemented)", "rr_magazines", "OnOff"
-	StaticText "Reserved for the magazine and reserve-pool split. Does", "DarkGray"
-	StaticText "nothing yet: reloading is a gesture over one flat ammo", "DarkGray"
-	StaticText "pool either way, exactly as it is with this off.", "DarkGray"
+	Option "Magazines (experimental)", "rr_magazines", "OnOff"
+	StaticText "Splits each ammo pool into a magazine and a reserve; a", "DarkGray"
+	StaticText "seated reload moves reserve into the gun. An EMPTY gun is", "DarkGray"
+	StaticText "unselectable by slot keys -- draw it from a holster or the", "DarkGray"
+	StaticText "wheel, or turn this off to get the reserve back.", "DarkGray"
 
 	Option "Show reach dot", "rr_marks",     "OnOff"
 	Slider "Ammo model size", "rr_ammo_scale", 0.05, 4.0, 0.05, 2

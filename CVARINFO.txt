@@ -1117,9 +1117,11 @@ user bool rr_marks = true;
 
 // ---- behaviour ------------------------------------------------------------
 
-// Magazines. NOT IMPLEMENTED YET -- RR_Reload.Refill reads this cvar and
-// returns, so both settings behave identically today and the menu row says so
-// out loud. Kept rather than deleted because the feature is designed and
+// Magazines. EXPERIMENTAL -- RR_Reload.Refill seats reserve into the gun on a
+// completed reload, and RR_Reload.Magazines trims each held weapon's ammo item
+// to its magazine size every tic, spilling the rest into RR_Reserve. An empty
+// gun is unselectable by slot keys (draw it from a holster or the wheel). Kept
+// under a switch because the feature is designed and
 // sequenced (after the grip arbiter), and because of the rule at the top of this
 // file: a saved ini value always beats a default here, so a cvar that comes back
 // under the same name comes back with whatever players left it on.
