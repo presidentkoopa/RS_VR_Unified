@@ -1666,6 +1666,10 @@ class wr_Rig : EventHandler
 		{
 			string atag = ammoLabel(w);
 			int loaded  = ammoLoaded(w);
+			// Ammo1 null, Ammo2 live (a free primary whose alt-fire spends its
+			// own pool): ammoLoaded's -1 sentinel was being printed as a count.
+			if (loaded < 0 && w.Ammo2 != null) loaded = w.Ammo2.Amount;
+			if (loaded < 0) loaded = 0;
 
 			sheetRow(String.Format("%s %d", atag, loaded),
 			         loaded == 0 ? color(COLOR_AMMO_DRY) : color(SHEET_HOT));
@@ -2507,10 +2511,19 @@ class wr_Rig : EventHandler
 	{
 		Inventory a = hasMagazine(w) ? w.Ammo2 : w.Ammo1;
 		if (a == null) a = w.Ammo1;
-		if (a == null) return "AMMO";
+		// Ammo1/Ammo2 are only assigned in AttachToOwner, so a weapon on the
+		// floor -- the only kind the compare card is built for -- has neither.
+		// Fall back to the class-declared pool rather than the literal "AMMO".
+		class<Inventory> ac = null;
+		if (a != null)                 ac = (class<Inventory>)(a.GetClass());
+		else if (w.AmmoType1 != null)  ac = w.AmmoType1;
+		else if (w.AmmoType2 != null)  ac = w.AmmoType2;
+		if (ac == null) return "AMMO";
 
-		string t = "" .. a.GetTag();
-		if (t.Length() == 0) t = "" .. a.GetClassName();
+		string t;
+		if (a != null) t = "" .. a.GetTag();
+		else           t = "" .. GetDefaultByType(ac).GetTag();
+		if (t.Length() == 0) t = "" .. ac.GetClassName();
 		t = t.MakeUpper();
 		if (t.Length() > 10) t = t.Left(10);
 		return t;
@@ -4056,7 +4069,11 @@ class wr_Rig : EventHandler
 			// one -- otherwise hovering a dry weapon and moving off it quietly
 			// repaints it as a full one, and the warning is gone for good.
 			int rest = (card < mBaseColor.Size()) ? mBaseColor[card] : COLOR_IDLE;
-			level.UpdateBillboard(mPlates[card], 0, lit ? COLOR_HOVER : rest);
+			// plateShape(), never 0: UpdateBillboard writes its data argument
+			// straight into the billboard, and for an SDF plate that word IS
+			// the corner radius and border width. Passing 0 on the first hover
+			// turned the card into a sharp, rimless rectangle for good.
+			level.UpdateBillboard(mPlates[card], plateShape(), lit ? COLOR_HOVER : rest);
 
 			// The gradient's far end moves with the near end, or a lit card gets
 			// a gold top fading into the resting card's dark blue bottom.
@@ -4066,16 +4083,20 @@ class wr_Rig : EventHandler
 		}
 
 		int sub = subIndexOf(id);
-		if (sub >= 0)
+		if (sub >= 0 && sub < mSubIds.Size())
 		{
+			// subIndexOf matches the alpha-0 hit quad (mSubHits); the plate
+			// the player sees is mSubIds[sub]. Recolouring the hit quad was
+			// invisible, so fan cards never lit on hover.
+			int plate = mSubIds[sub];
 			// Back to the subcard's OWN resting colour, not the shared one --
 			// the same fix the ring cards needed, and it matters more here:
 			// hovering a dry clone and moving off it would repaint it as a
 			// loaded one, in the exact place you are trying to tell clones
 			// apart.
 			int srest = (sub < mSubBase.Size()) ? mSubBase[sub] : COLOR_SUB;
-			level.UpdateBillboard(id, 0, lit ? COLOR_HOVER : srest);
-			level.SetBillboardGradient(id,
+			level.UpdateBillboard(plate, plateShape(), lit ? COLOR_HOVER : srest);
+			level.SetBillboardGradient(plate,
 				lit ? GRAD_HOVER : (srest == COLOR_DRY ? GRAD_DRY : GRAD_IDLE));
 		}
 	}
@@ -5459,9 +5480,13 @@ class wr_Rig : EventHandler
 			int iid = 0;
 			double iw = ICON_W_FRAC, ih = ICON_H_FRAC;
 			let held = heldNow;
-			if (held != null && !canvasFace)
+			// iconFor is Inventory-typed on purpose (AltHUDIcon/Icon), but
+			// heldNow is the Weapon cast -- null for every inventory-page item,
+			// which is why those cards were blank plates with a name.
+			let heldItem = players[consoleplayer].mo.FindInventory(mTypes[i]);
+			if (heldItem != null && !canvasFace)
 			{
-				TextureID icon = iconFor(held);
+				TextureID icon = iconFor(heldItem);
 
 				if (icon.IsValid())
 				{
@@ -5530,7 +5555,10 @@ class wr_Rig : EventHandler
 			// card's class is the gun you are already carrying, so asking
 			// here would mark every card on that page.
 			let wcls = (class<Weapon>)(mTypes[i]);
-			int where = wcls ? heldWhere(wcls) : 0;
+			// Weapons page only. A model card's class IS the gun in hand (the
+			// cast succeeds for every shelf row), so asking there marked and
+			// glowed every card on the page.
+			int where = (wcls && mPage == PAGE_WEAPONS) ? heldWhere(wcls) : 0;
 			int mid = 0;
 			if (where != 0 && cv("wr_marker", 1.0) > 0.0)
 			{
@@ -5785,7 +5813,7 @@ class wr_Rig : EventHandler
 			// treats correctly -- a portal boundary is exactly the kind of
 			// thing the ring should not be planted through.
 			if (tracer.Trace(handP, handSector, ahead, wantForward,
-				TRACE_NoSky | TRACE_PortalRestrict, 0xFFFFFFFF, true))
+				TRACE_NoSky | TRACE_PortalRestrict, Line.ML_BLOCKING | Line.ML_BLOCKEVERYTHING, true))
 			{
 				// Pulled in short of the hit, not onto it, so the ring's
 				// own plates (which have real thickness once drawn) don't
@@ -5866,13 +5894,13 @@ class wr_Rig : EventHandler
 			Sector anchorSector = level.PointInSector((mAnchor.X, mAnchor.Y));
 			let sideTracer = new("LineTracer");
 			if (sideTracer.Trace(mAnchor, anchorSector, sideDir, sideMax,
-				TRACE_NoSky | TRACE_PortalRestrict, 0xFFFFFFFF, true))
+				TRACE_NoSky | TRACE_PortalRestrict, Line.ML_BLOCKING | Line.ML_BLOCKEVERYTHING, true))
 			{
 				mMaxRingR = max(0.0, sideTracer.Results.Distance - sideMargin);
 			}
 			let sideTracer2 = new("LineTracer");
 			if (sideTracer2.Trace(mAnchor, anchorSector, (0,0,0) - sideDir, sideMax,
-				TRACE_NoSky | TRACE_PortalRestrict, 0xFFFFFFFF, true))
+				TRACE_NoSky | TRACE_PortalRestrict, Line.ML_BLOCKING | Line.ML_BLOCKEVERYTHING, true))
 			{
 				double d = max(0.0, sideTracer2.Results.Distance - sideMargin);
 				if (mMaxRingR < 0.0 || d < mMaxRingR) mMaxRingR = d;
@@ -6653,9 +6681,12 @@ class wr_Rig : EventHandler
 		}
 
 		mInspectHand = hand;
-		++mInspectTics;
 
 		int want = int(cv("wr_inspect_dwell", 18.0));
+		// Capped just past the dwell. The counter is also the grace that runs
+		// down after the laser leaves the target, so an uncapped count froze
+		// the card in mid-air for exactly as long as you had been looking.
+		if (mInspectTics < want + 3) ++mInspectTics;
 		if (mInspectTics < want) return;
 
 		// TWO DIFFERENT CARDS, and which one appears depends on whether
@@ -7563,7 +7594,19 @@ class wr_Rig : EventHandler
 			double ft = 1.0 - (double(mFlipTics) / CLOSE_TICS);
 			double flipRoll = (1.0 - (1.0 - ft) * (1.0 - ft)) * cv("wr_flip", 360.0);
 			if (mFlipCard >= 0 && mFlipCard < mIds.Size())
-				level.RollBillboard(mIds[mFlipCard], flipRoll);
+			{
+				// mIds are the alpha-0 hit quads. Rolling one of those is
+				// invisible; the visible members are the plate and what
+				// sits on it. (Sub-cards roll mSubIds, which ARE the plates.)
+				int c = mFlipCard;
+				if (c < mPlates.Size())               level.RollBillboard(mPlates[c],  flipRoll);
+				if (c < mFaces.Size()   && mFaces[c])   level.RollBillboard(mFaces[c],   flipRoll);
+				if (c < mIcons.Size()   && mIcons[c])   level.RollBillboard(mIcons[c],   flipRoll);
+				if (c < mLabels.Size()  && mLabels[c])  level.RollBillboard(mLabels[c],  flipRoll);
+				if (c < mAccents.Size() && mAccents[c]) level.RollBillboard(mAccents[c], flipRoll);
+				if (c < mAmmos.Size()   && mAmmos[c])   level.RollBillboard(mAmmos[c],   flipRoll);
+				if (c < mGauges.Size()  && mGauges[c])  level.RollBillboard(mGauges[c],  flipRoll);
+			}
 			else if (mSubFlipCard >= 0 && mSubFlipCard < mSubIds.Size())
 				level.RollBillboard(mSubIds[mSubFlipCard], flipRoll);
 		}
