@@ -243,6 +243,18 @@ class RS_Swing : EventHandler
 				lastPalm[h] = (lastPalm[h].x * cs - lastPalm[h].y * sn,
 				               lastPalm[h].x * sn + lastPalm[h].y * cs,
 				               lastPalm[h].z);
+				// The deltas already in the window were sampled in the old
+				// orientation, and PeakVelocity hands the largest of them to
+				// the throw -- a snap turn mid wind-up used to launch the
+				// object off by the snap angle. Seven 2D rotations, turn tics
+				// only.
+				for (int i = 0; i < filled[h]; i++)
+				{
+					Vector3 dd = delta[h * WINDOW + i];
+					delta[h * WINDOW + i] = (dd.x * cs - dd.y * sn,
+					                         dd.x * sn + dd.y * cs,
+					                         dd.z);
+				}
 			}
 
 			Vector3 d = palm - lastPalm[h];

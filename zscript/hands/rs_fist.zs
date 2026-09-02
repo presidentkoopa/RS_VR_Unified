@@ -48,8 +48,15 @@ class RS_HandFist play
 			return false;
 		// GetClassName() is a Name; IndexOf is a String method, so it has
 		// to land in a string first.
+		// THE ONE DEFINITION. RS_HandsAlwaysOn.IsFist delegates here, so the
+		// drawing side and the store guard cannot disagree about a weapon:
+		// a Fist subclass, any class with "fist" in its name (any case), or
+		// whatever replaces Fist in DECORATE.
+		if (cls is 'Fist')
+			return true;
 		string cn = cls.GetClassName();
-		if (cn.IndexOf("Fist") >= 0)
+		cn = cn.MakeLower();
+		if (cn.IndexOf("fist") >= 0)
 			return true;
 
 		class<Actor> repl = Actor.GetReplacement((class<Actor>)("Fist"));

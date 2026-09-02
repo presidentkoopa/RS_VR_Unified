@@ -427,7 +427,9 @@ class RS_GrabViz : EventHandler
     private void DrawAimBeams(PlayerPawn pmo, PlayerInfo p)
     {
         if (!RS_Reach.Flag("rs_dgrab_beam", p, true)
-            || !RS_Reach.Flag("rs_dgrab", p, true))
+            || !RS_Reach.Flag("rs_dgrab", p, true)
+            || !RS_Reach.Flag("rs_grab", p, true)     // the master switch: RS_Pull aborts on it, the ray must too
+            || pmo.Health <= 0)
         {
             // BLANK THE TWO SLOTS WE OWN -- never lower the count. Fixed
             // 2026-08-26: this used to call Level.SetBeamCount(0, 0, 0),
@@ -499,7 +501,13 @@ class RS_GrabViz : EventHandler
             // other, so one number covers both hands with no per-hand sign.
             // A gun grip sits near zero, so the two are ~90 degrees apart and
             // cannot be confused.
-            if (RS_Reach.Flag("rs_dgrab_palm", p, true))
+            // The lock is resolved BEFORE the palm gate: a lock is only
+            // palm-gated on acquisition (rs_grab.zs) and RS_Pull keeps it
+            // through any wrist roll, so its reeling beam must keep drawing
+            // -- otherwise the object pulses as locked and a flick still
+            // hauls it in while the line that explains that has vanished.
+            Actor lk = pull ? pull.Locked(h) : null;
+            if (!lk && RS_Reach.Flag("rs_dgrab_palm", p, true))
             {
                 double rl = abs(RS_Basis.NormDeg((h == 0) ? pmo.MainHandRoll : pmo.OffhandRoll));
                 double tgt = RS_Reach.Num("rs_dgrab_palm_roll", p, 90.0);
@@ -521,7 +529,6 @@ class RS_GrabViz : EventHandler
             }
 
             Vector3 a = RS_Reach.Centre(pmo, p, h);
-            Actor lk = pull ? pull.Locked(h) : null;
             Actor t  = lk ? lk : gh.FarTargetFor(h);
 
             if (t)

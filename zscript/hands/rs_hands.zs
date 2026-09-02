@@ -260,13 +260,10 @@ class RS_HandsAlwaysOn : EventHandler
 	// that announce themselves as fists.
 	private bool IsFist(Weapon w)
 	{
-		if (w == null)
-			return false;
-		if (w is 'Fist')
-			return true;
-		String n = w.GetClassName();
-		n = n.MakeLower();
-		return n.IndexOf("fist") >= 0;
+		// RS_HandFist.IsFistClass is the single definition; a second one here
+		// drifted (case-sensitive vs not, replacement or not) and the hand
+		// drew a weapon as empty that the holsters refused to store into.
+		return w != null && RS_HandFist.IsFistClass(w.GetClass());
 	}
 
 	// Stand in for a mod's fist weapon: stop the weapon drawing and show the
