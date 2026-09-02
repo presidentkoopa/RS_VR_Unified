@@ -1198,7 +1198,13 @@ class wr_Constellation : EventHandler
 
 		// PendingWeapon, never a raw slot write -- the raise has to run or the
 		// gun appears already up, which reads as a glitch.
-		pmo.player.PendingWeapon = w;
+		// THE HAND THAT OPENED THIS. BringUpWeapon raises a weapon in whichever
+		// hand its bOffhandWeapon flag last said, so a bare PendingWeapon put
+		// the pick in the weapon's previous hand, not the one wearing the
+		// layout. Same seat the holsters use: exact instance, this hand.
+		w.bOffhandWeapon = (mHand == 1);
+		if (w.SisterWeapon != null) w.SisterWeapon.bOffhandWeapon = w.bOffhandWeapon;
+		pmo.MoveWeaponToHand(w, mHand, true);
 
 		// THROUGH THE RIG, NOT Close(). Close() only takes the billboards down.
 		// The SESSION -- the claimed sticks, the forced laser, the slowed clock --

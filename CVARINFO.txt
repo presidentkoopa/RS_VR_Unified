@@ -198,7 +198,12 @@ user bool  rs_volviz = true;
 // units, because that is what the renderer does with them: the placement scale
 // is applied outside the placement offset, so the drawn oval moves by
 // ofs * scale * master and not by ofs.
-user int rs_grab_scale_space = 0;
+// 1, NOT 0. The shipped master (0.025) and axes (1/4/3) were dialled in a
+// headset against the DRAWN oval, which the renderer scales in mesh space;
+// read as map units (space 0) they floor to a ~0.05-unit ellipsoid, so a
+// near grab only ever succeeded with the palm physically inside the target's
+// collision cylinder while the gauge showed a reach forty times larger.
+user int rs_grab_scale_space = 1;
 
 // THE TWELVE NUMBERS BELOW ARE DIALLED IN A HEADSET, 2026-08-29, and replaced
 // the theoretical ones this file shipped with. They came out of the owner's own

@@ -522,6 +522,7 @@ class wr_Rig : EventHandler
 	// ResizeBillboard per tic, so they need to know how far along the opening
 	// actually is. Reset by expandSlot, cleared by collapseSlot.
 	int mFanTics;
+	int mRebuildTics;             // commitModel: rebuild the page this many tics from now
 	Array<int>    mSubShadows;
 	Array<int>    mSubGauges;
 	int mExpanded;                // index into mIds, or -1
@@ -7534,7 +7535,9 @@ class wr_Rig : EventHandler
 	{
 		if (!pmo.OverrideAttackPosDir) return 0;
 
-		return (hand == 1) ? pmo.OffhandRoll : pmo.AttackRoll;
+		// MainHandRoll, not AttackRoll: P_PlayerThink zeroes AttackRoll every
+		// tic before WorldTick runs, so wr_roll never turned the main-hand ring.
+		return (hand == 1) ? pmo.OffhandRoll : pmo.MainHandRoll;
 	}
 
 	//==========================================================================
@@ -7690,6 +7693,7 @@ class wr_Rig : EventHandler
 
 		// Before layout, so the artwork is queued for the same frame the cards
 		// are placed in.
+		if (mRebuildTics > 0 && --mRebuildTics == 0) rebuildPage(pmo);   // see commitModel
 		repaintFaces(pmo);
 
 		// Same reason, and the same frame: rows rebuilt here are positioned by
@@ -8724,6 +8728,13 @@ class wr_Rig : EventHandler
 
 		bool wantOffhand = (hand == 1);
 
+		// heldWhere() == 1: the card is the gun already in this hand, and the
+		// marker on it promises that taking it changes nothing. Re-seating it
+		// reset the live psprite to Ready -- cutting a state-driven reload or
+		// a burst short -- and cancelled a pending slot-key switch.
+		let already = wantOffhand ? player.OffhandWeapon : player.ReadyWeapon;
+		if (already == weap) return;
+
 		if (weap.bNoHandSwitch && weap.bOffhandWeapon != wantOffhand) return;
 
 		// Coming out of the other hand: empty it first, or the same weapon is
@@ -8870,7 +8881,12 @@ class wr_Rig : EventHandler
 		// Stays open on purpose -- picking a look is something you do a few
 		// times in a row, comparing, and closing after each one would make
 		// that four gestures instead of one.
-		rebuildPage(pmo);
+		// NOT rebuildPage(pmo) here. The cycle went into ModelSwapper's bridge
+		// cvar, which ITS WorldTick consumes; this runs from NetworkProcess,
+		// which the engine dispatches before P_Ticker, so an immediate rebuild
+		// read the previous pick and left the 'worn' highlight on the old
+		// model. Two tics, so it lands whichever way the handlers are ordered.
+		mRebuildTics = 2;
 	}
 
 	private void commit(PlayerPawn pmo)

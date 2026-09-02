@@ -803,6 +803,16 @@ class RS_HolsterManager : EventHandler
 		spawnTries[i]++;
 		if (spawnTries[i] > CALIBRATE_MAX_TRIES)
 		{
+			// NO HEAD POSE, NO HOLSTERS. HmdPos is written only by the OpenXR
+			// backend in single player; on a desktop session, the GL/OpenVR
+			// backend, or any netgame it stays (0,0,0) forever. Calibrating
+			// anyway parked all nine anchors around the map origin and kept
+			// nine bright markers and nine props hovering there all level.
+			if (pawn.HmdPos.Length() == 0)
+			{
+				Console.Printf("RS_HOLSTER: no head pose after %d tics -- holsters stay off this map", spawnTries[i]);
+				return;
+			}
 			// Never got a plausible reading. Fall back to the pawn's own
 			// height so holsters still exist, rather than silently doing
 			// nothing forever with no indication why.
@@ -2478,6 +2488,23 @@ class RS_HolsterManager : EventHandler
 
 		if (holsterIdx < 0)
 			return; // hand was not in a holster; nothing claimed it
+
+		// A HAND ON LOAN TO THE POUCH, OR CLAIMED BY ANOTHER LANE, IS NOT
+		// FREE TO STORE OR DRAW. The engine's store/draw pulse fires on the
+		// falling edge of any clean tap that started inside an anchor volume,
+		// without consulting the grip claims -- so a magazine carry released
+		// inside a pectoral holster drew that holster's gun into the fisted
+		// hand, and the pouch's restore on the next tic stranded it.
+		ensurePouchPrevious();
+		Weapon lent  = offhand ? pouchPreviousOff[i] : pouchPreviousMain[i];
+		int    claim = offhand ? pawn.GripClaimOff  : pawn.GripClaimMain;
+		if (lent != null || claim != GRIPSUBJ_None)
+		{
+			if (verboseDiag())
+				Console.Printf("RS_HOLSTER: %s hand is claimed (%d) or lent to the pouch -- ignoring store/draw",
+					offhand ? "off" : "main", claim);
+			return;
+		}
 
 		// A HAND WITH A SWITCH ALREADY IN FLIGHT IS NOT A TRUSTWORTHY WITNESS.
 		//
