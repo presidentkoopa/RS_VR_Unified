@@ -72,7 +72,7 @@ rr/cellin     DSSWTCHX
 rr/podin      DSSWTCHX
 
 rr/stow       DSSWTCHN
-rr/drop       DSBDCLOS
+rr/drop       DSBDCLS
 
 
 // ============================================================

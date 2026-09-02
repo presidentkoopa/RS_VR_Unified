@@ -687,7 +687,11 @@ class RS_Held : EventHandler
 				// -- that would flip every grab ray in the package to fix one
 				// barrel.
 				a.Pitch = -RS_Reach.HandPitch(pmo, hand);
-				a.Angle = (hand == HAND_MAIN) ? pmo.AttackAngle : pmo.OffhandAngle;
+				// +90: the engine stores AttackAngle/OffhandAngle 90 degrees off
+				// actor-yaw convention and every consumer adds it back (p_map.cpp
+				// aimAngle, rs_grab.zs, rr_point.zs). Raw, the carried prop faced
+				// a quarter turn off the wrist for the whole hold.
+				a.Angle = ((hand == HAND_MAIN) ? pmo.AttackAngle : pmo.OffhandAngle) + 90.0;
 			}
 
 			// WHAT THIS PATH ACTUALLY WROTE.

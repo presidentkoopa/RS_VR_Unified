@@ -529,7 +529,6 @@ user float rs_flick_pitch = 5.0;
 // which is the question you have while pointing -- a drawn cone would answer
 // "where can I aim", which is the one you do not.
 user bool  rs_dgrab_beam = true;
-user float rs_dgrab_beam_thick = 0.7;
 
 // Flash whatever you are pointing at, and whatever is in your hand.
 //
