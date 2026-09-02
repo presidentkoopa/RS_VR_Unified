@@ -7,27 +7,6 @@
 AddOptionMenu "OptionsMenu"
 {
 	Submenu "RS Hands", "RS_HandsOptions"
-	Submenu "RS Hand HUD", "RS_HandHUDOptions"
-}
-
-OptionMenu "RS_HandHUDOptions"
-{
-	Title "RS Hand HUD"
-	StaticText "Readouts strapped to your wrists: the weapon's ammo on", "DarkGray"
-	StaticText "one, health / armor / keys / mugshot on the other.", "DarkGray"
-	StaticText "Roll a wrist toward your face to read it.", "DarkGray"
-	StaticText ""
-	Option "Hand HUD",                 "rs_handhud",         "OnOff"
-	Slider "Plate size",               "rs_handhud_scale",   0.3, 3.0, 0.1, 1
-	Option "Swap hands (left-handed)", "rs_handhud_swap",    "OnOff"
-	Option "Show the mugshot",         "rs_handhud_mugshot", "OnOff"
-	StaticText ""
-	StaticText "Wrist gate", "Gold"
-	Option "Always shown (for placing)", "rs_handhud_always", "OnOff"
-	Slider "Main wrist: shown at roll",  "rs_handhud_roll_main", -180, 180, 5, 0
-	Slider "Off wrist: shown at roll",   "rs_handhud_roll_off",  -180, 180, 5, 0
-	Slider "Tolerance (degrees)",        "rs_handhud_roll_tol",  10, 90, 5, 0
-	Slider "Fade (tics)",                "rs_handhud_fade",      1, 20, 1, 0
 }
 
 OptionMenu "RS_HandsOptions"
