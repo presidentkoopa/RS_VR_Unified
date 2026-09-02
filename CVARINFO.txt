@@ -2032,3 +2032,36 @@ user float wr_hive_dist  = 1.0;
 // the outer cells beside your ears, higher numbers flatten it toward a
 // wall. Under about 0.5 it closes behind your head.
 user float wr_hive_dome  = 1.7;
+
+// ============================================================================
+// RS_HandHUD -- the HUD on your hands (zscript/handhud/rs_handhud.zs).
+// ============================================================================
+user bool  rs_handhud = true;
+
+// Plate size, on top of the MODELDEF Scale.
+user float rs_handhud_scale = 1.0;
+
+// Weapon plate on the main wrist and vitals on the off forearm by default;
+// on, the two swap (left-handers).
+user bool  rs_handhud_swap = false;
+
+// THE WRIST GATE. A plate fades in when that wrist is rolled to within
+// rs_handhud_roll_tol degrees of its target roll, and out otherwise -- the
+// way you check a watch. The engine's roll fields turn opposite to actor
+// roll, so tune the targets by feel rather than by reasoning about sign.
+user float rs_handhud_roll_main = 90.0;
+user float rs_handhud_roll_off  = -90.0;
+user float rs_handhud_roll_tol  = 45.0;
+
+// Fade length in tics.
+user float rs_handhud_fade = 6.0;
+
+// Ignore the gate: both plates always up. For placing them.
+user bool  rs_handhud_always = false;
+
+// The status bar face on the vitals plate.
+user bool  rs_handhud_mugshot = true;
+
+// Once a second on the console: both wrist rolls, the gate verdicts, whether
+// each layer is up, and the numbers being painted.
+user bool  rs_handhud_debug = false;

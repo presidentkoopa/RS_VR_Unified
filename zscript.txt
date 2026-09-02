@@ -135,3 +135,8 @@ version "5.0.0"
 // code path than the one that ships would defeat the point.
 #include "zscript/arbiter/rs_griparbiter.zs"
 
+// -- hand HUD: plates on the wrists, painted from the stock HUD assets -------
+// After hands (it draws on layers beside theirs) and after the wheel and
+// reload (it reads wr_Stats / RR_Mag / RR_Feed for its numbers).
+#include "zscript/handhud/rs_handhud.zs"
+

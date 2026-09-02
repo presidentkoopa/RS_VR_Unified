@@ -81,5 +81,5 @@
 // writer of the ledger never ran. wr_GunTag stays off; see above.
 GameInfo
 {
-	AddEventHandlers = "RS_HandsAlwaysOn", "RS_HandWorldHandler", "RS_GrabPolicy", "RS_GrabHandler", "RS_Swing", "RS_Held", "RS_Pull", "RS_Route", "RS_GrabViz", "RS_HolsterManager", "RR_Reload", "wr_Rig", "wr_Constellation", "wr_Honeycomb", "wr_StatEvents"
+	AddEventHandlers = "RS_HandsAlwaysOn", "RS_HandWorldHandler", "RS_GrabPolicy", "RS_GrabHandler", "RS_Swing", "RS_Held", "RS_Pull", "RS_Route", "RS_GrabViz", "RS_HolsterManager", "RR_Reload", "wr_Rig", "wr_Constellation", "wr_Honeycomb", "wr_StatEvents", "RS_HandHUD"
 }
