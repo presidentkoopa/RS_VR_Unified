@@ -75,6 +75,7 @@ class RR_Reload : EventHandler
 	private int  claimed;     // what we last wrote to this hand's GripClaim
 	private Name target;      // class of the weapon being fed
 	private int  guard;       // debounce, tics
+	private bool gripWas[2];  // last tic's squeeze per hand -- Watch wants a rising edge
 
 	// NO Get() ACCESSOR, DELIBERATELY. One was here --
 	// `RR_Reload(EventHandler.Find("RR_Reload"))` -- with zero call sites, and
@@ -140,8 +141,19 @@ class RR_Reload : EventHandler
 
 			if (IsOurSubject(pmo.GripClaimMain)) pmo.GripClaimMain = GRIPSUBJ_None;
 			if (IsOurSubject(pmo.GripClaimOff))  pmo.GripClaimOff  = GRIPSUBJ_None;
+
+			// The ammunition overlay is a psprite on a serialised layer, so a
+			// save taken mid-carry loads with the magazine still drawn on a
+			// hand this handler no longer knows is carrying anything.
+			if (pmo.player)
+			{
+				RR_Ammo.Hide(pmo.player, 0);
+				RR_Ammo.Hide(pmo.player, 1);
+			}
 		}
 
+		gripWas[0] = false;
+		gripWas[1] = false;
 		claimed = GRIPSUBJ_None;
 		phase   = RR_IDLE;
 		target  = 'None';
@@ -182,8 +194,11 @@ class RR_Reload : EventHandler
 		// so it cannot wait for a reload that the player cannot yet perform.
 		Magazines(p, pmo);
 
-		if (phase == RR_CARRY) { Carry(p, pmo); return; }
-		Watch(p, pmo);
+		if (phase == RR_CARRY) Carry(p, pmo);
+		else                   Watch(p, pmo);
+
+		gripWas[0] = GripHeld(pmo, 0);
+		gripWas[1] = GripHeld(pmo, 1);
 	}
 
 	// ---- idle: watch both hands for a grip inside the pouch -----------------
@@ -198,7 +213,12 @@ class RR_Reload : EventHandler
 		for (int h = 0; h < 2; h++)
 		{
 			if (!InPouch(pmo, h)) continue;
-			if (!GripHeld(pmo, h)) continue;
+			// A PRESS inside the pouch, the same rule the engine's holster tap
+			// uses. A hand that drifts into the chest with the grip already
+			// down -- the main-hand grip is the modifier layer, and holding it
+			// while reaching across the body is ordinary -- must not draw a
+			// magazine, swap the weapon out, and then DROP it on release.
+			if (!GripHeld(pmo, h) || gripWas[h]) continue;
 
 			int g = 1 - h;
 			let w = WeaponIn(p, g);

@@ -132,6 +132,13 @@ class RS_HolsterMarker : Actor
 		}
 	}
 
+	// The catch radius this marker stands for, as a multiple of the 3.0 the
+	// MODELDEF Scale draws. The table's rule is "what you see is the actual
+	// volume", and the pouch is the one holster with a wider radius (3.5) --
+	// without this its reticle claimed the hand half an inch outside itself.
+	private double radiusMult;
+	void SetRadius(double r) { radiusMult = r / 3.0; }
+
 	void SetHot(bool hot)
 	{
 		int wantShape = holsterMarkerShape();
@@ -259,7 +266,8 @@ class RS_HolsterMarker : Actor
 		// RS_HolsterProp already uses to size the stored weapon, just driven
 		// by proximity here instead of a fixed cvar. markerScale() composes on
 		// top as a flat user preference, not a replacement for the tighten.
-		double s = (1.0 - (0.28 * proximity01)) * markerScale();
+		double s = (1.0 - (0.28 * proximity01)) * markerScale()
+		         * (radiusMult > 0.0 ? radiusMult : 1.0);
 		Scale = (s, s);
 
 		// Pulse, hot state only -- a marker breathing at every holster all

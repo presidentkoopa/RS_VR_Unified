@@ -731,6 +731,11 @@ class RS_HolsterManager : EventHandler
 		// pouchClaimed* flags exist to prevent.
 		pouchClaimedMain[i] = false;
 		pouchClaimedOff[i] = false;
+		// Re-seed body yaw from the head on the next calibrated tic. A
+		// respawned pawn faces its spawn spot while bodyYaw still held the
+		// corpse's facing, and the neck deadzone only ever follows the
+		// EXCESS, so the anchors converged to 50 degrees off and stayed.
+		bodyYawInit[i] = false;
 	}
 
 	// Destroy this player's props and markers. updateProps respawns any that
@@ -1582,6 +1587,7 @@ class RS_HolsterManager : EventHandler
 					markers[pi].SetVisible(false);
 				if (pi < props.Size() && props[pi] != null)
 					props[pi].SetVisible(false);
+					props[pi].shownClass = null;   // forget the class: ShowWeapon only re-shows on a class CHANGE
 				continue;
 			}
 
@@ -1651,6 +1657,7 @@ class RS_HolsterManager : EventHandler
 				markers[pi].SetVisible(wantMarkers);
 				markers[pi].SetOrigin(at, true);
 				markers[pi].SetHot(hot);
+				markers[pi].SetRadius(hsRadius);   // the pouch is 3.5, the rest 3.0
 
 				// Same live-tunable orientation the weapon prop uses (edYaw/
 				// edPitch/edRoll, not a fresh GetHolster read) -- so dragging
