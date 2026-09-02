@@ -4,9 +4,29 @@
 // Adds an RS Hands entry to the normal Options menu. AddOptionMenu appends to
 // the engine's existing menu rather than replacing it, so this coexists with
 // whatever else is loaded.
+// ONE ENTRY IN THE MAIN OPTIONS MENU FOR THE WHOLE PACKAGE. Every lane used
+// to hook itself into OptionsMenu separately -- six entries with six naming
+// styles scattered through the list. They all live under this hub now; the
+// per-module pages underneath are unchanged. The companion RS_HandHud.pk3
+// adds its own "Hand HUD" row to this hub with AddOptionMenu, so it appears
+// here without this package knowing about it.
 AddOptionMenu "OptionsMenu"
 {
-	Submenu "RS Hands", "RS_HandsOptions"
+	Submenu "Unified VR HUD and Interaction Options", "RS_VRUnifiedOptions"
+}
+AddOptionMenu "OptionsMenuSimple"
+{
+	Submenu "Unified VR HUD and Interaction Options", "RS_VRUnifiedOptions"
+}
+
+OptionMenu "RS_VRUnifiedOptions"
+{
+	Title "Unified VR HUD and Interaction"
+	Submenu "Hands",            "RS_HandsOptions"
+	Submenu "Hand Grab",        "RS_GrabMenu"
+	Submenu "Body Holsters",    "RS_HolsterOptions"
+	Submenu "Reloading",        "RR_Options"
+	Submenu "Selection System", "wr_Options"
 }
 
 OptionMenu "RS_HandsOptions"
@@ -190,10 +210,8 @@ OptionMenu "RS_HandsOffPlacement"
 // Hand grabbing gets its own Options entry. It is not a property of any weapon
 // -- it is how picking anything up works, and it is the thing most likely to be
 // tuned repeatedly.
-AddOptionMenu "OptionsMenu"
-{
-	Submenu "Hand Grab", "RS_GrabMenu"
-}
+// Reached from the "Unified VR HUD and Interaction Options" hub at the top
+// of this file.
 
 OptionMenu "RS_GrabMenu"
 {
@@ -547,11 +565,8 @@ OptionValue "RS_HolsterActiveCount"
 	8, "8 -- + Hip (dual)"
 }
 
-AddOptionMenu "OptionsMenu"
-{
-	StaticText " "
-	Submenu "Body Holsters", "RS_HolsterOptions"
-}
+// Reached from the "Unified VR HUD and Interaction Options" hub at the top
+// of this file.
 
 // ---------------------------------------------------------------------
 // Body Holsters. Split into subpages rather than one long scroll -- this
@@ -691,10 +706,8 @@ OptionMenu "RS_HolsterTiming"
 // AddOptionMenu appends to the engine's own Options menu rather than replacing
 // it, so this coexists with RS_Hands, RS_Holsters and anything else loaded.
 
-AddOptionMenu "OptionsMenu"
-{
-	Submenu "RS Reload", "RR_Options"
-}
+// Reached from the "Unified VR HUD and Interaction Options" hub at the top
+// of this file.
 
 OptionValue "RR_FeedForce"
 {
@@ -844,8 +857,8 @@ OptionMenu "RR_Sizes"
 // Added to BOTH option menus: OptionsMenuSimple is what a lot of people
 // actually browse, and a mod that only appears in the full one is a mod half
 // its users never find.
-AddOptionMenu OptionsMenu       { Submenu "RSVR HUD", wr_Options }
-AddOptionMenu OptionsMenuSimple { Submenu "RSVR HUD", wr_Options }
+// Reached from the "Unified VR HUD and Interaction Options" hub at the top
+// of this file (as "Selection System"), in both the full and the simple menu.
 
 OptionMenu wr_Options
 {
