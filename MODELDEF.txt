@@ -476,3 +476,44 @@ Model RR_AmmoBelt
 	AngleOffset 0.0
 	BaseFrame
 }
+
+// ============================================================
+// RS_HandHUD -- a flat plate on the back of each wrist, skinned with the
+// canvas texture the handler paints. Same base as the hands and the reload's
+// in-hand magazine (Offset 0 -18 -12, UseHandOffsets, PitchOffset 90): those
+// four lines put the model at the hand origin, and everything after them is
+// where THIS plate sits relative to it.
+//
+// TUNING KNOBS, until a placement mode exists: Offset x/y/z slides the plate
+// in the hand's own frame, Scale sets the half-extents (x = width, y = height,
+// in model units; 2 x 1 is roughly 12 x 6 cm), AngleOffset/PitchOffset/
+// RollOffset turn it. Text upside down? Flip the vt lines in rs_plate.obj.
+Model RS_HandHUDPlateMain
+{
+	Path "models"
+	Model 0 "rs_plate.obj"
+	Skin 0 "RSHUDMAIN"
+	Scale 2.0 1.0 1.0
+	Offset 0.0 -18.0 -12.0
+	UseHandOffsets
+	NOAUTOREVERSE
+	PitchOffset 90.0
+	RollOffset 0.0
+	AngleOffset 0.0
+	BaseFrame
+}
+
+Model RS_HandHUDPlateOff
+{
+	Path "models"
+	Model 0 "rs_plate.obj"
+	Skin 0 "RSHUDOFF"
+	Scale 2.0 1.0 1.0
+	Offset 0.0 -18.0 -12.0
+	UseHandOffsets
+	NOAUTOREVERSE
+	PitchOffset 90.0
+	RollOffset 0.0
+	AngleOffset 0.0
+	BaseFrame
+}
