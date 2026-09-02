@@ -1006,37 +1006,16 @@ class RS_HolsterManager : EventHandler
 		int gm = grabbedMain[i];
 		int go = grabbedOff[i];
 
-		// Position AND orientation follow the hand, so a holster is placed the
-		// way you would actually place one: hold your hand where the gun goes,
-		// angled how the gun should sit, and let go.
+		// POSITION ONLY. A holster is placed by holding your hand where the
+		// gun goes and letting go. Orientation is the table's (hsPitch 90:
+		// barrel straight down along the body) for every anchor -- the earlier
+		// build also captured the hand's pitch/yaw/roll at drop time, which
+		// left each holster holding its weapon at whatever angle the wrist
+		// happened to be at, and that is not a feature anyone asked for.
 		if (gm >= 0)
-		{
 			worldToBody(i, pawn, pawn.AttackPos, edFwd[gm], edSide[gm], edFrac[gm]);
-			// NEGATED: the engine writes AttackPitch/OffhandPitch as
-			// -weaponangles[PITCH] and every consumer flips it back (hw_weapon
-			// aimPitch = -AttackPitch, rs_grab.zs HandPitch). The table and
-			// the props are in actor-pitch space (hsPitch 90 = barrel down),
-			// so a raw copy stored every dragged pitch mirrored about level.
-			edPitch[gm] = -pawn.AttackPitch;
-			// MainHandRoll, not AttackRoll: P_PlayerThink zeroes AttackRoll
-			// every tic before WorldTick runs, so this always read 0. Negated
-			// like rs_held.zs's held-object roll (confirmed in headset there):
-			// a controller's roll and an actor's Roll turn opposite ways.
-			edRoll[gm]  = -pawn.MainHandRoll;
-			// yaw relative to the BODY, not the world, or the stored angle
-			// would only be right while facing the direction you set it in
-			// +90: the engine stores AttackAngle/OffhandAngle 90 degrees off
-			// actor-yaw convention and every consumer adds it back (p_map.cpp
-			// aimAngle, rs_grab.zs, rr_point.zs). bodyYaw is a true world yaw.
-			edYaw[gm] = normalizeDeg((pawn.AttackAngle + 90.0) - bodyYaw[i]);
-		}
 		if (go >= 0)
-		{
 			worldToBody(i, pawn, pawn.OffhandPos, edFwd[go], edSide[go], edFrac[go]);
-			edPitch[go] = -pawn.OffhandPitch;   // negated, see above
-			edRoll[go]  = -pawn.OffhandRoll;   // negated, see the main hand above
-			edYaw[go] = normalizeDeg((pawn.OffhandAngle + 90.0) - bodyYaw[i]);
-		}
 	}
 
 	private static double normalizeDeg(double d)
@@ -1120,9 +1099,14 @@ class RS_HolsterManager : EventHandler
 			edFwd[h]   = level.JSONProfileGetDouble(key .. "fwd",   hsFwd);
 			edSide[h]  = level.JSONProfileGetDouble(key .. "side",  hsSide);
 			edFrac[h]  = level.JSONProfileGetDouble(key .. "frac",  hsFrac);
-			edPitch[h] = level.JSONProfileGetDouble(key .. "pitch", hsPitch);
-			edYaw[h]   = level.JSONProfileGetDouble(key .. "yaw",   hsYaw);
-			edRoll[h]  = level.JSONProfileGetDouble(key .. "roll",  hsRoll);
+			// ORIENTATION IS NOT PER-HOLSTER ANY MORE. Every anchor holds its
+			// weapon the same way -- the table's hsPitch/hsYaw/hsRoll, barrel
+			// straight down along the body -- and a profile only moves anchors.
+			// Older profiles still carry pitch/yaw/roll keys captured from the
+			// hand at drop time; they are read past, not applied.
+			edPitch[h] = hsPitch;
+			edYaw[h]   = hsYaw;
+			edRoll[h]  = hsRoll;
 		}
 		Console.Printf("\c[Gold]RS_HOLSTER: loaded profile \"%s\"", name);
 		if (name == "holster_seated" || name == "holster_standing")
