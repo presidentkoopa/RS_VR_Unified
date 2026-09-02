@@ -242,8 +242,6 @@ Model RS_GrabOvalMain
 	Path "models"
 	Model 0 "rs_wiresphere.obj"
 	Skin  0 "rs_grab_idle.png"
-	Model 1 "rs_wiresphere.obj"
-	Skin  1 "rs_grab_hot.png"
 	// Unit radius mesh, so the per-axis placement scale IS the semi-axis --
 	// rs_grab_m_scale_x/_y/_z, the same three RS_Reach tests against.
 	//
@@ -264,7 +262,7 @@ Model RS_GrabOvalMain
 	PlacementCVars rs_grab_m
 	FollowMainHand
 	FrameIndex RSGB A 0 0
-	FrameIndex RSGB B 1 0
+	FrameIndex RSGB B 0 0
 }
 
 // The face volume. No Follow flag -- it is placed at HmdPos from script rather
@@ -275,11 +273,9 @@ Model RS_FaceVol
 	Path "models"
 	Model 0 "rs_wiresphere.obj"
 	Skin  0 "rs_vol_idle.png"
-	Model 1 "rs_wiresphere.obj"
-	Skin  1 "rs_vol_hot.png"
 	Scale 1.0 1.0 1.0
 	FrameIndex RSGB A 0 0
-	FrameIndex RSGB B 1 0
+	FrameIndex RSGB B 0 0
 }
 
 Model RS_GrabOvalOff
@@ -287,13 +283,11 @@ Model RS_GrabOvalOff
 	Path "models"
 	Model 0 "rs_wiresphere.obj"
 	Skin  0 "rs_grab_idle.png"
-	Model 1 "rs_wiresphere.obj"
-	Skin  1 "rs_grab_hot.png"
 	Scale 1.0 1.0 1.0
 	PlacementCVars rs_grab_o
 	FollowOffHand
 	FrameIndex RSGB A 0 0
-	FrameIndex RSGB B 1 0
+	FrameIndex RSGB B 0 0
 }
 
 // Unit box spanning -1..1, so the actor's Scale is literally the half-extent.
@@ -301,17 +295,18 @@ Model RS_GrabOvalOff
 Model RS_VolumeBox
 {
 	Path "models"
+	// ONE slot, hot skin: the box is only ever shown in its Hot state, and
+	// a second slot is drawn every frame regardless of FrameIndex (see the
+	// RS_HolsterMarker note), so idle+hot were always painted together.
 	Model 0 "rs_wirebox.obj"
-	Skin  0 "rs_vol_idle.png"
-	Model 1 "rs_wirebox.obj"
-	Skin  1 "rs_vol_hot.png"
+	Skin  0 "rs_vol_hot.png"
 	Scale 1.0 1.0 1.0
 
 	USEACTORPITCH
 	USEACTORROLL
 
 	FrameIndex RSGB A 0 0
-	FrameIndex RSGB B 1 0
+	FrameIndex RSGB B 0 0
 }
 
 

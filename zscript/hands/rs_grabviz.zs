@@ -49,6 +49,18 @@ class RS_GaugeBase : Actor
     // the same tic -- a subclass that belongs somewhere other than the feet
     // has to say so through this, not through the handler.
     virtual Vector3 AnchorPos(PlayerPawn p) { return p.Pos; }
+
+    // ONE MODELDEF slot per gauge; hot/idle is a skin swap, exactly as
+    // RS_HolsterMarker does it. The two-slot form drew both skins every
+    // frame -- a FrameIndex picks a frame per slot, never which slot shows
+    // -- so the orange "hot" wireframe was permanently visible and the
+    // Spawn/Hot state change did nothing on screen.
+    virtual String GaugeModel()        { return "rs_wiresphere.obj"; }
+    virtual String GaugeSkin(bool hot) { return hot ? "rs_grab_hot.png" : "rs_grab_idle.png"; }
+    void SetHot(bool hot)
+    {
+        A_ChangeModel(GetClassName(), 0, "models", GaugeModel(), 0, "models", GaugeSkin(hot));
+    }
     States
     {
     Spawn:
@@ -78,6 +90,7 @@ class RS_GrabOvalOff  : RS_GaugeBase { }
 class RS_FaceVol : RS_GaugeBase
 {
     override Vector3 AnchorPos(PlayerPawn p) { return p.HmdPos; }
+    override String GaugeSkin(bool hot) { return hot ? "rs_vol_hot.png" : "rs_vol_idle.png"; }
 }
 
 // The collision volume of whatever is in reach, drawn around it.
@@ -192,7 +205,11 @@ class RS_GrabViz : EventHandler
                     if (RS_Reach.Flag("rs_grabviz_onlywhenhot", p, false) && !best)
                         viz[h].Alpha = 0;
                     State want = best ? viz[h].FindState("Hot") : viz[h].FindState("Spawn");
-                    if (want && viz[h].CurState != want) viz[h].SetState(want);
+                    if (want && viz[h].CurState != want)
+                    {
+                        viz[h].SetState(want);
+                        viz[h].SetHot(best);   // the skin swap the state alone cannot make
+                    }
                 }
             }
 

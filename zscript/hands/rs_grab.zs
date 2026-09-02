@@ -573,9 +573,18 @@ class RS_GrabHandler : EventHandler
     // passed near each other; this fires only when a squeeze would actually
     // swap, so the modifier is given up exactly when it is not what the grip
     // means.
+    // The subjects the pouch and the reload lane put on a hand.
+    private static bool ReloadSubject(int subj)
+    {
+        return subj == GRIPSUBJ_Pouch || subj == GRIPSUBJ_Magazine || subj == GRIPSUBJ_Shell
+            || subj == GRIPSUBJ_Round || subj == GRIPSUBJ_Inserting;
+    }
+
     private bool SwapPoised(int hand, RS_Held held, PlayerPawn pmo, PlayerInfo p) const
     {
         if (!pmo || !p) return false;
+        // Feeding a chest-drawn magazine puts the hands together: not a swap.
+        if (ReloadSubject((hand == 0) ? pmo.GripSubjectMain : pmo.GripSubjectOff)) return false;
         if (!RS_Reach.Flag("rs_swap_overlap", p, true)) return false;
 
         // Carrying anything makes this a two-handed join, not a pass.
@@ -841,6 +850,21 @@ class RS_GrabHandler : EventHandler
             // -- but it reads as a definition of the thing it is calling, and
             // this is not the file to spend a headset run finding that out in.
             bool spokenFor = GripSpokenFor(hand, held, pull, pmo, p);
+            // THE POUCH, AND A CARRY OUT OF IT, BELONG TO THE RELOAD LANE. A
+            // hand reaching into the chest pouch carries GRIPSUBJ_Pouch and a
+            // hand carrying ammunition out of it carries the reload's own
+            // subject; the engine's ladder reads any claim as GRIPCTX_Object,
+            // so this lane never stood down for either and the squeeze that
+            // drew a magazine also locked a cone target or hand-swapped.
+            // (RS_Held's own holds use the same subjects with a FULL hand.)
+            int subjHere = (hand == 0) ? pmo.GripSubjectMain : pmo.GripSubjectOff;
+            bool reloadReach = ReloadSubject(subjHere) && !(held && held.HandIsFull(hand));
+            if (reloadReach)
+            {
+                if (press && dbg)
+                    Console.Printf("[RSGRIP] hand %d ignored -- reaching in the pouch / carrying ammunition", hand);
+                continue;
+            }
             if ((ctx == GRIPCTX_Holster || ctx == GRIPCTX_Hardpoint) && !spokenFor)
             {
                 if (press && dbg)

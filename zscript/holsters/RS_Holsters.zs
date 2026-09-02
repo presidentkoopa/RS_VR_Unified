@@ -1228,7 +1228,13 @@ class RS_HolsterManager : EventHandler
 
 			if (!mainClaimed && (pawn.AttackPos - anchor).Length() < mainR)
 			{
-				mainClaimed = true;
+				// nearMain still records the pouch (updatePouchClaim keys on
+				// it), but HolsterClaim* is NOT raised for it: the engine reads
+				// that field as "inside a weapon holster" -- it arms the F13/F14
+				// tap, forces GRIPCTX_Holster for the press, and fires a doSwap
+				// against the pouch slot on release. Every magazine draw and
+				// every RETURNED release used to end with a store/draw attempt.
+				if (h != AMMO_POUCH_IDX) mainClaimed = true;
 				nearMain[i] = h;
 			}
 
@@ -1244,7 +1250,7 @@ class RS_HolsterManager : EventHandler
 			// correct fix, not something radius tuning could paper over.
 			if (!offClaimed && (pawn.OffhandPos - anchor).Length() < offR)
 			{
-				offClaimed = true;
+				if (h != AMMO_POUCH_IDX) offClaimed = true;   // see the main hand above
 				nearOff[i] = h;
 			}
 		}
@@ -1373,7 +1379,11 @@ class RS_HolsterManager : EventHandler
 						// ammunition away sounds like putting anything away.
 						let sndCv = CVar.GetCVar("rs_holster_sound", pawn.player);
 						if (sndCv == null || sndCv.GetBool())
-							pawn.A_StartSound("rs_holster_fx_store", CHAN_AUTO, CHANF_DEFAULT, 0.7);
+						{
+							let styleCv = CVar.GetCVar("rs_holster_sound_style", pawn.player);
+							string stowSnd = (styleCv != null && styleCv.GetInt() == 1) ? "rs_holster_fx_ready" : "rs_holster_fx_store";
+							pawn.A_StartSound(stowSnd, CHAN_AUTO, CHANF_DEFAULT, 0.7);
+						}
 					}
 					if (verboseDiag())
 						Console.Printf("\cy RS_HOLSTER: %s-hand stowed %s -- %s",
@@ -1490,7 +1500,11 @@ class RS_HolsterManager : EventHandler
 		//
 		// nowInPouch already folds in holsterActive(AMMO_POUCH_IDX), so a
 		// disabled pouch can never start a swap.
-		bool pouchInvolved = nowInPouch || claimedByUs;
+		// The pouch itself claimed the hand (or the reload took that claim
+		// over), not merely "some claim while inside the volume": RS_Held
+		// claims a hand for every object it closes on, and a barrel carried
+		// past the chest used to fist the hand until the barrel was let go.
+		bool pouchInvolved = claimedByUs || (nowInPouch && liveClaim == GRIPSUBJ_Pouch);
 
 		if (handClaimed && prev == null && pouchInvolved)
 		{
@@ -2371,16 +2385,32 @@ class RS_HolsterManager : EventHandler
 		// happen to sit, not anything in this code. The real fix is the grip
 		// arbiter being built separately; DO NOT "tidy" this dispatch in the
 		// meantime, it will collide with that work.
+		// THE HANDS LANE OWNS A FULL OR REACHING HAND. The engine fires the
+		// anchor pulse on any clean tap that STARTED inside a holster without
+		// consulting the grab claims, so lowering a carried barrel to the hip
+		// and tapping grip to drop it also stored the gun in that hand.
 		if (evt.name == "rs-holster-grab-main" || evt.name == "rs-vrhp-grab-main")
 		{
-			if (editMode[evt.player]) { toggleGrab(evt.player, true); }
-			else                      { doSwap(evt.player, pawn, nearMain[evt.player], false); }
+			if (editMode[evt.player])                             { toggleGrab(evt.player, true); }
+			else if (evt.player == consoleplayer && handsBusy(0)) { return; }
+			else                                                  { doSwap(evt.player, pawn, nearMain[evt.player], false); }
 		}
 		else if (evt.name == "rs-holster-grab-off" || evt.name == "rs-vrhp-grab-off")
 		{
-			if (editMode[evt.player]) { toggleGrab(evt.player, false); }
-			else                      { doSwap(evt.player, pawn, nearOff[evt.player], true); }
+			if (editMode[evt.player])                             { toggleGrab(evt.player, false); }
+			else if (evt.player == consoleplayer && handsBusy(1)) { return; }
+			else                                                  { doSwap(evt.player, pawn, nearOff[evt.player], true); }
 		}
+	}
+
+	// Is the hands lane holding or reaching for a world object with this
+	// hand? RS_Held and RS_GrabHandler track the console player only.
+	private bool handsBusy(int hand)
+	{
+		let held = RS_Held.Get();
+		if (held && held.HandIsFull(hand)) return true;
+		let grab = RS_GrabHandler.Get();
+		return grab && grab.TargetFor(hand) != null;
 	}
 
 	// Wraps MoveWeaponToHand with a transient CF_INSTANTWEAPSWITCH, restored
