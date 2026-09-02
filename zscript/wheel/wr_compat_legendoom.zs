@@ -84,7 +84,14 @@ class wr_CompatLegenDoom
 		string wantUncommon = base .. "LegendaryUncommon";
 		string wantCommon   = base .. "LegendaryCommon";
 
-		for (Inventory it = w.Inv; it; it = it.Inv)
+		// w.Owner.Inv, the head of the OWNER's chain: Inventory.Inv on an item
+		// is the sibling link in its owner's list (inventory_util.zs
+		// AddInventory prepends and reuses Inv as the link), so a walk from
+		// w.Inv only ever saw items older than the weapon -- and the tokens
+		// this looks for are granted to the PLAYER by weapon-state action
+		// functions after the weapon is already owned, so they were in front
+		// of it and never found. An unowned floor weapon has no tokens.
+		for (Inventory it = (w.Owner ? w.Owner.Inv : null); it; it = it.Inv)
 		{
 			string nm = "" .. it.GetClassName();
 			if (nm == wantEpic)     return true, LD_EPIC;
@@ -157,7 +164,14 @@ class wr_CompatLegenDoom
 		                                    // in zscript.zs for the same cast and why.
 		string s = "";
 
-		for (Inventory it = w.Inv; it; it = it.Inv)
+		// w.Owner.Inv, the head of the OWNER's chain: Inventory.Inv on an item
+		// is the sibling link in its owner's list (inventory_util.zs
+		// AddInventory prepends and reuses Inv as the link), so a walk from
+		// w.Inv only ever saw items older than the weapon -- and the tokens
+		// this looks for are granted to the PLAYER by weapon-state action
+		// functions after the weapon is already owned, so they were in front
+		// of it and never found. An unowned floor weapon has no tokens.
+		for (Inventory it = (w.Owner ? w.Owner.Inv : null); it; it = it.Inv)
 		{
 			string nm = "" .. it.GetClassName();
 			if (int(nm.Length()) > plen && nm.Left(plen) == prefix)

@@ -237,7 +237,11 @@ class wr_StatEvents : EventHandler
 	// How long a hand's last-fire timestamp stays eligible to explain a
 	// kill or a hit. Past this, neither hand gets credit -- see the file
 	// header on why undercounting beats guessing.
-	const ATTRIB_WINDOW = 35;
+	// 70, not 35: with shot stamping now synchronous for hitscan (see
+	// syncFire) this only has to cover a projectile's flight, and 35 tics
+	// is a rocket landing within 700 units -- two rooms. Kills further out
+	// were being dropped.
+	const ATTRIB_WINDOW = 70;
 
 	private static double cv(string name, double fallback)
 	{
@@ -277,6 +281,31 @@ class wr_StatEvents : EventHandler
 		// counted double. Audit finding #32.
 		trackFire(pawn, pawn.player.ReadyWeapon,  false);
 		trackFire(pawn, pawn.player.OffhandWeapon, true);
+	}
+
+	// THE DRAIN IS POLLED BEFORE ANY CREDIT IS GIVEN. P_PlayerThink runs
+	// before WorldTick in this engine, and a hitscan weapon depletes its
+	// ammo and lands its damage inside that same call -- so every damage,
+	// death and headshot-marker event of a hitscan shot used to arrive
+	// while lastFireTic still described the PREVIOUS shot. The first shot
+	// after a pause credited nothing, the pistol never landed inside its
+	// own 12-tic window (ACC 0% forever), and the shotgun and SSG, whose
+	// refire is longer than the attribution window, were never credited a
+	// hit, a kill or a pellet at all. trackFire rebases the ammo baseline
+	// on every call, so the WorldTick poll that follows sees no second
+	// drain and nothing is counted twice.
+	private void syncFire(PlayerPawn pawn)
+	{
+		if (!pawn || !pawn.player) return;
+		trackFire(pawn, pawn.player.ReadyWeapon,  false);
+		trackFire(pawn, pawn.player.OffhandWeapon, true);
+	}
+
+	// Barrels and other shootable props the player set off report the
+	// player as the damage source. Their blasts are not the gun's damage.
+	private static bool viaProp(WorldEvent e, PlayerPawn pawn)
+	{
+		return e.Inflictor && e.Inflictor != pawn && !e.Inflictor.bMissile && e.Inflictor.bShootable;
 	}
 
 	private void trackFire(PlayerPawn pawn, Weapon w, bool offhand)
@@ -376,15 +405,15 @@ class wr_StatEvents : EventHandler
 		if (s.pelletRun > s.pelletMax) s.pelletMax = s.pelletRun;
 		s.pelletRun = 0;
 
-		s.pendingHitUntilTic = level.maptime + HIT_WINDOW;
+		s.pendingHitUntilTic = level.totaltime + HIT_WINDOW;
 
 		if (s.lastFireTic > 0)
 		{
-			int dt = level.maptime - s.lastFireTic;
+			int dt = level.totaltime - s.lastFireTic;
 			if (dt > 0 && dt <= ROF_WINDOW)
 				s.rofEma = (s.rofEma <= 0.0) ? double(dt) : (s.rofEma * 0.75 + double(dt) * 0.25);
 		}
-		s.lastFireTic = level.maptime;
+		s.lastFireTic = level.totaltime;
 	}
 
 	// Which hand's weapon most plausibly caused a hit/kill/headshot landing
@@ -404,7 +433,7 @@ class wr_StatEvents : EventHandler
 		int tB = sb ? sb.lastFireTic : 0;
 
 		if (tA <= 0 && tB <= 0) return null;
-		if (level.maptime - max(tA, tB) > ATTRIB_WINDOW) return null;
+		if (level.totaltime - max(tA, tB) > ATTRIB_WINDOW) return null;
 		if (tA == tB) return null;
 
 		return (tA > tB) ? a : b;
@@ -417,6 +446,12 @@ class wr_StatEvents : EventHandler
 		if (e.DamageSource.player != players[consoleplayer]) return;
 
 		let pawn = PlayerPawn(e.DamageSource);
+		if (!pawn) return;
+		if (e.Thing == pawn) return;          // self-splash is not a landed shot
+		if (viaProp(e, pawn)) return;         // a barrel's blast is not the gun's damage
+		bool viaMissile = e.Inflictor && e.Inflictor.bMissile;
+
+		syncFire(pawn);
 		Weapon w = attributedWeapon(pawn);
 		if (!w) return;
 
@@ -485,11 +520,19 @@ class wr_StatEvents : EventHandler
 			//
 			// Measured against lastFireTic instead, which is the shot's own span
 			// and is not consumed by anything. Audit finding #31.
-			if (level.maptime <= s.lastFireTic + HIT_WINDOW)
+			// Not for a missile: its impact and its splash on the same monster
+			// are two events for one shot, and every other monster in the
+			// blast is another -- a rocket read PELLETS 2+ and its DPS
+			// multiplied by the crowd.
+			if (!viaMissile && level.totaltime <= s.lastFireTic + HIT_WINDOW)
 				s.pelletRun++;
 		}
 
-		if (s.pendingHitUntilTic > 0 && level.maptime <= s.pendingHitUntilTic)
+		// A projectile's credit lasts its flight (ATTRIB_WINDOW); hitscan's
+		// stays short so an unrelated later hit on the same target is not
+		// mistaken for this shot's.
+		int hitWin = viaMissile ? ATTRIB_WINDOW : HIT_WINDOW;
+		if (s.pendingHitUntilTic > 0 && level.totaltime <= s.lastFireTic + hitWin)
 		{
 			s.hits++;
 			s.pendingHitUntilTic = 0;
@@ -502,10 +545,25 @@ class wr_StatEvents : EventHandler
 	override void WorldThingDied(WorldEvent e)
 	{
 		if (!active()) return;
-		if (!e.DamageSource || !e.DamageSource.player) return;
-		if (e.DamageSource.player != players[consoleplayer]) return;
 
-		let pawn = PlayerPawn(e.DamageSource);
+		// THE ENGINE FILLS e.Thing AND e.Inflictor ONLY for a death (events.cpp
+		// WorldThingDied; DamageSource is a thingdamaged-only field), so the
+		// old `!e.DamageSource` bail returned on every death and KILLS read 0
+		// for every weapon, forever. AActor::Die sets the victim's target to
+		// the source just before firing the hook, and a missile's target is
+		// its shooter, so the killer is recoverable from what does arrive.
+		Actor src = e.DamageSource;
+		if (!src && e.Thing) src = e.Thing.target;
+		if ((!src || !src.player) && e.Inflictor)
+			src = e.Inflictor.player ? e.Inflictor : e.Inflictor.target;
+		if (!src || !src.player) return;
+		if (src.player != players[consoleplayer]) return;
+
+		let pawn = PlayerPawn(src);
+		if (!pawn || e.Thing == pawn) return;
+		if (viaProp(e, pawn)) return;         // a barrel the player set off is not a gun kill
+
+		syncFire(pawn);
 		Weapon w = attributedWeapon(pawn);
 		if (!w) return;
 
@@ -523,6 +581,7 @@ class wr_StatEvents : EventHandler
 		if (!playeringame[consoleplayer] || !players[consoleplayer].mo) return;
 
 		let pawn = players[consoleplayer].mo;
+		syncFire(pawn);
 		Weapon w = attributedWeapon(pawn);
 		if (!w) return;
 
