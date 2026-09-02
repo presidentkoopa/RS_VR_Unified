@@ -50,12 +50,13 @@ class wr_WeaponStats
 	int hits;
 	int headshots;
 
-	// TIME HELD, in tics, counted only while this weapon is actually in a
-	// hand. Not "time since you picked it up" -- a gun sitting in your
-	// backpack for two maps has not been used for two maps, and the number
-	// is only worth showing because it says how much of the run you have
-	// actually spent behind THIS weapon.
-	int ticsHeld;
+	// NO TIME-HELD COUNTER. There was one, and it was removed on the owner's
+	// call: a running total of how much of your life you have spent holding a
+	// particular gun is not a statistic anybody asked to be shown.
+	//
+	// Removed rather than hidden. A counter that still accrues costs a write
+	// per weapon per tic and a field in every ledger entry, saved and loaded
+	// forever, to feed a row that no longer exists.
 
 	// DAMAGE AS A RANGE, NOT AN AVERAGE. Most Doom weapons roll their
 	// damage -- a pistol lands 5, 10 or 15, never "10" -- so averaging the
@@ -127,7 +128,6 @@ class wr_ClassStats
 	int shotsFired;
 	int hits;
 	int headshots;
-	int ticsHeld;
 	int damageLow;
 	int damageHigh;
 	int damageSamples;
@@ -286,16 +286,6 @@ class wr_StatEvents : EventHandler
 		let s = wr_StatLedger.StatsFor(pawn, w, true);
 		if (!s) return;
 
-		// TIME HELD. This function already runs once per tic for each of the
-		// two hands' weapons and for nothing else, which makes it exactly the
-		// right place to count: a weapon reaches here if and only if it is
-		// actually in a hand this tic, so the counter can never accrue for a
-		// gun sitting in the backpack.
-		s.ticsHeld++;
-
-		let cs = wr_StatLedger.ClassStatsFor(pawn, w.GetClassName(), true);
-		if (cs) cs.ticsHeld++;
-
 		int a1 = w.Ammo1 ? w.Ammo1.Amount : 0;
 		int a2 = w.Ammo2 ? w.Ammo2.Amount : 0;
 
@@ -370,6 +360,15 @@ class wr_StatEvents : EventHandler
 		if (!fired) return;
 
 		s.shotsFired++;
+
+		// Fetched HERE rather than near the top of the function. It used to be
+		// looked up alongside the time-held counter that was removed, and this
+		// was the other user of that one lookup -- so deleting the counter took
+		// the declaration with it and left this orphaned. It belongs next to the
+		// increment that needs it anyway: the function returns before here on
+		// every tic that is not a shot, so fetching it early asked the ledger
+		// for a class entry thirty-five times a second to use it once.
+		let cs = wr_StatLedger.ClassStatsFor(pawn, w.GetClassName(), true);
 		if (cs) cs.shotsFired++;
 
 		// A new shot closes the last one's pellet run and starts a fresh
@@ -626,20 +625,24 @@ class wr_StatTracker
 	// opposed to what this particular one has. The answer for a weapon lying
 	// on the floor, which by definition has no history of its own.
 	//
-	// FOUND, KILLS, SHOTS, HITS, TICS HELD.
-	static play bool, int, int, int, int ClassHistoryOf(Weapon w)
+	// FOUND, KILLS, SHOTS, HITS.
+	//
+	// NOTE: nothing calls this. It is kept because it is the only reader
+	// written for a weapon NOBODY OWNS -- the case a floor pickup needs --
+	// and that is worth having ready. Delete it if that never lands.
+	static play bool, int, int, int ClassHistoryOf(Weapon w)
 	{
-		if (!w || cv("wr_stats_track", 1.0) <= 0.0) return false, 0, 0, 0, 0;
+		if (!w || cv("wr_stats_track", 1.0) <= 0.0) return false, 0, 0, 0;
 
 		// Deliberately NOT w.Owner -- this is the reader that has to work for
 		// a weapon nobody owns. The console player's own ledger is the one
 		// being asked, about a class, so the weapon's ownership is irrelevant.
-		if (!playeringame[consoleplayer] || !players[consoleplayer].mo) return false, 0, 0, 0, 0;
+		if (!playeringame[consoleplayer] || !players[consoleplayer].mo) return false, 0, 0, 0;
 		let pawn = players[consoleplayer].mo;
 
 		let c = wr_StatLedger.ClassStatsFor(pawn, w.GetClassName(), false);
-		if (!c || c.shotsFired <= 0) return false, 0, 0, 0, 0;
-		return true, c.kills, c.shotsFired, c.hits, c.ticsHeld;
+		if (!c || c.shotsFired <= 0) return false, 0, 0, 0;
+		return true, c.kills, c.shotsFired, c.hits;
 	}
 
 	// FOUND, SHOTS PER SECOND. 35.0 is Doom's fixed tic rate.
@@ -648,34 +651,6 @@ class wr_StatTracker
 		let s = lookup(w);
 		if (!s || s.rofEma <= 0.0) return false, 0.0;
 		return true, 35.0 / s.rofEma;
-	}
-
-	// FOUND, TICS HELD. Found once the weapon has been in a hand for at
-	// least a second -- a gun you flicked past for four tics reporting
-	// "HELD 0s" is noise, and the row is worth a slot only once there is a
-	// real span behind it.
-	static play bool, int HeldTimeOf(Weapon w)
-	{
-		let s = lookup(w);
-		if (!s || s.ticsHeld < 35) return false, 0;
-		return true, s.ticsHeld;
-	}
-
-	// Tics as a span a person reads at a glance rather than a raw count.
-	// Coarsens as it grows -- seconds while it is seconds, minutes once it
-	// is minutes, and hours-and-minutes past an hour, dropping the seconds
-	// entirely there. Nobody reading "three hours on the revolver" cares
-	// about the seconds, and carrying them would only cost the row width
-	// the useful part needs.
-	static string HeldWord(int tics)
-	{
-		int secs = tics / 35;
-		if (secs < 60)    return String.Format("%ds", secs);
-
-		int mins = secs / 60;
-		if (mins < 60)    return String.Format("%dm %ds", mins, secs % 60);
-
-		return String.Format("%dh %dm", mins / 60, mins % 60);
 	}
 
 	// FOUND(mod loaded), COUNT. Found means "Headshots is loaded", not

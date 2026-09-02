@@ -580,6 +580,9 @@ class wr_Rig : EventHandler
 	// and resets everywhere mLockTics itself resets.
 	bool mWarnedThisOpen;
 	bool    mTouching;            // hand is physically inside a card
+	// HOW FAR IN FRONT OF THE HAND THE REACHING FINGERTIP SITS, frozen with
+	// the anchor. See the touch query in WorldTick for why this exists.
+	double  mTouchReach;
 	bool    mBtOn;                // we are the ones holding bullet time on
 
 	//==========================================================================
@@ -1024,6 +1027,17 @@ class wr_Rig : EventHandler
 			engineLaser(true);
 			bulletTime(true);
 			feedback(Sound("wristrig/open"), 0.22, 45);
+
+			// THE SESSION, SAID OUT LOUD. Whether this branch ran at all is the
+			// first question every "no laser / cannot select" report reduces to,
+			// and from inside a headset there is no way to tell an alternate
+			// layout that never claimed its session from one that claimed it and
+			// had it taken away again.
+			if (cv("wr_debug", 0.0) > 0.0 || cv("wr_chart_debug", 0.0) > 0.0)
+				Console.Printf(
+					"[RIG] alt layout %d opened on hand %d -- laser forced, sticks claimed",
+					lay, hand);
+
 			return;
 		}
 
@@ -2235,15 +2249,6 @@ class wr_Rig : EventHandler
 			         trHs > 0 ? color(SHEET_HOT) : color(SHEET_DIM));
 		}
 
-		// TIME HELD -- the row that turns a pile of counters into a run's
-		// worth of history. Deliberately last of the tracked rows: it is the
-		// one you read once out of curiosity rather than the one you check
-		// mid-fight, so it sits below the numbers that inform a pick.
-		bool hasHeld; int trHeld;
-		[hasHeld, trHeld] = wr_StatTracker.HeldTimeOf(w);
-		if (hasHeld)
-			sheetRow("HELD " .. wr_StatTracker.HeldWord(trHeld), SHEET_DIM);
-
 		// THE STAT ROWS RUN FOR EVERY WEAPON NOW, not only RS Weapon's.
 		// statRows() resolves each stat against whatever can answer it --
 		// the mod's own field, the tracker's observation, or nothing -- so a
@@ -2781,7 +2786,7 @@ class wr_Rig : EventHandler
 		// packing is gapless BY DEFINITION -- its centre cell is a real slot
 		// holding a real card, not free space the way the middle of a ring is
 		// -- so there is no hole at the middle for the sheet to stand in
-		// without covering a card. Under wr_hex the caller passes the hive's
+		// without covering a card. The caller passes the layout's
 		// own half-width plus clearance here and the sheet stands beside the
 		// comb instead. Zero in ring mode, which is every existing setup.
 		Vector3 centre = wrist + viewRight * lateral + (0, 0, rise);
@@ -3965,52 +3970,6 @@ class wr_Rig : EventHandler
 		int best = 0;
 		double bestOff = 999;
 
-		// THE HONEYCOMB NEEDS A STEP, NOT A BEARING.
-		//
-		// On a ring, a direction IS a slot -- every card has its own angle from
-		// the centre, so the nearest bearing to the stick is the answer with no
-		// notion of "where you already were". A hive has no such mapping: cells
-		// share directions (three of them sit straight up from the centre
-		// column), and the cell you want is almost always the NEIGHBOUR of the
-		// one you are on rather than whichever cell lies furthest along that
-		// heading. So this walks: nearest cell in the pushed direction, out of
-		// those close enough to actually be adjacent.
-		if (cv("wr_hex", 0.0) > 0.0)
-		{
-			int from = cardIndexOf(mHovered);
-
-			// Nothing hovered yet -- fall back to reading the stick as an
-			// absolute heading out of the centre, which is exactly the ring's
-			// own rule and lands you on the edge of the comb you pushed toward.
-			Vector2 origin = (from >= 0) ? hexOffset(from, 1.0, 1.0) : (0.0, 0.0);
-
-			// One spacing, plus a little: the six real neighbours sit at
-			// distance 1 in these normalized units, and the next cells out are
-			// at sqrt(3) -- so anything under ~1.3 is adjacent and anything
-			// over it is a jump this should refuse to make.
-			double reach = 1.3;
-
-			for (int i = 0; i < n; ++i)
-			{
-				if (i == from) continue;
-
-				Vector2 d = hexOffset(i, 1.0, 1.0) - origin;
-				double len = d.Length();
-				if (len < 0.01 || (from >= 0 && len > reach)) continue;
-
-				double off = want - atan2(d.Y, d.X);
-				while (off >  180) off -= 360;
-				while (off < -180) off += 360;
-				off = abs(off);
-
-				// Ties broken by distance, so from the centre (where nothing is
-				// hovered and every ring is in play) the stick picks the NEAR
-				// cell along that heading rather than the far one.
-				double score = off + len * 0.5;
-				if (score < bestOff) { bestOff = score; best = mIds[i]; }
-			}
-			return best;
-		}
 
 		for (int i = 0; i < n; ++i)
 		{
@@ -4484,107 +4443,6 @@ class wr_Rig : EventHandler
 		return 135.0 - i * (360.0 / count);
 	}
 
-	//==========================================================================
-	// THE HONEYCOMB, an alternative to the ring rather than a replacement for
-	// it. wr_hex picks; every other setting, every card payload, every compat
-	// read and the whole selection model are shared, because none of them ever
-	// knew what shape the positions formed.
-	//
-	// WHY IT EXISTS: a ring's capacity is bounded by its own circumference --
-	// bearingForIndex divides 360 degrees by the count, so every extra card
-	// makes every gap smaller, and past a dozen the ring has to either grow
-	// out of arm's reach or collapse slots into fans. A honeycomb grows
-	// OUTWARD instead of subdividing: rings 0..2 already hold nineteen cells
-	// at a fixed spacing that never tightens, however many more get added.
-	//
-	// STILL LEARNABLE BY FEEL, which was the one thing the ring's fixed
-	// bearings bought and the thing a 2D layout most obviously risks. A spiral
-	// FILL is as deterministic as an angle: cell 0 is the centre, 1-6 the ring
-	// around it, 7-18 the ring around that, always in the same order and
-	// always in the same place. Slot 4 is the same physical cell on your first
-	// map and your last, exactly as DESIGN.md demands of the ring.
-	//
-	// GAPLESS, and that is the whole point of a hex packing rather than a
-	// square grid -- every cell has six neighbours all at the same distance,
-	// with no diagonal that is further away than an orthogonal one. Note the
-	// PLATES are still rounded rectangles (BB_SDFPANEL draws no hexagon); it
-	// is the LAYOUT that tessellates, so the cards brick-lay with no space
-	// between rows rather than literally interlocking as hexagons.
-	//==========================================================================
-
-	// Which concentric ring index i sits in. Ring 0 is the single centre cell;
-	// ring k holds 6k cells, so rings 0..k hold 1 + 3k(k+1) between them.
-	// Used both by the spiral itself and by the ring-at-a-time arrival, which
-	// wants to know how far out a card is before it knows where it is.
-	private static int hexRingOf(int i)
-	{
-		if (i <= 0) return 0;
-		int ring = 1;
-		while (i > 3 * ring * (ring + 1)) ++ring;
-		return ring;
-	}
-
-	// The six axial steps around a hex, in spiral-walk order. A switch rather
-	// than a static const array: an array declared at class scope is not
-	// reachable from a static function of that same class (the wall
-	// HS_Handler.HasHead documents hitting in Headshots' own source), and
-	// every caller here is static.
-	private static Vector2 hexDir(int s)
-	{
-		switch (s)
-		{
-			case 0: return ( 1,  0);
-			case 1: return ( 1, -1);
-			case 2: return ( 0, -1);
-			case 3: return (-1,  0);
-			case 4: return (-1,  1);
-		}
-		return (0, 1);
-	}
-
-	// Index -> axial hex coordinate, walking the spiral outward. Start at the
-	// ring's own corner (five steps round from the first side, which is what
-	// puts cell 1 where the ring's first card would have been rather than
-	// somewhere arbitrary), advance whole sides, then step along the last one.
-	private static Vector2 hexAxial(int i)
-	{
-		if (i <= 0) return (0, 0);
-
-		int ring = hexRingOf(i);
-		int idx  = i - 1 - 3 * ring * (ring - 1);
-		int side = idx / ring;
-		int step = idx % ring;
-
-		double q = -ring, r = ring;
-
-		for (int s = 0; s < side; ++s)
-		{
-			Vector2 d = hexDir(s);
-			q += d.X * ring;
-			r += d.Y * ring;
-		}
-
-		Vector2 d2 = hexDir(side);
-		q += d2.X * step;
-		r += d2.Y * step;
-
-		return (q, r);
-	}
-
-	// Axial coordinate -> an offset in the view plane: X across (along
-	// viewRight), Y up. The half-column shear on odd rows (q + r*0.5) is what
-	// makes this a honeycomb rather than a square grid -- rows interlock
-	// instead of stacking, so a cell's six neighbours are all one spacing away.
-	//
-	// Spacing comes from the CARD's own measured size rather than a hex
-	// radius, because the cards are rectangles: a row pitch of one full card
-	// height is what actually guarantees no vertical overlap, where an
-	// equilateral hex's 0.866 would only be right if the cards were square.
-	private static Vector2 hexOffset(int i, double xs, double ys)
-	{
-		Vector2 a = hexAxial(i);
-		return (xs * (a.X + a.Y * 0.5), ys * a.Y);
-	}
 
 	// How far a fan spreads either side of its slot's bearing. Capped at 45, but
 	// squeezed as the ring gets crowded so a fan cannot reach into the next
@@ -5933,6 +5791,23 @@ class wr_Rig : EventHandler
 			}
 
 			mAnchor     = handP + ahead * clearForward;
+
+			// THE REACH, frozen with the anchor and for the same reason: it
+			// has to be a fixed extension of the hand, not a distance
+			// recomputed against the ring. Recomputed, pushing your hand
+			// forward would move the fingertip and the ring's remaining gap
+			// by the same amount and you could never close it.
+			//
+			// Set so the fingertip rests just SHORT of the card plane -- a
+			// touch radius and a bit. Standing still with your arm where it
+			// was therefore touches nothing; a real push forward of a few
+			// centimetres is what carries it in. Derived from clearForward
+			// rather than from wr_forward so a ring the wall pulled in close
+			// gets a correspondingly short reach instead of a fingertip
+			// parked permanently past its own cards.
+			double treach = cv("wr_touch", 7.0) * cv("wr_scale", 1.0);
+			mTouchReach = clearForward - treach * 1.2;
+			if (mTouchReach < 0.0) mTouchReach = 0.0;
 			mAnchorYaw  = pmo.angle;
 			mHaveAnchor = true;
 
@@ -6044,11 +5919,6 @@ class wr_Rig : EventHandler
 
 		double cellW = panelW * 1.25;
 
-		// THE HONEYCOMB, or the ring. Read once per tic rather than per card,
-		// alongside the other hoisted cvars below -- and read into a plain
-		// bool because every consumer of it is a branch, not a number.
-		bool hexMode = cv("wr_hex", 0.0) > 0.0;
-		double cellH = panelH * CARD_STRETCH * 1.25;
 
 		// Ring radius grows with the count so the cards never crowd: eight fit at
 		// the tuned distance, twelve push out to keep the same gap between them.
@@ -6129,19 +5999,11 @@ class wr_Rig : EventHandler
 		Vector3 eye = pmo.Pos + (0, 0, pmo.player.viewheight);
 
 		// Beside the ring, off the SOLVED radius rather than the tuned one --
-		// ringR above has already grown to whatever the card count needed.
-		//
-		// The honeycomb has no hole at its middle to stand in (see layoutSheet's
-		// own note on `lateral`), so under wr_hex the sheet is pushed clear of
-		// the hive's widest row instead: the outermost ring's own extent, plus
-		// half a card, plus half the sheet, plus the same gap it always used.
+		// ringR above has already grown to whatever the card count needed. The
+		// ring has a hole at its middle for the sheet to stand in, so it needs
+		// no lateral push of its own; the parameter stays because layoutSheet
+		// is shared.
 		double sheetLateral = 0.0;
-		if (hexMode)
-		{
-			int outerRing = hexRingOf(max(n - 1, 0));
-			sheetLateral = cellW * (outerRing + 0.5)
-			             + panelW * (SHEET_W_CARDS * sheetScale() * 0.5 + SHEET_GAP_CARDS);
-		}
 
 		layoutSheet(wrist, viewYaw, viewRight, tilt, rise, ringR, panelW, panelH, sheetLateral);
 
@@ -6239,42 +6101,9 @@ class wr_Rig : EventHandler
 			Vector3 pos;
 			double cardGrow = grow;
 
-			if (hexMode)
-			{
-				// The spiral cell, sheared into the view plane. handRoll is
-				// deliberately NOT applied: wrist roll spinning a ring is a
-				// rotation about the ring's own axis and stays legible, but
-				// rotating a tessellation turns a learnable grid into a
-				// shifting one -- the exact property the spiral fill exists
-				// to protect.
-				Vector2 hoff = hexOffset(i, cellW, cellH);
-				pos = wrist
-				    + viewRight * hoff.X
-				    + (0, 0, hoff.Y + rise + breathe);
-
-				// THE COMB GROWS RING BY RING rather than all at once.
-				//
-				// The ring layout has every card travel out of the wrist
-				// together, which is right for it -- they all share one
-				// destination radius, so they arrive as one gesture. A hive
-				// has real structure to show off instead: the centre lands,
-				// then the six around it, then the twelve around those. Each
-				// ring simply starts its own travel a few tics late, reusing
-				// the identical ease rather than adding a second animation.
-				int stagger = int(cv("wr_hex_stagger", 3.0));
-				if (stagger > 0 && grow < 1.0)
-				{
-					double lead = double(hexRingOf(i) * stagger);
-					double span = max(cv("wr_growtics", 6.0), 1.0);
-					cardGrow = clamp((grow * span - lead) / span, 0.0, 1.0);
-				}
-			}
-			else
-			{
-				pos = wrist
-				    + viewRight * (cos(bearing) * ringR)
-				    + (0, 0, sin(bearing) * ringR + rise + breathe);
-			}
+			pos = wrist
+			    + viewRight * (cos(bearing) * ringR)
+			    + (0, 0, sin(bearing) * ringR + rise + breathe);
 
 			if (cardGrow < 1.0) pos = origin + (pos - origin) * cardGrow;
 
@@ -7856,6 +7685,30 @@ class wr_Rig : EventHandler
 		// answer, the hand is the more deliberate act -- you had to put it there
 		// -- so it takes precedence over wherever the beam happened to be
 		// pointing past it.
+		//
+		// THE FINGERTIP IS NOT THE CONTROLLER, and until this was written that
+		// was the whole bug (audit finding #20): the query ran from the raw hand
+		// position against a 7-unit sphere, while the ring hangs at wr_forward
+		// -- 34 units, about a metre -- ahead of where that hand was when it
+		// opened. Closing 28 units is not a reach, it is a lunge past arm's
+		// extension, so mTouching was never true in open space. Every promise
+		// this comment makes was dead: reaching never selected, "TOUCH WINS
+		// OVER BEAM" never happened, and +use as the grab did nothing at all --
+		// on a vanilla-sized loadout the key fell through every branch of
+		// InputProcess and leaked out to open the door behind you.
+		//
+		// So the point that does the touching is carried out in front of the
+		// hand, along the hand's own axis, by mTouchReach -- which was frozen
+		// with the anchor to sit just short of the cards. The remaining gap is
+		// small and REAL: you close it by physically pushing your hand forward,
+		// which is what reaching into something is. Holding your arm where it
+		// was still touches nothing.
+		//
+		// It stays a POSITION test rather than becoming a second beam. You do
+		// not aim at the card, you have to be at it -- the sphere finds
+		// whatever it is inside of, nearest first, and a hand held out beside
+		// the ring finds nothing however well it is pointed.
+		//
 		// wr_touch 0 turns reaching off outright and leaves the beam as the only
 		// way in. Skipped rather than called with a zero radius, because "no
 		// radius" and "do not ask" are different things and only one of them is
@@ -7865,10 +7718,12 @@ class wr_Rig : EventHandler
 
 		if (touchR > 0.0)
 		{
+			Vector3 tip = org + dir * mTouchReach;
+
 			int touched;
 			Vector2 tuv;
 			double tdist;
-			[touched, tuv, tdist] = level.TouchBillboard(org, touchR);
+			[touched, tuv, tdist] = level.TouchBillboard(tip, touchR);
 
 			mTouching = (touched != 0);
 			if (mTouching) hit = touched;

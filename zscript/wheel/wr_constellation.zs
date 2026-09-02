@@ -44,8 +44,11 @@ class wr_Constellation : EventHandler
 
 	// How far the nearest and furthest clusters sit. Real separation, not a
 	// dome: the spread between these two numbers IS the parallax.
-	const NEAR_R      = 46.0;
-	const FAR_R       = 120.0;
+	// FURTHER OUT THAN ARM'S LENGTH. 46 put the nearest constellation about a
+	// metre and a third from your face, which reads as a thing shoved at you
+	// rather than a sky you are standing under.
+	const NEAR_R      = 68.0;
+	const FAR_R       = 165.0;
 
 	// Half-width of the arc the clusters occupy, in degrees either side of
 	// where you were facing when it opened. Wide enough to surround, short of
@@ -151,6 +154,77 @@ class wr_Constellation : EventHandler
 	const GLOW_DUST   = 0.25;
 	const GLOW_REACH  = 0.55;
 
+	// ---- reaching --------------------------------------------------------
+	//
+	// YOU CAN STILL PHYSICALLY MOVE WITH THE WORLD FROZEN, so you should be
+	// able to put your hand on a star. The ring solves the same problem with a
+	// fixed fingertip extension, and that answer does not carry: its cards all
+	// sit at one distance, so one frozen offset parks the fingertip just short
+	// of all of them. A sky does not have one distance -- these stars are
+	// spread from forty-six units to a hundred and twenty, deliberately,
+	// because the spread IS the parallax.
+	//
+	// So the extension is EARNED rather than fixed. This is go-go: inside a
+	// dead zone the fingertip is exactly your hand and nothing is changed, and
+	// past it the virtual reach grows with the SQUARE of how far you have
+	// actually pushed. A small deliberate extension therefore travels a long
+	// way out, while ordinary hand movement near your body does not move the
+	// fingertip at all -- which is the property that stops this from firing
+	// while you are simply holding the controller.
+	//
+	// Measured from the EYE, along the eye-to-hand line, and both halves of
+	// that matter. Live eye rather than the frozen origin, so leaning your
+	// whole body toward a constellation reaches it. And the eye-to-hand line
+	// rather than the hand's own forward axis, because reaching into a volume
+	// is done with the ARM: you put your arm toward the star and push along
+	// it, a gesture the body already knows that needs no wrist aiming.
+	const GOGO_DEAD   = 3.0;    // units past rest before anything happens
+	const GOGO_K      = 0.42;   // how hard the square bites
+	const GOGO_MAX    = 1.32;   // ceiling, as a multiple of FAR_R
+
+	// The grab sphere at the fingertip. It GROWS WITH DISTANCE, because a fixed
+	// radius that feels right against a near cluster subtends almost nothing
+	// against a far one -- the far stars would be technically reachable and
+	// practically impossible.
+	const TIP_R       = 7.0;
+	const TIP_R_FAR   = 13.0;
+
+	// The fingertip is DRAWN, and unlike the ring's this is not optional. On a
+	// ring the card is an arm's length in front of your face, so the card
+	// lighting up is feedback enough. Out here the fingertip is thirty metres
+	// away in a volume; with nothing rendered you would be reaching blind into
+	// a sky and guessing. A small solid star, the same glyph as everything
+	// else, so it reads as part of the chart rather than as a cursor bolted on.
+	const TIP_SIZE    = 2.2;
+
+	// ---- walls -----------------------------------------------------------
+	//
+	// BBFL_NODEPTH ON EVERYTHING, and it is the whole answer.
+	//
+	// The problem is real: a layout that renders into geometry is invisible AND
+	// still selectable, because nothing in the pointing path knows geometry
+	// exists -- AimBillboard, TouchBillboard and stickPick all pass straight
+	// through it. You end up pointing a clamped laser at a star behind a door
+	// and committing to it blind.
+	//
+	// The first attempt traced at build and pulled each cluster in to fit the
+	// room. It worked, and it was WRONG: a Doom room is often two hundred units
+	// across and this chart wants to stand at a hundred and twenty, so the
+	// clamp crushed the sky into a closet and took every bit of the depth and
+	// spread the layout exists for with it.
+	//
+	// The mismatch was never that the PLACEMENT disobeyed walls. It was that
+	// the DRAWING obeyed them while the pointing did not. A chart is a menu
+	// that happens to occupy a volume, not an object in the room -- so it draws
+	// over geometry, the two halves agree again, and it stands as far out as it
+	// likes. wr_gunhud.zs uses the flag for the on-gun readout for the same
+	// reason.
+	//
+	// The beams are the one exception, and they have no choice: SetBeam has no
+	// depth flag. The links between stars and the leaders out to the names will
+	// still be cut by a wall. They are the least load-bearing thing here -- the
+	// stars, the names and the titles all draw through.
+
 	// Beam slots 0 and 1 belong to RS_GrabViz, which says so in its own header
 	// and sets the count to 2 every tic. This handler runs after it in the
 	// MAPINFO order, so raising the count here is what makes the rest exist.
@@ -213,6 +287,12 @@ class wr_Constellation : EventHandler
 	// Where the ray last landed, so the engine laser can be told to stop
 	// there rather than carrying on through the star to the wall behind.
 	private double   mReach;
+
+	// The fingertip: how far the hand sat from the eye when the chart opened
+	// (the dead zone is measured from this), and the billboard that shows it.
+	private double   mRestReach;
+	private int      mTipId;
+	private bool     mReaching;
 
 	// Where the chart was anchored when it opened. Everything is placed
 	// relative to this, and it does NOT follow the player afterwards -- a sky
@@ -314,7 +394,9 @@ class wr_Constellation : EventHandler
 			(0, 0, 0), 1.0, 1.0, 0, 0,
 			LevelLocals.BBF_CAMERA, LevelLocals.BB_SDFSTAR,
 			(stroke & 15) | ((points & 15) << 8),
-			tint, hittable ? 0 : LevelLocals.BBFL_NOHIT, 0, "");
+			tint,
+			LevelLocals.BBFL_NODEPTH | (hittable ? 0 : LevelLocals.BBFL_NOHIT),
+			0, "");
 		level.SetBillboardAlpha(id, 0.0);
 		return id;
 	}
@@ -348,7 +430,24 @@ class wr_Constellation : EventHandler
 		mHovered   = 0;
 		mHand      = hand;
 		mReach     = 0.0;
+		mReaching  = false;
 		mOpen      = true;
+
+		// REST IS WHEREVER YOU HAPPENED TO BE, not a constant. A player with
+		// their arm already half out when they open the chart has not thereby
+		// spent their reach; the dead zone is measured from the pose that
+		// opened it.
+		Vector3 eye0 = pmo.Pos + (0, 0, pmo.player.viewheight);
+		mRestReach = (wr_Rig.handPos(pmo, hand) - eye0).Length();
+		if (mRestReach < 1.0) mRestReach = 1.0;
+
+		mTipId = level.AddBillboardPersistent(
+			(0, 0, 0), TIP_SIZE, TIP_SIZE, 0, 0,
+			LevelLocals.BBF_CAMERA, LevelLocals.BB_SDFSTAR,
+			(0 & 15) | ((POINTS & 15) << 8),
+			0xFFFFFF, LevelLocals.BBFL_NODEPTH | LevelLocals.BBFL_NOHIT, 0, "");
+		level.SetBillboardAlpha(mTipId, 0.0);
+		level.SetBillboardGlow(mTipId, GLOW_REACH, 1.0);
 
 		buildClusters(pmo);
 
@@ -369,6 +468,7 @@ class wr_Constellation : EventHandler
 			if (mDustIds[i]) level.RemoveBillboard(mDustIds[i]);
 		for (int i = 0; i < mTitleIds.Size(); ++i)
 			if (mTitleIds[i]) level.RemoveBillboard(mTitleIds[i]);
+		if (mTipId) { level.RemoveBillboard(mTipId); mTipId = 0; }
 
 		// Put our beam slots away without lowering the count -- that is
 		// level-wide and would take RS_GrabViz's two with it.
@@ -472,6 +572,25 @@ class wr_Constellation : EventHandler
 		// taught, rotated to put you at the front of it.
 		int first = heldSlot(pmo);
 
+		// COUNT FIRST, THEN SPREAD. The arc below divides ARC_HALF by this, and
+		// it used to divide by a hardcoded 8 -- so the layout only ever filled
+		// the whole arc if you happened to own weapons in eight slots. With
+		// three, frac ran 0.06 / 0.19 / 0.31 and the clusters landed at -101,
+		// -72 and -43 degrees: the entire chart bunched into the right-hand
+		// quarter of the sky, ninety degrees off the way you were facing, with
+		// the other three quarters empty.
+		int total = 0;
+		for (int probe = 0; probe < 10; ++probe)
+		{
+			int ps = first + probe;
+			while (ps > 10) ps -= 10;
+
+			Array<Class<Weapon> > have;
+			gatherSlot(pmo, ps, have);
+			if (have.Size() > 0) ++total;
+		}
+		if (total < 1) return;
+
 		int born = 0;
 		int prevMain = -1;
 
@@ -485,15 +604,43 @@ class wr_Constellation : EventHandler
 			gatherSlot(pmo, slot, owned);
 			if (owned.Size() == 0) continue;
 
-			color tint = clusterTint(placed);
+			// BY SLOT, NOT BY DRAW ORDER. Both of these used to be keyed to
+			// `placed`, which is the position in the reveal -- and the reveal
+			// starts from whatever you are holding. So carrying a pistol made
+			// the pistols the first cluster placed, and the first cluster
+			// placed was always painted and named as slot one: your sidearms
+			// came out labelled MELEE, your shotguns SIDEARMS, and the whole
+			// legend rotated with your loadout. Slot 4 has to be the same
+			// colour and the same name on every open or there is nothing to
+			// learn, which is the entire premise of a fixed sky.
+			color tint = clusterTint(slot - 1);
 
-			// Clusters walk the arc in order, alternating high and low and
-			// near and far so consecutive slots do not sit in a flat row --
-			// the depth is only worth having if neighbours differ in it.
-			double frac = (placed + 0.5) / 8.0;
-			double az   = -ARC_HALF + frac * (ARC_HALF * 2.0);
-			double el   = RISE_LO + hash01(placed, 11) * (RISE_HI - RISE_LO);
-			double rad  = NEAR_R + hash01(placed, 12) * (FAR_R - NEAR_R);
+			// THE ARC IS CENTRED ON WHAT YOU ARE HOLDING, and this is the
+			// second half of "it starts from the weapon in your hands".
+			//
+			// The reveal begins on your own slot and wraps, so `placed` 0 is
+			// always the constellation you are already carrying -- and this used
+			// to walk the arc from one end to the other, which put that first
+			// cluster at -ARC_HALF: ninety-odd degrees to your RIGHT. You opened
+			// the chart, and the one thing it was drawing for you began off the
+			// edge of your vision while the space in front of you stayed empty.
+			//
+			// Fanning outward from zero instead puts your own weapon dead ahead
+			// and alternates the rest either side of it, so the arsenal grows
+			// around you symmetrically and the arc fills from the middle out.
+			int rings = (total + 1) / 2;
+			if (rings < 1) rings = 1;
+			double step = ARC_HALF / double(rings);
+
+			int away = (placed + 1) / 2;                 // 0,1,1,2,2,3,3...
+			double side = (placed % 2 == 1) ? 1.0 : -1.0;  // right, left, right...
+			double az = double(away) * step * side;
+			// Hashed on the SLOT for the same reason as the colour: a
+			// constellation has to be in the same place every time you open
+			// the chart, not in a place that depends on what you happened to
+			// be carrying when you opened it.
+			double el   = RISE_LO + hash01(slot, 11) * (RISE_HI - RISE_LO);
+			double rad  = NEAR_R + hash01(slot, 12) * (FAR_R - NEAR_R);
 
 			Vector3 mainPos = pointAt(az, el, rad);
 
@@ -510,14 +657,14 @@ class wr_Constellation : EventHandler
 			// THE CLUSTER'S TITLE, behind its own stars in depth so parallax
 			// separates the two. Large and dim: it is meant to be read before
 			// you focus on anything, and to disappear once you have.
-			string tname = clusterName(placed);
+			string tname = clusterName(slot - 1);
 			int tchars = int(tname.Length());
 			if (tchars < 4) tchars = 4;
 
 			int title = level.AddBillboardPersistent(
 				(0, 0, 0), 1.0, 1.0, 0, 0,
 				LevelLocals.BBF_CAMERA, LevelLocals.BB_TEXT, 0,
-				tint, LevelLocals.BBFL_NOHIT, 0, tname);
+				tint, LevelLocals.BBFL_NODEPTH | LevelLocals.BBFL_NOHIT, 0, tname);
 			level.SetBillboardAlpha(title, 0.0);
 			level.ResizeBillboard(title,
 				TITLE_H * LABEL_ASPECT * double(tchars) * 0.5, TITLE_H * 0.5);
@@ -526,7 +673,7 @@ class wr_Constellation : EventHandler
 			mTitleBornAt.Push(born);
 
 			// The dust arrives with its constellation, not before it.
-			addDust(az, el, rad, tint, placed, born);
+			addDust(az, el, rad, tint, slot, born);
 			born += T_MAIN;
 
 			// The line from the previous constellation to this one. Drawn
@@ -544,9 +691,9 @@ class wr_Constellation : EventHandler
 			// read as one thing.
 			for (int v = 1; v < owned.Size(); ++v)
 			{
-				double vaz = az + (hash01(placed * 32 + v, 21) * 2.0 - 1.0) * 9.0;
-				double vel = el - 6.0 - hash01(placed * 32 + v, 22) * 9.0;
-				double vr  = rad * (0.92 + hash01(placed * 32 + v, 23) * 0.16);
+				double vaz = az + (hash01(slot * 32 + v, 21) * 2.0 - 1.0) * 9.0;
+				double vel = el - 6.0 - hash01(slot * 32 + v, 22) * 9.0;
+				double vr  = rad * (0.92 + hash01(slot * 32 + v, 23) * 0.16);
 
 				// RADIALLY OUTWARD FROM THE CLUSTER'S CENTRE. Take the
 				// variant's own offset from its main star, stretch it, and put
@@ -617,7 +764,7 @@ class wr_Constellation : EventHandler
 		int hit = level.AddBillboardPersistent(
 			(0, 0, 0), 1.0, 1.0, 0, 0,
 			LevelLocals.BBF_CAMERA, LevelLocals.BB_PANEL, 0,
-			tint, 0, 0, "");
+			tint, LevelLocals.BBFL_NODEPTH, 0, "");
 		level.SetBillboardAlpha(hit, 0.0);
 		level.ResizeBillboard(hit, hitR, hitR);
 		level.MoveBillboard(hit, pos);
@@ -638,7 +785,7 @@ class wr_Constellation : EventHandler
 		int lab = level.AddBillboardPersistent(
 			(0, 0, 0), 1.0, 1.0, 0, 0,
 			LevelLocals.BBF_CAMERA, LevelLocals.BB_TEXT, 0,
-			0xFFFFFF, LevelLocals.BBFL_NOHIT, 0, nm);
+			0xFFFFFF, LevelLocals.BBFL_NODEPTH | LevelLocals.BBFL_NOHIT, 0, nm);
 		level.SetBillboardAlpha(lab, 0.0);
 		level.ResizeBillboard(lab,
 			LABEL_H * LABEL_ASPECT * double(chars) * 0.5, LABEL_H * 0.5);
@@ -897,6 +1044,48 @@ class wr_Constellation : EventHandler
 		return mOpen ? mReach : 0.0;
 	}
 
+	// WHERE THE FINGERTIP IS THIS INSTANT, and whether it has left the dead
+	// zone at all. See GOGO_DEAD for why the curve is shaped the way it is.
+	private Vector3 fingerTip(PlayerPawn pmo, out bool reaching)
+	{
+		Vector3 eye  = pmo.Pos + (0, 0, pmo.player.viewheight);
+		Vector3 hand = wr_Rig.handPos(pmo, mHand);
+
+		Vector3 arm = hand - eye;
+		double real = arm.Length();
+		if (real < 0.001) { reaching = false; return hand; }
+
+		Vector3 u = arm / real;
+
+		double past = real - (mRestReach + GOGO_DEAD);
+		if (past <= 0.0)
+		{
+			// Inside the dead zone the fingertip IS the hand -- no
+			// amplification at all, so ordinary movement near your body cannot
+			// fling a cursor across the sky.
+			reaching = false;
+			return hand;
+		}
+
+		reaching = true;
+
+		double virt = real + past * past * cv("wr_chart_gogo", GOGO_K);
+		double cap  = FAR_R * GOGO_MAX;
+		if (virt > cap) virt = cap;
+
+		return eye + u * virt;
+	}
+
+	// The grab sphere grows with how far out the fingertip has gone: a radius
+	// that feels right against the near clusters subtends almost nothing
+	// against the far ones.
+	private double tipRadius(Vector3 tip, Vector3 eye) const
+	{
+		double d = (tip - eye).Length() / FAR_R;
+		if (d < 0.0) d = 0.0; else if (d > 1.0) d = 1.0;
+		return TIP_R + (TIP_R_FAR - TIP_R) * d;
+	}
+
 	private void updateHover(PlayerPawn pmo)
 	{
 		// THE RING'S OWN RAY, from the hand that opened this. Not AttackPos,
@@ -908,6 +1097,34 @@ class wr_Constellation : EventHandler
 		int hit;
 		Vector2 uv;
 		[hit, uv] = level.AimBillboard(org, dir, FAR_R * 2.6);
+
+		// REACHING WINS OVER POINTING, the same rule and the same reason the
+		// ring gives: both are ways in and they are not rivals, but putting
+		// your hand somewhere is the more deliberate act than happening to be
+		// pointed past it.
+		Vector3 eye = pmo.Pos + (0, 0, pmo.player.viewheight);
+		Vector3 tip = fingerTip(pmo, mReaching);
+
+		if (mReaching)
+		{
+			int touched;
+			Vector2 tuv;
+			double tdist;
+			[touched, tuv, tdist] = level.TouchBillboard(tip, tipRadius(tip, eye));
+			if (touched != 0 && indexOfHit(touched) >= 0) hit = touched;
+		}
+
+		// The marker. Shown only while actually reaching -- a cursor parked in
+		// the sky at rest is one more thing to read on a chart that is already
+		// asking you to read it.
+		if (mTipId)
+		{
+			double lit = (hit != 0 && indexOfHit(hit) >= 0) ? 1.0 : 0.55;
+			level.MoveBillboard(mTipId, tip);
+			level.SetBillboardAlpha(mTipId, mReaching ? lit : 0.0);
+			double ts = TIP_SIZE * (lit > 0.9 ? 1.45 : 1.0);
+			level.ResizeBillboard(mTipId, ts, ts);
+		}
 
 		if (hit != 0 && indexOfHit(hit) >= 0)
 		{
@@ -926,15 +1143,26 @@ class wr_Constellation : EventHandler
 		// beyond the furthest cluster keeps it inside the chart it belongs to.
 		mReach = FAR_R * 1.25;
 
-		// SOMETHING ELSE ATE THE RAY, or there was nothing there.
+		// WHY NOTHING IS LIT, said out loud. There are three ways to get here
+		// and from inside a headset they are indistinguishable:
 		//
-		// AimBillboard returns the NEAREST hittable billboard in the world,
-		// not the nearest of OURS -- so anything a hand, a holster or a HUD
-		// has left in front of the chart wins the ray and the whole sky goes
-		// dead to the pointer. Traced rather than guessed at, because from
-		// here the two cases look identical: set wr_chart_debug 1.
-		if (hit != 0 && cv("wr_chart_debug", 0.0) > 0.0 && (mTics % 8) == 0)
-			Console.Printf("[CHART] ray taken by foreign billboard %d", hit);
+		//   the ray found nothing at all      -- aim, range or origin is wrong
+		//   it found a billboard that is not ours  -- something is in front of
+		//     the chart and ate it, which AimBillboard cannot avoid because it
+		//     returns the nearest hittable billboard in the WORLD
+		//   it found one of ours and we rejected it -- impossible by the branch
+		//     above, so if this ever prints that, the id bookkeeping is broken
+		//
+		// Every eighth tic so it is readable rather than a wall.
+		if (cv("wr_chart_debug", 0.0) > 0.0 && (mTics % 8) == 0)
+		{
+			Console.Printf(
+				"[CHART] miss: ray=%d (%s)  stars=%d  hand=%d  org=(%.0f,%.0f,%.0f) dir=(%.2f,%.2f,%.2f)",
+				hit,
+				(hit == 0) ? "nothing in range" : "foreign billboard",
+				mStarHits.Size(), mHand,
+				org.x, org.y, org.z, dir.x, dir.y, dir.z);
+		}
 
 		// Held briefly, so a shaky hand crossing empty sky does not strobe
 		// the label off and on.

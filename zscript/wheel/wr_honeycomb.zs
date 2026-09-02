@@ -108,6 +108,26 @@ class wr_Honeycomb : EventHandler
 	// purpose: this is grain, not variety.
 	const SHADE_VARY  = 0.16;
 
+	// BBFL_NODEPTH ON EVERYTHING, and it is the whole answer to walls.
+	//
+	// The defect this replaces was real: a layout placed into geometry is
+	// invisible AND still selectable, because nothing in the pointing path
+	// knows geometry exists -- AimBillboard, TouchBillboard and stickPick all
+	// pass straight through it. So you end up pointing a clamped laser at a
+	// card behind a door and committing to it blind.
+	//
+	// The first fix traced at build and pulled the layout in to fit the room.
+	// It worked and it was WRONG, because a Doom room is often two hundred
+	// units across and this chart wants to stand at a hundred and twenty: the
+	// clamp crushed the sky into a closet, and every bit of depth and spread
+	// the layout exists for went with it.
+	//
+	// The mismatch was never that the placement disobeyed walls. It was that
+	// the DRAWING obeyed them while the pointing did not. A chart is a menu
+	// that happens to occupy a volume, not an object in the room -- so it draws
+	// over geometry, the two halves agree again, and it can stand as far out as
+	// it likes. Same reason wr_gunhud.zs uses the flag for the on-gun readout.
+
 	// The reveal. Cells arrive ring by ring from the centre outward, which is
 	// how a comb grows and also happens to be the order that reads best --
 	// the thing you are most likely to want is nearest the middle and appears
@@ -142,6 +162,11 @@ class wr_Honeycomb : EventHandler
 	// that raised the layout, and stop the beam on what it found.
 	private int      mHand;
 	private double   mReach;
+
+	// How far the comb may actually hang, given the room. Solved once at
+	// open; a comb that re-solved per tic would breathe in and out as the
+	// player leaned.
+	private double   mDist;
 
 	private Vector3  mOrigin;
 	private double   mOriginYaw;
@@ -265,6 +290,8 @@ class wr_Honeycomb : EventHandler
 		mReach     = 0.0;
 		mOpen      = true;
 
+		mDist = FORWARD * cv("wr_hive_dist", 1.0);
+
 		build(pmo);
 
 		if (mCellIds.Size() == 0) { mOpen = false; return; }
@@ -349,7 +376,7 @@ class wr_Honeycomb : EventHandler
 		int id = level.AddBillboardPersistent(
 			(0, 0, 0), sz, sz, 0, 0,
 			LevelLocals.BBF_CAMERA, LevelLocals.BB_SDFHEX, shape,
-			tint, LevelLocals.BBFL_NOHIT, 0, "");
+			tint, LevelLocals.BBFL_NODEPTH | LevelLocals.BBFL_NOHIT, 0, "");
 		level.SetBillboardAlpha(id, 0.0);
 
 		// A GRADIENT PER CELL, dark at the bottom. Flat fills are what make a
@@ -365,7 +392,7 @@ class wr_Honeycomb : EventHandler
 		int hit = level.AddBillboardPersistent(
 			(0, 0, 0), sz * 0.92, sz * 0.92, 0, 0,
 			LevelLocals.BBF_CAMERA, LevelLocals.BB_PANEL, 0,
-			tint, 0, 0, "");
+			tint, LevelLocals.BBFL_NODEPTH, 0, "");
 		level.SetBillboardAlpha(hit, 0.0);
 		level.MoveBillboard(hit, pos);
 		mCellHits.Push(hit);
@@ -373,7 +400,7 @@ class wr_Honeycomb : EventHandler
 		int lab = level.AddBillboardPersistent(
 			(0, 0, 0), sz * 0.8, sz * 0.22, 0, 0,
 			LevelLocals.BBF_CAMERA, LevelLocals.BB_TEXT, 0,
-			0xFFFFFF, LevelLocals.BBFL_NOHIT, 0, tagOf(ty));
+			0xFFFFFF, LevelLocals.BBFL_NODEPTH | LevelLocals.BBFL_NOHIT, 0, tagOf(ty));
 		level.SetBillboardAlpha(lab, 0.0);
 		mCellLabels.Push(lab);
 
@@ -394,8 +421,7 @@ class wr_Honeycomb : EventHandler
 	// and the tessellation would open up as it went outward.
 	private Vector3 domeAt(double right, double up, double push)
 	{
-		double rad = FORWARD * cv("wr_hive_dist", 1.0)
-		           * cv("wr_hive_dome", DOME_MULT);
+		double rad = mDist * cv("wr_hive_dome", DOME_MULT);
 		if (rad < 8.0) rad = 8.0;
 
 		// Arc length over radius is radians; everything downstream is degrees.
@@ -406,7 +432,7 @@ class wr_Honeycomb : EventHandler
 		// only sets how hard the sheet curves. Pulling `push` off the distance
 		// is what brings a hovered cell toward you along its own sightline
 		// rather than sideways.
-		double d = FORWARD * cv("wr_hive_dist", 1.0) - push;
+		double d = mDist - push;
 
 		double yaw = mOriginYaw + az;
 		double ch  = cos(el);

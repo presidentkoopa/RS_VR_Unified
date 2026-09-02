@@ -1060,49 +1060,29 @@ class RS_Pull : EventHandler
 
 		bool dbg = RS_Reach.Flag("rs_hand_debug", p, true);
 
-		// A MISS JUST DROPS IT, as of 2026-08-28, and that is the owner's call
-		// rather than a technical one.
+		// A MISS JUST DROPS IT. There is no other outcome, and there is no
+		// longer a switch to ask for one.
 		//
-		// The old behaviour resolved a missed catch as a real event: the medikit
-		// healed you, the ammo box armed you, the barrel hurt you. The argument
-		// for it was that missing should cost something. What it actually meant
-		// was that you could not pull a medikit ACROSS A ROOM TO CARRY IT --
-		// reaching for one at range and fumbling it spent the item where it
-		// stood, and there was no way to ask for the pull without also
+		// The original behaviour resolved a missed catch as a real event: the
+		// medikit healed you, the ammo box armed you, the barrel hurt you. The
+		// argument was that missing should cost something. What it actually
+		// meant was that you could not pull a medikit ACROSS A ROOM TO CARRY
+		// IT -- reaching for one at range and fumbling it spent the item where
+		// it stood, and there was no way to ask for the pull without also
 		// accepting the pickup.
 		//
-		// Now it lands at your feet as an ordinary object, still there, still
-		// walk-over-able, still grabbable by hand. The flags were already put
-		// back above, so it is a completely ordinary Doom actor from here.
+		// That was already the default (rs_dgrab_impact 0). Now the branch is
+		// gone entirely, and removing the OPTION is the point rather than a
+		// tidy-up: an interaction whose failure mode is "you take damage" is
+		// one people stop using, and it does not matter that the damage is off
+		// by default if the mechanic still reads as risky. Pulling something
+		// toward you should be as free to get wrong as picking it up is.
 		//
-		// rs_dgrab_impact keeps the old stakes for anyone who wants them: set it
-		// above zero and a missed pull resolves the way it used to.
-		if (RS_Reach.Num("rs_dgrab_impact", p, 0.0) <= 0.0)
-		{
-			if (dbg) Console.Printf("[RSPULL] %s arrived uncaught -- dropped", a.GetClassName());
-			return;
-		}
-
-		// A pickup resolves as a pickup -- the ordinary Doom path, so a medikit
-		// heals exactly as much as walking over it would and a mod's custom
-		// pickup behaviour runs untouched.
-		let inv = Inventory(a);
-		if (inv && !inv.Owner)
-		{
-			bool took = inv.CallTryPickup(pmo);
-			if (dbg) Console.Printf("[RSPULL] %s hit you -- %s",
-				a.GetClassName(), took ? "picked up" : "refused");
-			return;
-		}
-
-		// Anything else is a lump of matter arriving at speed. Damage rather
-		// than an explosion: a barrel that detonates on contact makes every
-		// missed pull a near-death, and you can still shoot one out of the air
-		// if that is what you wanted.
-		int dmg = int(RS_Reach.Num("rs_dgrab_impact", p, 0.0));
-		if (dmg > 0)
-			pmo.DamageMobj(a, null, dmg, 'Crush', DMG_THRUSTLESS);
-		if (dbg) Console.Printf("[RSPULL] %s hit you -- %d damage", a.GetClassName(), dmg);
+		// It lands as an ordinary object, still there, still walk-over-able,
+		// still grabbable by hand. Every flag was put back above, so it is a
+		// completely ordinary Doom actor from here -- gravity included, which
+		// is what carries it down to your feet from the palm it was flying to.
+		if (dbg) Console.Printf("[RSPULL] %s arrived uncaught -- dropped", a.GetClassName());
 	}
 
 	override void WorldLoaded(WorldEvent e) { AbortAll(); }

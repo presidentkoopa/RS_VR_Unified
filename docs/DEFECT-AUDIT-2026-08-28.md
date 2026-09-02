@@ -146,6 +146,8 @@ One addition the reporter did not mention: the same defect exists verbatim in th
 
 ### 3. Two holsters ship at their debug position, floating 7 units in front of the player's face
 
+**RESOLVED 2026-08-30** -- owner's call: not an issue, the positions are intended.
+
 **File:** `E:\mERGE\RS_VR_Unified\zscript\holsters\RS_Holsters.zs`  
 **Line:** 125-134 (GetHolster cases 2 and 3)  
 **Severity:** `broken-at-defaults`
@@ -193,6 +195,8 @@ Confirmed as reported, with three precision fixes:
 ## Hands
 
 ### 4. Pulled objects can never be caught beyond ~2 m -- they always slam into you instead
+
+**RESOLVED 2026-08-30** -- the catch itself was fixed earlier by holding the object on the palm for CATCH_HOLD_TICS (the old test resolved against the BODY, closing the window before it opened). A missed catch now always just drops the object at your feet: the pickup/damage branch and `rs_dgrab_impact` are deleted outright, not merely defaulted off.
 
 **File:** `E:\mERGE\RS_VR_Unified\zscript\hands\rs_distance.zs`  
 **Line:** 500-637 (tic loop), 615-637 (Impact), 446-456 (CatchableBy); catch call site rs_grab.zs:868-891; order set by MAPINFO.txt AddEventHandlers  
@@ -319,6 +323,8 @@ The finding stands; one clause is overstated. "Clears only on level change or by
 
 ### 7. Throwing or flicking with one hand de-compensates the OTHER hand's turn baseline for a tic
 
+**RESOLVED** -- `turnPrimed` is cleared only in `ForgetAll` (rs_swing.zs:180); the per-hand `Forget` no longer touches the shared baseline, so the other hand keeps its turn compensation.
+
 **File:** `E:\mERGE\RS_VR_Unified\zscript\hands\rs_swing.zs`  
 **Line:** 96-109 (Forget; the offending line is 104 `turnPrimed = false;`)  
 **Severity:** `broken-in-edge-case`
@@ -409,6 +415,8 @@ Corrected statement: rs_hands_debug (CVARINFO.txt:23) and rs_hold_debug (CVARINF
 
 ### 9. Taking a level exit mid-carry jams the feeder hand's GripClaim at GRIPSUBJ_Magazine for the rest of the run
 
+**RESOLVED 2026-08-30** -- `RR_Reload` now has `WorldUnloaded`/`WorldLoaded` that clear GripClaim* on every player, but only for the four subjects this package authors (Magazine, Shell, Round, Inserting). Same fix RS_Holsters used for its own travelling state.
+
 **File:** `E:\mERGE\RS_VR_Unified\zscript\reload\rr_sequence.zs`  
 **Line:** 94 (only override), 171 + 189 + 202 (Claim writes), 685-702 (Abort)  
 **Severity:** `broken-at-defaults`
@@ -453,6 +461,8 @@ Confirmed as reported, with two factual corrections to the symptom list. (1) The
 
 ### 10. The RETURNED exit is unreachable after any movement -- putting the magazine back in the pouch plays the DROP sound
 
+**RESOLVED 2026-08-30** -- `pouchAt` is stored as an offset from the pawn plus the yaw it was taken at, and rebuilt against the live position each test, so the sphere travels and turns with the body instead of staying where the player used to be.
+
 **File:** `E:\mERGE\RS_VR_Unified\zscript\reload\rr_sequence.zs`  
 **Line:** 163 (pouchAt captured), 635-641 (InPouchGeom / POUCH_R), 207 + 212-236 (Release)  
 **Severity:** `broken-in-common-case`
@@ -494,6 +504,8 @@ Corrected claim: InPouchGeom (rr_sequence.zs:635-641) tests the feeder hand agai
 ---
 
 ### 11. Releasing ammunition without leaving the pouch locks that hand out of the next draw until it exits and re-enters the pouch volume
+
+**RESOLVED 2026-08-30** -- RS_Holsters' pouch-renewal branch now re-asserts `GRIPSUBJ_Pouch` whenever the field has fallen to None while the hand is still inside and we still believe we own it. Repaired in the claim's owner rather than by asking the other mod not to clear it; only ever taken from None, so nobody else's claim is stolen.
 
 **File:** `E:\mERGE\RS_VR_Unified\zscript\reload\rr_sequence.zs`  
 **Line:** 240 (Abort in Release), 624-628 (InPouch)  

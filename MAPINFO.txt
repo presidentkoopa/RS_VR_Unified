@@ -74,9 +74,12 @@
 // created, every reader's "have data" flag returns false, and the kills /
 // shots / accuracy / headshot rows hide themselves. In-headset that reads as
 // a data card with fewer rows than expected, which is why it has survived.
-// Registering it is one word here, but it is a BEHAVIOUR change to the wheel
-// rather than a merge fix, so it stays the owner's call.
+// REGISTERED 2026-08-30, on the owner's call. The stat rows were asked for
+// explicitly, and four defects in the tracker itself (audit #31 pellets, #32
+// per-hand attribution, #33 the MAG row's ammo pools, #34 the headshot
+// percentage) were fixed the same day -- all of it dead code while the one
+// writer of the ledger never ran. wr_GunTag stays off; see above.
 GameInfo
 {
-	AddEventHandlers = "RS_HandsAlwaysOn", "RS_HandWorldHandler", "RS_GrabPolicy", "RS_GrabHandler", "RS_Swing", "RS_Held", "RS_Pull", "RS_Route", "RS_GrabViz", "RS_HolsterManager", "RR_Reload", "wr_Rig", "wr_Constellation", "wr_Honeycomb"
+	AddEventHandlers = "RS_HandsAlwaysOn", "RS_HandWorldHandler", "RS_GrabPolicy", "RS_GrabHandler", "RS_Swing", "RS_Held", "RS_Pull", "RS_Route", "RS_GrabViz", "RS_HolsterManager", "RR_Reload", "wr_Rig", "wr_Constellation", "wr_Honeycomb", "wr_StatEvents"
 }

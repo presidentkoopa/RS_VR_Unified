@@ -91,6 +91,65 @@ class RR_Reload : EventHandler
 	// MAPINFO.txt registers this handler through AddEventHandlers, which is what
 	// makes it tick; that is the only wiring it has ever needed.
 
+	// THE CLAIM DOES NOT SURVIVE THE MAP. Audit finding #9.
+	//
+	// GripClaimMain/Off is a native field on the PAWN, and the travelling pawn
+	// carries it across an exit -- but this handler is per-level and is rebuilt
+	// with `claimed` back at GRIPSUBJ_None. So Abort()'s own guard
+	// (`claimed != GRIPSUBJ_None`) can never fire on the new map, and a grip
+	// held on ammunition at the moment you take an exit leaves that hand
+	// claimed for GRIPSUBJ_Magazine for the rest of the run: the holsters'
+	// fist-restore never runs, the pouch never re-claims, and the hand is
+	// simply dead.
+	//
+	// RS_Holsters hit exactly this and fixed it the same way -- see its own
+	// note at "Every weapon you were carrying in a holster when you took the
+	// exit was permanently, silently bricked". This handler was the last writer
+	// of GripClaim* in the family with no unload path.
+	//
+	// ONLY OUR OWN SUBJECTS. A hand legitimately claimed by the pouch or a
+	// holster at the moment of the exit is not this pass's to erase.
+	override void WorldUnloaded(WorldEvent e)
+	{
+		ClearTravellingClaims();
+	}
+
+	// And on arrival too, because the pawn can reach a new map carrying a claim
+	// this handler never set -- a save loaded mid-carry, or a lane that exited
+	// before this fix shipped. Cheap, and it cannot make anything worse: it
+	// only ever clears a subject this mod is the author of.
+	override void WorldLoaded(WorldEvent e)
+	{
+		ClearTravellingClaims();
+	}
+
+	private void ClearTravellingClaims()
+	{
+		for (int i = 0; i < MAXPLAYERS; ++i)
+		{
+			if (!playeringame[i]) continue;
+			let pmo = players[i].mo;
+			if (!pmo) continue;
+
+			if (IsOurSubject(pmo.GripClaimMain)) pmo.GripClaimMain = GRIPSUBJ_None;
+			if (IsOurSubject(pmo.GripClaimOff))  pmo.GripClaimOff  = GRIPSUBJ_None;
+		}
+
+		claimed = GRIPSUBJ_None;
+		phase   = RR_IDLE;
+		target  = 'None';
+	}
+
+	// The four subjects this package is the author of. Named as a list rather
+	// than tested as a range so adding a fifth is a deliberate edit here.
+	private static bool IsOurSubject(int subj)
+	{
+		return subj == GRIPSUBJ_Magazine
+		    || subj == GRIPSUBJ_Shell
+		    || subj == GRIPSUBJ_Round
+		    || subj == GRIPSUBJ_Inserting;
+	}
+
 	override void WorldTick()
 	{
 		let p = players[consoleplayer];
@@ -160,7 +219,21 @@ class RR_Reload : EventHandler
 		// the arbiter still said so. RS_Holsters owns the anchor and does not
 		// export its position, and once we claim Magazine over it the subject
 		// stops answering -- so the only chance to learn the location is now.
-		pouchAt = RR_Point.HandPos(pmo, h);
+		// STORED RELATIVE TO THE PLAYER, not as a world point. Audit finding
+		// #10.
+		//
+		// The pouch is a BODY-RELATIVE anchor -- it travels with you -- and
+		// this used to capture the hand's WORLD position once, at the moment
+		// of the claim, and test against that frozen point for the rest of the
+		// carry. 3.5 map units is about ten centimetres, and a running player
+		// covers sixteen units in a single tic, so one step put the hand
+		// permanently outside a sphere that was still sitting where the player
+		// used to be. Release() then saw inPouch == false for every carry that
+		// involved moving, and the RETURNED exit -- putting the magazine back
+		// where you got it -- was unreachable for anyone not standing still.
+		// It played the DROP sound instead.
+		pouchAt    = RR_Point.HandPos(pmo, h) - pmo.Pos;
+		pouchYaw   = pmo.angle;
 
 		// The contract's claim table: the pouch sets GRIPSUBJ_Pouch on entry,
 		// and THE RELOAD MOD sets GRIPSUBJ_Magazine when ammunition is handed
@@ -634,10 +707,23 @@ class RR_Reload : EventHandler
 	// back where it started. The start position is captured on Begin.
 	private bool InPouchGeom(PlayerPawn pmo, int hand)
 	{
-		return (RR_Point.HandPos(pmo, hand) - pouchAt).Length() <= POUCH_R;
+		// Rebuilt against where the player is NOW, and spun by however far they
+		// have turned since -- the offset was taken in the body's frame, so it
+		// has to be read back in the body's frame or turning on the spot walks
+		// the sphere out from under the hand.
+		double d = pmo.angle - pouchYaw;
+		double c = cos(d), sn = sin(d);
+		Vector3 spun = (pouchAt.x * c - pouchAt.y * sn,
+		                pouchAt.x * sn + pouchAt.y * c,
+		                pouchAt.z);
+
+		return (RR_Point.HandPos(pmo, hand) - (pmo.Pos + spun)).Length() <= POUCH_R;
 	}
 
+	// The pouch, as an offset from the pawn and the yaw it was taken at. See
+	// Begin() for why this is not a world point.
 	private Vector3 pouchAt;
+	private double  pouchYaw;
 	const POUCH_R = 3.5;   // matches RS_Holsters' AmmoPouch hsRadius
 
 	private static int SubjectFor(int feed)

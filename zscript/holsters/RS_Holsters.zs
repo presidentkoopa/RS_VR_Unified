@@ -1288,11 +1288,37 @@ class RS_HolsterManager : EventHandler
 		}
 		else if (nowInPouch && claimedByUs)
 		{
-			// RENEWAL. Nothing else in this branch changes, and the engine field
-			// is already right -- but the arbiter's lease has to be refreshed or
-			// a hand parked in the pouch for two seconds would read as free.
+			// RENEWAL. The arbiter's lease has to be refreshed or a hand parked
+			// in the pouch for two seconds would read as free.
 			if (arbiter)
 				arbiter.GetInt("grip.claim", "", hand, GRIPSUBJ_Pouch, pawn, 'RS_Holsters');
+
+			// AND THE ENGINE FIELD IS NOT NECESSARILY STILL RIGHT. Audit
+			// finding #11.
+			//
+			// This branch used to assume it was, because we set it on the entry
+			// edge and nothing clears it until the hand leaves. But another
+			// consumer can take the claim off us and hand it back to None while
+			// the hand is still inside -- which is exactly what a reload does
+			// when you let the grip go without leaving the pouch. The entry
+			// edge above cannot re-take it (claimedByUs is still true, so this
+			// branch runs instead) and the exit branch below cannot clear our
+			// flag (the hand has not left), so GripClaim stayed None for as
+			// long as the hand stayed put. The engine then falls through to
+			// GRIPSUBJ_Holster, and every consumer testing for GRIPSUBJ_Pouch
+			// -- the reload's own draw, among others -- refuses that hand until
+			// it is taken out and put back.
+			//
+			// So the invariant is repaired here rather than by asking the other
+			// mod not to clear it: while we believe we own the pouch and the
+			// hand is in it, the field says Pouch. Only from None, so a claim
+			// somebody else legitimately holds is never stolen.
+			int live = isMain ? pawn.GripClaimMain : pawn.GripClaimOff;
+			if (live == GRIPSUBJ_None)
+			{
+				if (isMain) pawn.GripClaimMain = GRIPSUBJ_Pouch;
+				else        pawn.GripClaimOff  = GRIPSUBJ_Pouch;
+			}
 		}
 		else if (!nowInPouch && claimedByUs)
 		{

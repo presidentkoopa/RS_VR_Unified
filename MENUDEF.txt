@@ -347,7 +347,6 @@ OptionMenu "RS_GrabDistMenu"
 	StaticText "Miss the catch and it just lands at your feet.", 1
 	StaticText "Above zero instead makes a miss cost you: a", 1
 	StaticText "pickup gets used up, anything else hits you.", 1
-	Slider "  Cost of a missed catch",   "rs_dgrab_impact", 0, 40, 1, 0
 }
 
 //======================================================================
@@ -895,8 +894,6 @@ OptionMenu wr_Options
 	StaticText "not separate features.", "DarkGray"
 	Option "Layout",                      "wr_layout",     "wr_LayoutKind"
 	StaticText " "
-	Option "Honeycomb instead of ring",   "wr_hex",        "OnOff"
-	Slider "  Rings arrive apart by (tics)", "wr_hex_stagger", 0, 12, 1, 0
 
 	StaticText ""
 	StaticText "Cards", gold

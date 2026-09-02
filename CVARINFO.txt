@@ -546,21 +546,6 @@ user bool rs_grab_lightup = true;
 // to read as alive, slow enough that a room full of pickups is not a strobe.
 user float rs_grab_flash = 24.0;
 
-// WHAT A MISSED CATCH COSTS. 0 -- the default as of 2026-08-28 -- means an
-// uncaught object simply lands at your feet, still there and still grabbable.
-//
-// It used to be 5, and a miss resolved as a real event: the medikit healed you,
-// the ammo box armed you, the barrel hurt you. The idea was that missing should
-// cost something. What it meant in practice was that you could not pull a
-// medikit across a room IN ORDER TO CARRY IT -- fumbling the catch spent the
-// item where it stood, and there was no way to ask for the pull without also
-// accepting the pickup.
-//
-// Above zero restores the old stakes: a pickup resolves as a pickup and
-// anything else deals this much damage. A barrel still will not detonate on
-// contact -- that made every missed pull a near-death -- and you can always
-// shoot one out of the air if that is the outcome you were after.
-user float rs_dgrab_impact = 0.0;
 
 // ---- THROWING -----------------------------------------------------------
 //
@@ -1251,13 +1236,11 @@ user float wr_rise     = 2.0;
 // Slot positions stay just as learnable either way -- a spiral FILL is as
 // fixed as an angle, so slot 4 is the same cell every map, same promise the
 // ring's bearings make.
-user bool  wr_hex         = false;
 
 // Tics of delay between one ring of the comb arriving and the next. The
 // centre lands, then the six around it, then the twelve around those --
 // each reusing the same ease wr_growtics already defines, just started late.
 // 0 lands the whole hive at once, the way the ring does.
-user int   wr_hex_stagger = 3;
 
 
 // THE CONSTELLATION
@@ -1305,11 +1288,18 @@ user float wr_stars_alpha = 0.5;
 // Leans the tops toward you.
 user float wr_tilt     = 12.0;
 
-// Touch radius, and it is DEPTH tolerance more than reach. The grid is a flat
-// plane; this is how far your hand may sit in front of or behind it and still
-// count. Small values mean a perfectly aimed hand misses because it drifted a
-// few centimetres forward. Nearest-hit resolves any overlap, so generous is
-// free. 7 units is about 20cm.
+// REACHING INTO THE RING. The radius of the sphere carried at your fingertip,
+// and it does two jobs at once.
+//
+// It is the grab volume: how close the fingertip has to get to a card to take
+// it. Nearest-hit resolves any overlap, so generous is free.
+//
+// It is also HOW FAR YOU HAVE TO PUSH. The fingertip is parked one and a
+// fifth of this short of the cards when the ring opens, so a bigger radius
+// means both a fatter grab volume and a longer deliberate reach to reach it.
+// 7 units is about 20cm.
+//
+// 0 turns reaching off entirely and leaves the beam as the only way in.
 user float wr_touch    = 7.0;
 
 // Open the rig automatically when a level starts.
@@ -2001,6 +1991,22 @@ user float wr_chart_link_alpha = 0.45;
 // leaves in front of it wins the ray and the sky stops answering. Set to 1 to
 // have the chart say so when that is what happened.
 user int   wr_chart_debug = 0;
+
+// HOW HARD REACHING AMPLIFIES on the star chart. The world may be frozen but
+// you can still physically move, so you can put your hand on a star -- and a
+// sky at forty-six to a hundred and twenty units is well past arm's length,
+// so the reach has to be earned rather than measured.
+//
+// Inside a small dead zone the fingertip is exactly your hand and nothing is
+// amplified. Past it, virtual reach grows with the SQUARE of how far you have
+// actually pushed, so a deliberate extension travels a long way and ordinary
+// movement near your body travels nowhere. This is the gain on that square.
+//
+// Higher reaches the far clusters with a shorter push and gets twitchy; lower
+// is steadier and may not reach the back of the sky at all. 0 disables the
+// amplification, leaving reaching possible only for stars you can literally
+// touch.
+user float wr_chart_gogo = 0.42;
 
 // ---- THE HONEYCOMB -----------------------------------------------------
 //
