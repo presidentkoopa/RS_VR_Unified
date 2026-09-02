@@ -435,7 +435,15 @@ class RS_HolsterManager : EventHandler
 			// touch a hand mid-switch, which is correct, but it needs
 			// something that actually MOVES the switch forward, since this
 			// specific failure mode does not resolve on its own.
-			if (pawn.player.PendingWeapon != WP_NOCHANGE)
+			// Only a LIVE player with the fire buttons up can have a switch
+			// that is genuinely stuck. CheckWeaponChange waits for
+			// A_WeaponReady, so held fire (A_ReFire loops) and a long
+			// third-party reload keep PendingWeapon set for as long as they
+			// like -- and a corpse keeps it set forever, with BringUpWeapon
+			// having no PST_LIVE guard of its own.
+			bool switchCanSettle = pawn.player.playerstate == PST_LIVE && pawn.health > 0
+				&& !(pawn.player.cmd.buttons & (BT_ATTACK | BT_ALTATTACK | BT_OFFHANDATTACK | BT_OFFHANDALTATTACK));
+			if (pawn.player.PendingWeapon != WP_NOCHANGE && switchCanSettle)
 			{
 				pendingStuckTics[i]++;
 
@@ -995,17 +1003,24 @@ class RS_HolsterManager : EventHandler
 			// the props are in actor-pitch space (hsPitch 90 = barrel down),
 			// so a raw copy stored every dragged pitch mirrored about level.
 			edPitch[gm] = -pawn.AttackPitch;
-			edRoll[gm]  = pawn.AttackRoll;
+			// MainHandRoll, not AttackRoll: P_PlayerThink zeroes AttackRoll
+			// every tic before WorldTick runs, so this always read 0. Negated
+			// like rs_held.zs's held-object roll (confirmed in headset there):
+			// a controller's roll and an actor's Roll turn opposite ways.
+			edRoll[gm]  = -pawn.MainHandRoll;
 			// yaw relative to the BODY, not the world, or the stored angle
 			// would only be right while facing the direction you set it in
-			edYaw[gm] = normalizeDeg(pawn.AttackAngle - bodyYaw[i]);
+			// +90: the engine stores AttackAngle/OffhandAngle 90 degrees off
+			// actor-yaw convention and every consumer adds it back (p_map.cpp
+			// aimAngle, rs_grab.zs, rr_point.zs). bodyYaw is a true world yaw.
+			edYaw[gm] = normalizeDeg((pawn.AttackAngle + 90.0) - bodyYaw[i]);
 		}
 		if (go >= 0)
 		{
 			worldToBody(i, pawn, pawn.OffhandPos, edFwd[go], edSide[go], edFrac[go]);
 			edPitch[go] = -pawn.OffhandPitch;   // negated, see above
-			edRoll[go]  = pawn.OffhandRoll;
-			edYaw[go] = normalizeDeg(pawn.OffhandAngle - bodyYaw[i]);
+			edRoll[go]  = -pawn.OffhandRoll;   // negated, see the main hand above
+			edYaw[go] = normalizeDeg((pawn.OffhandAngle + 90.0) - bodyYaw[i]);
 		}
 	}
 

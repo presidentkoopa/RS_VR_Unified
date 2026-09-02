@@ -864,7 +864,7 @@ class wr_Rig : EventHandler
 		bool fire = wr_Keybind.isKeyFor(e.KeyScan, "+attack")
 		         || wr_Keybind.isKeyFor(e.KeyScan, "+oh_attack");
 		bool alt  = wr_Keybind.isKeyFor(e.KeyScan, "+altattack")
-		         || wr_Keybind.isKeyFor(e.KeyScan, "+oh_altattack");
+		         || wr_Keybind.isKeyFor(e.KeyScan, "+oh_altatk");   // the fork's button name (d_main.cpp); "+oh_altattack" does not exist
 
 		// THE SHEET PAGES, THE CARDS SELECT. Both read the fire buttons you
 		// already have bound rather than taking binds of their own -- binding

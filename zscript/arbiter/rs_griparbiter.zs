@@ -224,7 +224,16 @@ class RS_GripArbiterService : Service
 		if (request == "grip.claim")
 		{
 			if (s < 0) return -1;
-			if (slotLive(s) && mOwner[s] != nameArg) return 0;
+			// A live lease refuses every other claimant -- EXCEPT a lease
+			// whose subject is the pouch. A hand in the pouch is reaching,
+			// not holding, and the lane that puts ammunition into it (the
+			// reload) takes the hand over from the lane that owns the pouch
+			// (the holsters). Without this the reload's claim was denied on
+			// every carry, its Abort() could never answer "mine", and the
+			// holsters' pouch exit cleared the field and handed the gun
+			// back mid-carry. The displaced owner sees grip.mine == 0 and
+			// stands down until the taker releases.
+			if (slotLive(s) && mOwner[s] != nameArg && mSubject[s] != GRIPSUBJ_Pouch) return 0;
 
 			mOwner[s]   = nameArg;
 			mSubject[s] = int(doubleArg);

@@ -546,19 +546,28 @@ class RS_GrabPolicy : EventHandler
 		bool took = w.CallTryPickup(pmo);
 		if (took && pmo.player)
 		{
+			// THE INSTANCE IN THE INVENTORY, which is `w` only when this class
+			// was not owned before. For an owned class TryPickup routes into
+			// the owned weapon's HandlePickup, takes the ammo and puts the
+			// world copy into HoldAndDestroy -- pointing PendingWeapon at
+			// that dying actor made the held gun dip and pop back with
+			// nothing raised.
+			let mine = Weapon(pmo.FindInventory(w.GetClass()));   // class<Weapon>, which FindInventory accepts
+			if (mine == null) mine = w;
+
 			// THE HAND THAT REACHED FOR IT. BringUpWeapon picks the slot from
 			// bOffhandWeapon alone, and a weapon fresh off the floor has it
 			// false -- so an off-hand grab used to raise the gun in the MAIN
 			// hand and leave the reaching hand empty. Same write
 			// SwitchWeaponHand makes before its own BringUpWeapon.
-			w.bOffhandWeapon = (hand == 1);
-			if (w.SisterWeapon != null)
-				w.SisterWeapon.bOffhandWeapon = (hand == 1);
+			mine.bOffhandWeapon = (hand == 1);
+			if (mine.SisterWeapon != null)
+				mine.SisterWeapon.bOffhandWeapon = (hand == 1);
 
 			// PendingWeapon rather than ReadyWeapon: the switch has to go
 			// through BringUpWeapon or the raise animation never runs and the
 			// gun appears already up, which reads as a glitch.
-			pmo.player.PendingWeapon = w;
+			pmo.player.PendingWeapon = mine;
 		}
 		if (Flag("rs_hand_debug", p, true))
 			Console.Printf("[RSTAKE] %s -- %s", a.GetClassName(),

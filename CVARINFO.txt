@@ -1135,6 +1135,10 @@ user bool rr_magazines = false;
 // guessing a number into MODELDEF.
 user float rr_ammo_scale = 1.0;
 
+// Magazine capacity multiplier, read by RR_Feed.CapOf. Was read but never
+// declared, so CVar.GetCVar returned null and the multiplier was silently 1.
+user float rr_mag_scale = 1.0;
+
 // Force every weapon to a feed family / archetype, for tuning one family at a
 // time. -1 is auto.
 //   feed: 0 none  1 box  2 bolt  3 pump  4 break  5 belt  6 pod  7 cell

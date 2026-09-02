@@ -111,6 +111,13 @@ class RR_Reload : EventHandler
 	// holster at the moment of the exit is not this pass's to erase.
 	override void WorldUnloaded(WorldEvent e)
 	{
+		// Abort first: it releases the arbiter lease, which the clearing pass
+		// below never did -- and the arbiter is a Service that outlives the
+		// map, so a lease taken mid-carry stayed live into the next one and
+		// blocked the pouch's claim on that hand until a full reload happened
+		// to clear it.
+		let p = players[consoleplayer];
+		if (p && p.mo) Abort(p.mo);
 		ClearTravellingClaims();
 	}
 
@@ -208,6 +215,19 @@ class RR_Reload : EventHandler
 
 	private void Begin(PlayerInfo p, PlayerPawn pmo, int h, int g, int f, int a, Weapon w)
 	{
+		// ASK BEFORE COMMITTING. The pouch owns this hand's lease while the
+		// hand is inside it; the arbiter lets a claim take over a pouch lease
+		// (it is reaching, not holding), but a denial here means some other
+		// lane genuinely holds the hand. Starting a carry the arbiter never
+		// granted left Abort() unable to answer "mine", so the field stayed
+		// on the magazine subject and the hand stayed posed on it for good.
+		if (arbiter && arbiter.GetInt("grip.claim", "", h, SubjectFor(f), pmo, 'RR_Reload') != 1)
+		{
+			if (Debug(p)) Console.Printf("[RR] arbiter denied hand %d -- not starting", h);
+			guard = 10;
+			return;
+		}
+
 		phase  = RR_CARRY;
 		feeder = h;
 		gunHand = g;
@@ -785,7 +805,13 @@ class RR_Reload : EventHandler
 		// Doubles as a renewal: re-asserting an existing claim refreshes its
 		// lease, and Claim is already called every tic while carrying.
 		if (arbiter)
-			arbiter.GetInt("grip.claim", "", feeder, subj, pmo, 'RR_Reload');
+		{
+			// Renewal. Begin() already asked once; a denial here means the
+			// lease was taken from under a carry, which is worth seeing.
+			int ok = arbiter.GetInt("grip.claim", "", feeder, subj, pmo, 'RR_Reload');
+			if (ok != 1 && pmo.player && Debug(pmo.player))
+				Console.Printf("[RR] arbiter denied renewal on hand %d (subject %d)", feeder, subj);
+		}
 	}
 
 	private void Abort(Actor a)

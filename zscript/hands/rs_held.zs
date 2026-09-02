@@ -950,14 +950,22 @@ class RS_Held : EventHandler
 			//
 			// The convention (actor.zs) is SET while holding, and clear only a
 			// value that is ours. Release does the clearing.
-			if (h == HAND_MAIN) pmo.GripClaimMain = hSubject[h];
-			else                pmo.GripClaimOff  = hSubject[h];
-			hClaimed[h] = hSubject[h];
+			// ASK FIRST, WRITE ON A GRANT. Writing the engine field and then
+			// asking meant a denied claim (the hand is carrying a reload
+			// magazine, or is inside the pouch's claim) had already clobbered
+			// the field -- and ClearClaims, which only clears what grip.mine
+			// says is ours, then left it clobbered after the release.
+			bool granted = !arbiter
+				|| arbiter.GetInt("grip.claim", "", h, hSubject[h], pmo, 'RS_Held') == 1;
+			if (granted)
+			{
+				if (h == HAND_MAIN) pmo.GripClaimMain = hSubject[h];
+				else                pmo.GripClaimOff  = hSubject[h];
+				hClaimed[h] = hSubject[h];
+			}
 
 			// Doubles as a renewal -- this runs every tic while holding, which
 			// is exactly what keeps the lease alive.
-			if (arbiter)
-				arbiter.GetInt("grip.claim", "", h, hSubject[h], pmo, 'RS_Held');
 
 			// And tell the hand model what shape to be, when the world hands are
 			// the ones on screen. One tic behind, because the pose handler is
@@ -1054,6 +1062,14 @@ class RS_Held : EventHandler
 
 	override void WorldUnloaded(WorldEvent e)
 	{
+		// ReleaseAll empties the slots; ClearClaims withdraws what the tic
+		// loop PUBLISHED -- GripClaim* on the pawn and the arbiter lease.
+		// The pawn travels to the next map, this handler does not, and the
+		// engine never clears the field itself, so a hold across an exit
+		// left that hand reading as closed on an object for the whole of
+		// the following map.
 		ReleaseAll();
+		let p = players[consoleplayer];
+		if (p && p.mo) ClearClaims(p.mo);
 	}
 }

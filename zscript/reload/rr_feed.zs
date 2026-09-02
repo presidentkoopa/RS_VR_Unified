@@ -426,6 +426,11 @@ class RR_Feed play
 		let av = CVar.GetCVar("rr_force_arch", p);
 		int ff = fv ? fv.GetInt() : -1;
 		int fa = av ? av.GetInt() : -1;
+		// Out of range reads as "not forced": every Arch*/Feed* switch
+		// falls through to melee/none for an unknown value, which zeroed the
+		// gun length and grip and made the magwell untouchable.
+		if (ff >= RR_F_MAX) ff = -1;
+		if (fa >= RR_A_MAX) fa = -1;
 		if (ff >= 0 || fa >= 0)
 		{
 			int a2 = (fa >= 0) ? fa : InferArch(w);
