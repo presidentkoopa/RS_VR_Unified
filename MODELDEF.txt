@@ -321,10 +321,13 @@ Model RS_VolumeBox
 Model RS_HolsterMarker
 {
 	Path "models"
+	// ONE slot. Every slot with a model is drawn every frame -- a FrameIndex
+	// selects a frame per slot, never which slot shows -- so a second
+	// hot-skinned slot rendered on top of the idle one permanently, and on
+	// top of the sphere when rs_holster_marker_shape asked for it. Hot and
+	// idle are a skin swap on slot 0 (RS_HolsterMarker.SetHot).
 	Model 0 "rs_holster_bracket.obj"
 	Skin 0 "rs_wire_idle.png"
-	Model 1 "rs_holster_bracket.obj"
-	Skin 1 "rs_wire_hot.png"
 	// Unit-radius mesh, same convention rs_wiresphere.obj used -- this Scale
 	// is what makes the reticle's true size match hsRadius exactly, the same
 	// "what you see is the actual volume" property the sphere had.
@@ -350,7 +353,7 @@ Model RS_HolsterMarker
 	Rotation-Vector 0 0 1
 
 	FrameIndex RSHM A 0 0
-	FrameIndex RSHM B 1 0
+	FrameIndex RSHM B 0 0
 }
 
 

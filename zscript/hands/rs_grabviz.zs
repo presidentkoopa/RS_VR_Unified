@@ -41,8 +41,14 @@ class RS_GaugeBase : Actor
     {
         Super.Tick();
         let p = players[consoleplayer].mo;
-        if (p) SetOrigin(p.Pos, false);
+        if (p) SetOrigin(AnchorPos(p), false);
     }
+
+    // Where the gauge is parked for culling. The handler's WorldTick runs
+    // BEFORE thinkers, so anything it SetOrigin()s is overwritten here on
+    // the same tic -- a subclass that belongs somewhere other than the feet
+    // has to say so through this, not through the handler.
+    virtual Vector3 AnchorPos(PlayerPawn p) { return p.Pos; }
     States
     {
     Spawn:
@@ -69,7 +75,10 @@ class RS_GrabOvalOff  : RS_GaugeBase { }
 // It sits where you cannot look at it, which is exactly why it is not the answer
 // to "how do I know something is in range" -- the flash and the tick are. This
 // is for dialling the number and then switching off.
-class RS_FaceVol : RS_GaugeBase { }
+class RS_FaceVol : RS_GaugeBase
+{
+    override Vector3 AnchorPos(PlayerPawn p) { return p.HmdPos; }
+}
 
 // The collision volume of whatever is in reach, drawn around it.
 //
@@ -589,8 +598,12 @@ class RS_GrabViz : EventHandler
     // long enough to write a colour onto the wrong object.
     override void WorldLoaded(WorldEvent e)
     {
-        litActor[0] = null;
-        litActor[1] = null;
+        // ClearMark, not a bare null: on a savegame load the pointers are
+        // live and the actor was serialised in whatever colour it had at
+        // save time. Nulling leaves it orange or green for the rest of the
+        // level; restoring is a no-op when the pointer is dead anyway.
+        ClearMark(0);
+        ClearMark(1);
         if (faceViz) { faceViz.Destroy(); faceViz = null; }
     }
 }

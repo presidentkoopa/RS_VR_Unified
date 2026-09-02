@@ -418,6 +418,13 @@ class RS_HolsterProp : Actor
 	// donor class belonging to a completely different mod (ModelSwapper)
 	// rather than the weapon's own class.
 	class<Actor> shownClass;
+	// The class the model was ACTUALLY bound from. shownClass is the
+	// change-detection key (the GetActorModelClass donor) and stays that
+	// even when the ModelSwapper retry rebinds to the MS_PU_ pickup class
+	// with sprite/frame pinned -- so anything that asks the engine about
+	// this prop's model has to name THIS class, or it asks about a
+	// (class, sprite, frame) triple that has no model and gets "not found".
+	class<Actor> boundClass;
 
 	// Measured, not guessed. Whether THIS specific weapon's MODELDEF mirrors
 	// it (negative X Scale) plus its own baked AngleOffset/PitchOffset/
@@ -864,6 +871,7 @@ class RS_HolsterProp : Actor
 			// wantClass, not w.GetClassName(). After this, FindModelFrame
 			// resolves against that class rather than RS_HolsterProp, and
 			// the (sprite, frame) set above completes the key.
+			boundClass = wantClass;
 			A_ChangeModel(wantClass.GetClassName());
 		}
 

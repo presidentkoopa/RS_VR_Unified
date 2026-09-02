@@ -59,6 +59,7 @@ class RS_HandFist play
 	static Weapon FindOrMakeFist(PlayerPawn pawn, bool offhand)
 	{
 		Weapon spare = null;
+		Weapon otherHandWeapon = offhand ? pawn.player.ReadyWeapon : pawn.player.OffhandWeapon;
 
 		// Remembered even when it never becomes SPARE below -- the clone
 		// fallback further down needs a class to copy even when every
@@ -85,7 +86,6 @@ class RS_HandFist play
 			// yet -- an exact match anywhere later in the chain still wins.
 			// Never the weapon currently seated in the OTHER hand: that
 			// instance is busy, full stop, no flag fixup changes that.
-			Weapon otherHandWeapon = offhand ? pawn.player.ReadyWeapon : pawn.player.OffhandWeapon;
 			if (spare == null && w != otherHandWeapon)
 				spare = w;
 		}
@@ -123,7 +123,11 @@ class RS_HandFist play
 			// only means the guard sees a fist already correctly labelled for
 			// where it is about to go, instead of rejecting it on the way in.
 			spare.bOffhandWeapon = offhand;
-			if (spare.SisterWeapon != null)
+			// A sister is a same-hand twin (the powered-up form), so it takes
+			// the same label -- UNLESS it is the fist seated in the other hand,
+			// which an older build of the clone branch below used to wire up
+			// as a sister. Relabelling that one would flip the other hand.
+			if (spare.SisterWeapon != null && spare.SisterWeapon != otherHandWeapon)
 				spare.SisterWeapon.bOffhandWeapon = offhand;
 			return spare;
 		}
@@ -188,20 +192,21 @@ class RS_HandFist play
 				fresh.AttachToOwner(pawn);
 				fresh.bOffhandWeapon = offhand;
 
-				// Paired with whatever the OTHER hand is holding, but only
-				// if that is ALSO a fist -- SisterWeapon is an intra-fist-
-				// pair link everywhere else it is used above, not a generic
-				// "whatever is in the other hand" pointer, and wiring it to
-				// a real gun would make the exact-match branch above misread
-				// that gun as this fist's twin the next time either hand
-				// empties.
-				Weapon donor = offhand ? pawn.player.ReadyWeapon : pawn.player.OffhandWeapon;
-				if (donor != null && IsFistClass(donor.GetClass()))
-				{
-					fresh.SisterWeapon = donor;
-					donor.SisterWeapon = fresh;
-				}
-
+				// NOT sister-linked to the fist in the other hand. SisterWeapon
+				// means "this weapon's other form, in the SAME hand" to the
+				// engine: BringUpWeapon and MoveWeaponToHand both write
+				// SisterWeapon.bOffhandWeapon = <the hand being filled>, and
+				// Weapon.OnDestroy destroys the sister. A cross-hand link
+				// therefore relabelled the other hand's fist on every raise
+				// (punches traced from the wrong controller) and made
+				// WeaponsMatch treat the two as one weapon, which is what
+				// turned every seat of this clone into a no-op hand switch.
+				// AttachToOwner already set SisterWeapon from SisterWeaponType,
+				// which is the only sister a fist should have.
+				//
+				// The clone is the same CLASS as the donor, so the seat must
+				// go through MoveWeaponToHand with exactInstance -- see
+				// RS_Holsters.moveWeaponInstant.
 				return fresh;
 			}
 

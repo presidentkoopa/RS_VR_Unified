@@ -108,6 +108,13 @@ class RS_HandsAlwaysOn : EventHandler
 		{
 			Clear(player, LAYER_MAIN);
 			Clear(player, LAYER_OFF);
+			// StandInForFist hides the weapon layer while a fist is equipped
+			// and only ever un-hides it on its NEXT call -- which this early
+			// out skips. Left alone, NoDraw sticks on the DPSprite (the engine
+			// reuses the layer object across weapon switches and serialises
+			// the flag), so every gun raised in that hand afterwards renders
+			// nothing until rs_hands is switched back on.
+			UnhideWeaponLayers(player);
 			return;
 		}
 
@@ -333,6 +340,7 @@ class RS_HandsAlwaysOn : EventHandler
 		case GRIPSUBJ_Slide:     return POSE_HOLD_SLIDE;
 		case GRIPSUBJ_Support:   return POSE_SUPPORT;
 		case GRIPSUBJ_Holster:   return POSE_REACH;
+		case GRIPSUBJ_Pouch:     return POSE_REACH;   // reaching for a magazine, same splay
 		}
 
 		// GRIPSUBJ_Grip deliberately falls through. A hand on a pistol grip is
@@ -441,7 +449,9 @@ class RS_HandsAlwaysOn : EventHandler
 		// Anything the hand has actually taken hold of overrides that. Checked
 		// after the fist stand-in rather than before it so that a fist weapon
 		// still shows a fist -- there is nothing in that hand to hold.
-		int held = PoseForSubject(subject, holding);
+		// Same notion of "empty" as PoseFor above: a fist stand-in means the
+		// hand has nothing in it, so it CAN support the other hand's gun.
+		int held = PoseForSubject(subject, holding && !fistWeapon);
 		if (held >= 0)
 			pose = held;
 
@@ -536,19 +546,6 @@ class RS_HandsAlwaysOn : EventHandler
 		int from = isMain ? blendFromMain : blendFromOff;
 		int to   = isMain ? blendToMain   : blendToOff;
 
-		if (pose != to)
-		{
-			// Target changed. Start from wherever the blend currently IS, not
-			// from the old target -- otherwise interrupting a half-finished
-			// blend snaps backwards before starting the new one.
-			from = (isMain ? blendTicsMain : blendTicsOff) > 0 ? from : to;
-			to = pose;
-			if (isMain) { blendFromMain = from; blendToMain = to; blendTicsMain = 0; }
-			else        { blendFromOff  = from; blendToOff  = to; blendTicsOff  = 0; }
-		}
-
-		int tics = isMain ? blendTicsMain : blendTicsOff;
-
 		// Read UNCONDITIONALLY and let the <= 0 test below do the snapping.
 		// Fixed 2026-08-26: the guard used to be `cSpeed.GetFloat() > 0.0`,
 		// so setting rs_hands_blend to 0 meant the cvar was never read at all
@@ -559,6 +556,25 @@ class RS_HandsAlwaysOn : EventHandler
 		CVar cSpeed = CVar.GetCVar("rs_hands_blend", player);
 		if (cSpeed != null)
 			speed = cSpeed.GetFloat();
+
+		if (pose != to)
+		{
+			// Target changed mid-blend. Two frame numbers cannot express an
+			// in-between pose, so the closest thing to "start from where the
+			// fingers ARE" is the nearer end of the blend in progress: past
+			// halfway, continue from the old target; before it, from the old
+			// start. (The previous test, `tics > 0 ? from : to`, always chose
+			// the old START -- tics is never 0 here -- which was the backwards
+			// flick it claimed to prevent.)
+			int ticsNow = isMain ? blendTicsMain : blendTicsOff;
+			double prog = (speed <= 0.0) ? 1.0 : double(ticsNow) / speed;
+			from = (prog >= 0.5) ? to : from;
+			to = pose;
+			if (isMain) { blendFromMain = from; blendToMain = to; blendTicsMain = 0; }
+			else        { blendFromOff  = from; blendToOff  = to; blendTicsOff  = 0; }
+		}
+
+		int tics = isMain ? blendTicsMain : blendTicsOff;
 
 		double f = (speed <= 0.0) ? 1.0 : double(tics) / speed;
 		if (f >= 1.0)
@@ -596,7 +612,22 @@ class RS_HandsAlwaysOn : EventHandler
 
 	private void Clear(PlayerInfo player, int layer)
 	{
-		if (player.FindPSprite(layer) != null)
-			player.SetPsprite(layer, null);
+		// Pass the layer's own caller. With a null caller the engine derives
+		// one from the layer id -- ReadyWeapon for anything but the offhand
+		// layer -- and if THAT is null GetPSprite returns nothing and the hand
+		// stays drawn, frozen on its last pose, for as long as rs_hands is off.
+		let psp = player.FindPSprite(layer);
+		if (psp != null)
+			player.SetPsprite(layer, null, false, psp.Caller);
+	}
+
+	// See the rs_hands-off branch in WorldTick. Any early exit taken after
+	// StandInForFist may have hidden a weapon layer must undo that.
+	private void UnhideWeaponLayers(PlayerInfo player)
+	{
+		let wm = player.FindPSprite(PSprite.WEAPON);
+		if (wm != null) wm.NoDraw = false;
+		let wo = player.FindPSprite(PSprite.OFFHANDWEAPON);
+		if (wo != null) wo.NoDraw = false;
 	}
 }

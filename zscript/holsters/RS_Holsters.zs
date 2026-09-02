@@ -555,12 +555,74 @@ class RS_HolsterManager : EventHandler
 	// Leaving the level: unflag everything BEFORE this handler (and its
 	// contents[] table) ceases to exist, which is the only moment the mapping
 	// from weapon to "is holstered" still exists at all.
+	// The handler is rebuilt per map and int arrays start at 0 -- which is
+	// HipLeft, not "no holster". Until calibration lands (up to a second)
+	// nothing else writes these, and NetworkProcess is live the whole time.
+	override void OnRegister()
+	{
+		for (int p = 0; p < MAXPLAYERS; ++p)
+		{
+			nearMain[p]    = -1;
+			nearOff[p]     = -1;
+			pendingDump[p] = -1;
+			grabbedMain[p] = -1;
+			grabbedOff[p]  = -1;
+		}
+	}
+
 	override void WorldUnloaded(WorldEvent e)
 	{
 		for (int i = 0; i < MAXPLAYERS; ++i)
 		{
+			// THE PAWN TRAVELS, THIS HANDLER DOES NOT. Everything below
+			// releasePlayer touches is ours and dies with us; the claim
+			// fields live on the pawn and the engine never clears them. A
+			// hand resting in the pouch at the exit therefore arrived on the
+			// next map still claimed GRIPSUBJ_Pouch with no handler that
+			// remembered making the claim -- so it never released, the next
+			// pouch entry swapped a fist in, and nothing ever swapped it back
+			// out. Stale HolsterClaim* meanwhile kept the engine emitting
+			// anchor-grip pulses through the new map's calibration window.
+			if (playeringame[i] && players[i].mo)
+				releaseTravellingClaims(i, players[i].mo);
 			releasePlayer(i, true);
 			despawnPlayerActors(i);
+		}
+	}
+
+	// Drop the pawn-side state this handler owns before the pawn leaves:
+	// holster claims, our pouch grip claims (and the arbiter lease behind
+	// them), and the weapon the pouch swapped out -- which goes back into
+	// the hand now, because pouchPrevious* is about to be forgotten.
+	private void releaseTravellingClaims(int i, PlayerPawn pawn)
+	{
+		pawn.HolsterClaimMain = false;
+		pawn.HolsterClaimOff  = false;
+
+		ensurePouchPrevious();
+		for (int hand = 0; hand < 2; ++hand)
+		{
+			bool isMain = (hand == 0);
+			bool claimedByUs = isMain ? pouchClaimedMain[i] : pouchClaimedOff[i];
+			if (claimedByUs)
+			{
+				bool ours;
+				if (arbiter)
+					ours = arbiter.GetInt("grip.mine", "", hand, 0, pawn, 'RS_Holsters') == 1;
+				else
+					ours = (isMain ? pawn.GripClaimMain : pawn.GripClaimOff) == GRIPSUBJ_Pouch;
+				if (ours)
+				{
+					if (isMain) pawn.GripClaimMain = GRIPSUBJ_None;
+					else        pawn.GripClaimOff  = GRIPSUBJ_None;
+				}
+				if (arbiter)
+					arbiter.GetInt("grip.release", "", hand, 0, pawn, 'RS_Holsters');
+			}
+
+			Weapon prev = isMain ? pouchPreviousMain[i] : pouchPreviousOff[i];
+			if (prev != null)
+				moveWeaponInstant(pawn, prev, hand);
 		}
 	}
 
@@ -770,6 +832,21 @@ class RS_HolsterManager : EventHandler
 			return;
 		calibrated[playerNum] = false;
 		spawnTries[playerNum] = 0;
+
+		// WorldTick skips updateClaims for the whole resample window, so
+		// whatever these held on the last calibrated tic would otherwise
+		// stay live: the engine keeps arming F13/F14 off a stale
+		// HolsterClaim, and NetworkProcess would doSwap against a holster
+		// the hand may have left a second ago.
+		nearMain[playerNum]    = -1;
+		nearOff[playerNum]     = -1;
+		grabbedMain[playerNum] = -1;
+		grabbedOff[playerNum]  = -1;
+		if (playeringame[playerNum] && players[playerNum].mo)
+		{
+			players[playerNum].mo.HolsterClaimMain = false;
+			players[playerNum].mo.HolsterClaimOff  = false;
+		}
 	}
 
 	// Seed the live offsets from the default table, once.
@@ -912,7 +989,12 @@ class RS_HolsterManager : EventHandler
 		if (gm >= 0)
 		{
 			worldToBody(i, pawn, pawn.AttackPos, edFwd[gm], edSide[gm], edFrac[gm]);
-			edPitch[gm] = pawn.AttackPitch;
+			// NEGATED: the engine writes AttackPitch/OffhandPitch as
+			// -weaponangles[PITCH] and every consumer flips it back (hw_weapon
+			// aimPitch = -AttackPitch, rs_grab.zs HandPitch). The table and
+			// the props are in actor-pitch space (hsPitch 90 = barrel down),
+			// so a raw copy stored every dragged pitch mirrored about level.
+			edPitch[gm] = -pawn.AttackPitch;
 			edRoll[gm]  = pawn.AttackRoll;
 			// yaw relative to the BODY, not the world, or the stored angle
 			// would only be right while facing the direction you set it in
@@ -921,7 +1003,7 @@ class RS_HolsterManager : EventHandler
 		if (go >= 0)
 		{
 			worldToBody(i, pawn, pawn.OffhandPos, edFwd[go], edSide[go], edFrac[go]);
-			edPitch[go] = pawn.OffhandPitch;
+			edPitch[go] = -pawn.OffhandPitch;   // negated, see above
 			edRoll[go]  = pawn.OffhandRoll;
 			edYaw[go] = normalizeDeg(pawn.OffhandAngle - bodyYaw[i]);
 		}
@@ -1777,7 +1859,7 @@ class RS_HolsterManager : EventHandler
 			// times too much -- which is why shrinking a weapon threw it out of
 			// the sphere instead of settling it in the middle.
 			[foundWorld, worldOffX, worldOffY, worldOffZ] =
-				level.GetModelWorldOffset(p.shownClass, p.sprite, p.frame, stretch, finalAngle, finalPitch, p.roll,
+				level.GetModelWorldOffset(p.boundClass, p.sprite, p.frame, stretch, finalAngle, finalPitch, p.roll,
 				                          p.scale.X, p.scale.Y);
 			if (!foundWorld) { worldOffX = 0.0; worldOffY = 0.0; worldOffZ = 0.0; }
 
@@ -2302,16 +2384,24 @@ class RS_HolsterManager : EventHandler
 	// only tests the invincibility bits (CF_BUDDHA/CF_BUDDHA2/CF_GODMODE/
 	// CF_GODMODE2) -- nothing anywhere treats "cheats nonzero" as a global
 	// cheated-run flag that this would trip.
+	//
+	// exactInstance: true. MoveWeaponToHand's default matches the weapon to
+	// the OTHER hand's by CLASS (and sister link) and turns a match into a
+	// hand switch instead of a seat. This file deals in INSTANCES -- a
+	// matched pair of pistols, one per hand, or a second fist of the class
+	// already seated opposite -- and for those the class test was true every
+	// time, so the stored gun / fresh fist was never placed and the swap
+	// read as "did nothing". Pointer identity is the only test that fits.
 	private void moveWeaponInstant(PlayerPawn pawn, Weapon w, int hand)
 	{
 		if (!instantSwitchEnabled())
 		{
-			pawn.MoveWeaponToHand(w, hand);
+			pawn.MoveWeaponToHand(w, hand, true);
 			return;
 		}
 		bool wasSet = (pawn.player.cheats & CF_INSTANTWEAPSWITCH) != 0;
 		pawn.player.cheats |= CF_INSTANTWEAPSWITCH;
-		pawn.MoveWeaponToHand(w, hand);
+		pawn.MoveWeaponToHand(w, hand, true);
 		if (!wasSet)
 			pawn.player.cheats &= ~CF_INSTANTWEAPSWITCH;
 	}

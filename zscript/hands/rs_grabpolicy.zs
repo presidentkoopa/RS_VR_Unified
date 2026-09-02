@@ -441,7 +441,9 @@ class RS_GrabPolicy : EventHandler
 	// are consumed at your face and nowhere else -- if catching a medikit used
 	// it, catching would be indistinguishable from the walk-over that was
 	// switched off on purpose.
-	bool OnTake(int hand, Actor a, RS_GrabRule rule, PlayerPawn pmo, PlayerInfo p)
+	// fromAir: the object arrived by RS_Pull (a catch) rather than off the
+	// floor. Only a catch consumes health/armour on the spot -- see below.
+	bool OnTake(int hand, Actor a, RS_GrabRule rule, PlayerPawn pmo, PlayerInfo p, bool fromAir = false)
 	{
 		if (!a || !rule || !pmo) return false;
 
@@ -489,7 +491,12 @@ class RS_GrabPolicy : EventHandler
 		// Refused means you keep holding it. Full health and a medikit in your
 		// hand is the right outcome: it is still a medikit, and it will still be
 		// one when you are hurt.
-		if (Inherits(a, 'Health') || Inherits(a, 'Armor'))
+		// ON CATCH ONLY. A medikit picked up off the floor by hand is HELD --
+		// it is consumed at your face (RS_Route) and nowhere else, which is
+		// the contract the header above states and the one rs_use_at_face
+		// exists for. Without the fromAir gate a floor grab used it on the
+		// spot, exactly like the walk-over that rs_grab_nowalkover turns off.
+		if (fromAir && (Inherits(a, 'Health') || Inherits(a, 'Armor')))
 		{
 			let hinv = Inventory(a);
 			if (hinv && !hinv.Owner)
@@ -526,6 +533,15 @@ class RS_GrabPolicy : EventHandler
 		bool took = w.CallTryPickup(pmo);
 		if (took && pmo.player)
 		{
+			// THE HAND THAT REACHED FOR IT. BringUpWeapon picks the slot from
+			// bOffhandWeapon alone, and a weapon fresh off the floor has it
+			// false -- so an off-hand grab used to raise the gun in the MAIN
+			// hand and leave the reaching hand empty. Same write
+			// SwitchWeaponHand makes before its own BringUpWeapon.
+			w.bOffhandWeapon = (hand == 1);
+			if (w.SisterWeapon != null)
+				w.SisterWeapon.bOffhandWeapon = (hand == 1);
+
 			// PendingWeapon rather than ReadyWeapon: the switch has to go
 			// through BringUpWeapon or the raise animation never runs and the
 			// gun appears already up, which reads as a glitch.

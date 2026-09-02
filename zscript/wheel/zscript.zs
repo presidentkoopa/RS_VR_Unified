@@ -713,6 +713,12 @@ class wr_Rig : EventHandler
 
 	override void NetworkProcess(ConsoleEvent e)
 	{
+		// Every peer's handler receives every player's netevents. This rig
+		// drives consoleplayer's pawn, so anyone else's wheel binds must not
+		// reach it -- the constellation and honeycomb already guard the same
+		// way.
+		if (e.Player != consoleplayer) return;
+
 		// A wheel per hand. Whichever hand you summon it on is the hand that
 		// wears it, points at it, and receives what you pick -- so the bind you
 		// press already says which hand you meant.
@@ -769,6 +775,10 @@ class wr_Rig : EventHandler
 				&& !belongsToExpansion(mHovered))
 			{
 				int cardIndex = cardIndexOf(mHovered);
+				// The sheet's hit quad hovers but is no card: cardIndexOf gives
+				// -1, expandSlot(-1) would collapse whatever fan is open and
+				// return, and the success test below would then read -1 == -1.
+				if (cardIndex < 0) return;
 				expandSlot(pmo, cardIndex);
 				// mExpanded == cardIndex, not a before/after mSubIds.Size()
 				// comparison -- expandSlot() unconditionally collapses any
@@ -838,7 +848,8 @@ class wr_Rig : EventHandler
 		// to the dwell path itself (mFansEnabled, not already expanded)
 		// so this can never open something the dwell timer couldn't.
 		if (!mTouching && wr_Keybind.isKeyFor(e.KeyScan, "+use")
-			&& mFansEnabled && !belongsToExpansion(mHovered))
+			&& mFansEnabled && !belongsToExpansion(mHovered)
+			&& mHovered != mSheetHit)
 		{
 			EventHandler.SendNetworkEvent("wr_expand");
 			return true;
@@ -1062,6 +1073,7 @@ class wr_Rig : EventHandler
 		mHoverTics = 0;
 		mHavePoke  = false;
 		mShapeSlot = -1;
+		mExpanded  = -1;   // int fields start at 0, and 0 is card 0, not "no fan"
 		mOpenTics  = 0;
 
 		// NOT mCardPos.Clear() -- spawnPanels has already sized it, one entry
@@ -1204,7 +1216,10 @@ class wr_Rig : EventHandler
 		let hcc = wr_Honeycomb.Get();
 		if (hcc) hcc.Close();
 
-		if (!quiet) feedback(Sound("wristrig/close"), 0.18, 35);
+		// Only if there is a ring to fold: PlayerDied and WorldUnloaded call
+		// this unconditionally, and a click plus a buzz on every death and
+		// every level exit with nothing on screen is noise.
+		if (!quiet && (mOpen || mClosingTics > 0)) feedback(Sound("wristrig/close"), 0.18, 35);
 
 		// THE RING FOLDS AWAY RATHER THAN BLINKING OUT.
 		//
@@ -1273,7 +1288,7 @@ class wr_Rig : EventHandler
 		// never stale. Only when that is ALSO empty does it say so.
 		Class<Weapon> want = HoveredClass();
 		Weapon shown = want ? Weapon(pmo.FindInventory(want)) : null;
-		if (shown == null) shown = pmo.player.ReadyWeapon;
+		if (shown == null) shown = (mRigHand == 1) ? pmo.player.OffhandWeapon : pmo.player.ReadyWeapon;
 
 		Class<Weapon> nowCls = shown ? shown.GetClass() : null;
 
@@ -1559,6 +1574,7 @@ class wr_Rig : EventHandler
 		if (w == null)
 		{
 			sheetRow("(empty hand)", SHEET_DIM);
+			setSheetBar(0, SHEET_MEAS, false);   // no weapon, no condition/heat gauge
 			blankRestOfSheet();
 			return;
 		}
@@ -1664,9 +1680,10 @@ class wr_Rig : EventHandler
 		// SHOTS, not rounds -- the one derived number worth the arithmetic.
 		// Nobody decides on "186 cells"; they decide on "that is four shots".
 		int use = w.default.AmmoUse1;
-		if (use > 1)
+		int loadedForShots = ammoLoaded(w);   // -1 for a floor weapon (no Ammo1)
+		if (use > 1 && loadedForShots >= 0)
 		{
-			int shots = ammoLoaded(w) / use;
+			int shots = loadedForShots / use;
 			sheetRow(String.Format("SHOTS %d  (%d/ea)", shots, use), SHEET_MEAS);
 		}
 
@@ -3069,6 +3086,14 @@ class wr_Rig : EventHandler
 	// dependency of this wheel -- it would not compile without it.
 	override void OnRegister()
 	{
+		// -1 sentinels. An int field starts at 0, which is card 0 for
+		// mExpanded and shape slot 0 for mShapeSlot -- and this handler is
+		// rebuilt on every map, so without this the first open of each map
+		// treated card 0 as an open fan's parent, and a death or exit before
+		// the first open called RemoveShape(0) on somebody else's shape.
+		mExpanded  = -1;
+		mShapeSlot = -1;
+
 		if (!cvBool("wr_bullettime", true)) return;
 
 		let unl = CVar.FindCVar("bt_adrenaline_unlimited");
@@ -6524,6 +6549,8 @@ class wr_Rig : EventHandler
 		// An empty label is not a lookup that failed -- it is the mod saying
 		// this character cannot use this pickup at all, which is exactly what
 		// you want to know BEFORE walking across a room for it.
+		setSheetBar(0, SHEET_MEAS, false);   // a stand-in has no gauge to show
+
 		if (nothing)
 		{
 			sheetRow("NOT FOR YOUR CHARACTER", COLOR_AMMO_DRY);

@@ -611,6 +611,18 @@ class RS_GrabHandler : EventHandler
         if (!p || !p.mo) return;
         let pmo = p.mo;
 
+        // Dead: RS_Held, RS_Pull and RS_Route all stop here, and this one
+        // kept targeting, claiming, locking and taking from the corpse's
+        // hand position. Targets were nulled above; withdraw the claims too.
+        if (pmo.Health <= 0)
+        {
+            pmo.GrabClaimMain = false;
+            pmo.GrabClaimOff  = false;
+            wasGrip[0] = false;
+            wasGrip[1] = false;
+            return;
+        }
+
         // EVERY EXIT BELOW MUST WITHDRAW THE CLAIM, NOT JUST SKIP RESTATING IT.
         //
         // GrabClaimMain/Off are written once, at the bottom of this function.
@@ -679,6 +691,15 @@ class RS_GrabHandler : EventHandler
             }
 
             nearTarget[hand] = RS_Reach.Best(pmo, p, hand);
+            // Not something RS_Pull is flying or holding for the OTHER hand.
+            // Taking it here would SaveFlags the flight's fiction (no gravity,
+            // thru-actors, rolled) as the object's real state and leave two
+            // solvers driving one actor. RS_Pull guards the reverse direction
+            // itself (rs_distance.zs Lock/Start); this is the near side of it.
+            if (pull && nearTarget[hand] != null
+                && (pull.FlyingActor(1 - hand) == nearTarget[hand]
+                    || pull.Locked(1 - hand) == nearTarget[hand]))
+                nearTarget[hand] = null;
             // The cone is only asked when the palm is empty-handed AND empty of
             // anything to close on. Direct reach always wins: a thing you are
             // already touching is unambiguously the thing you meant.

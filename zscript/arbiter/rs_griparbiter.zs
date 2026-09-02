@@ -149,7 +149,11 @@ class RS_GripArbiterService : Service
 	{
 		if (s < 0 || s >= SLOTS)   return false;
 		if (mOwner[s] == 'None')   return false;
-		return (level.time - mTic[s]) <= LEASE_TICS;
+		// level.time restarts on every map while this Service does not, so
+		// a lease stamped late on the previous level reads as a large
+		// NEGATIVE age here and would pass for minutes. Negative = dead.
+		int age = level.time - mTic[s];
+		return age >= 0 && age <= LEASE_TICS;
 	}
 
 	// -1 for a bad index, so a caller that passes nonsense gets the same

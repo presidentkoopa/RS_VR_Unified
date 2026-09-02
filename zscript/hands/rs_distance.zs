@@ -696,7 +696,7 @@ class RS_Pull : EventHandler
 
 		// Consumed on the way in -- a weapon that equipped, or a third copy that
 		// became ammo. There is nothing left to hold.
-		if (pol.OnTake(hand, a, rule, pmo, p))
+		if (pol.OnTake(hand, a, rule, pmo, p, true))   // fromAir: this is the catch
 		{
 			flyActor[hand] = null;
 			flyHold[hand]  = 0;
