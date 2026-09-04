@@ -345,6 +345,10 @@ user float rs_swap_overlap_depth = 2.0;
 
 // Bumped when a shipped default changes in a way a saved profile would
 // otherwise keep overriding. See RS_GrabHandler.OnRegister.
+// The distance the swap falls back to when the reach ovals are too small to
+// decide it -- see RS_Reach.OvalsOverlap. Map units; 34 is a metre.
+user float rs_swap_overlap_min = 6.0;
+
 user int rs_hands_cfgver = 0;
 
 // THE NOISY ONE -- every mod-side hand diagnostic except the two below.

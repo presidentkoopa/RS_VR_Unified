@@ -321,6 +321,23 @@ class RS_Reach play
         Vector3 mine  = Centre(pmo, p, hand);
         Vector3 other = Centre(pmo, p, 1 - hand);
 
+        // A DEGENERATE OVAL CANNOT DECIDE THIS, AND THIS IS WHY THE GESTURE
+        // DIED. The oval's size depends on rs_grab_scale_space: with it at 1
+        // the shipped numbers give semi-axes of roughly 0.85 x 3.4 x 2.55 map
+        // units, a hand-sized volume the test means something against. With it
+        // at 0 the SAME numbers give 0.05 x 0.1 x 0.075 -- under three
+        // millimetres, smaller than the palm the oval is meant to describe --
+        // and no human hand can satisfy an overlap test against that.
+        //
+        // The flat distance this replaced did not care about oval size, which
+        // is exactly why it worked on a profile where the ovals had collapsed.
+        // So when the oval is too small to be a hand, the gesture falls back
+        // to a plain distance rather than becoming unreachable.
+        Vector3 ax = SemiAxes(p, hand);
+        double biggest = max(ax.x, max(ax.y, ax.z));
+        if (biggest < 1.0)
+            return (mine - other).Length() <= Num("rs_swap_overlap_min", p, 6.0);
+
         return Score(pmo, p, hand,     other) <= lim
             && Score(pmo, p, 1 - hand, mine)  <= lim;
     }
@@ -1184,15 +1201,16 @@ class RS_GrabHandler : EventHandler
                 // the palms are anywhere near each other, so the depth above
                 // can be set from what the hands actually do rather than from
                 // a guess. Squared, so 1.0 is the oval's own surface.
-                if (dbg && (level.time % 10) == 0)
+                if (dbg)
                 {
                     Vector3 mine  = RS_Reach.Centre(pmo, p, hand);
                     Vector3 other = RS_Reach.Centre(pmo, p, 1 - hand);
-                    double sA = RS_Reach.Score(pmo, p, hand,     other);
-                    double sB = RS_Reach.Score(pmo, p, 1 - hand, mine);
-                    if (sA <= 9.0 && sB <= 9.0)
-                        Console.Printf("[RSSWAP] hand %d overlap %.2f / %.2f  (need <= %.2f)",
-                            hand, sA, sB, depth * depth);
+                    Vector3 ax    = RS_Reach.SemiAxes(p, hand);
+                    Console.Printf("[RSSWAP] hand %d palms %.1f apart, oval %.2f/%.2f/%.2f, overlap %.2f/%.2f (need <= %.2f)",
+                        hand, (mine - other).Length(), ax.x, ax.y, ax.z,
+                        RS_Reach.Score(pmo, p, hand, other),
+                        RS_Reach.Score(pmo, p, 1 - hand, mine),
+                        depth * depth);
                 }
 
                 if (RS_Reach.OvalsOverlap(pmo, p, hand, depth))
