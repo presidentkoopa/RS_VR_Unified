@@ -300,7 +300,8 @@ OptionMenu "RS_GrabHoldMenu"
 	StaticText "hand doing the taking.", 1
 	Option "Swap by touching hands",    "rs_swap_overlap", "OnOff"
 	Slider "  Overlap needed",          "rs_swap_overlap_depth", 0.5, 2.5, 0.1, 1
-	StaticText "1.0 = palms meet, 2.0 = the ovals just touch.", "DarkGray"
+	StaticText "2.0 = the ovals meet. Lower is tighter; 1.0 is", "DarkGray"
+	StaticText "palm-on-palm and hard to hit on purpose.", "DarkGray"
 	StaticText ""
 	StaticText "With a voxel pack loaded, a held object becomes", 1
 	StaticText "a solid voxel you can actually turn over, then", 1

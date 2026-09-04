@@ -628,7 +628,34 @@ class RS_GrabHandler : EventHandler
             return false;
 
         return RS_Reach.OvalsOverlap(pmo, p, hand,
-            RS_Reach.Num("rs_swap_overlap_depth", p, 1.0));
+            RS_Reach.Num("rs_swap_overlap_depth", p, 2.0));
+    }
+
+    // A DEFAULT THAT CHANGED CANNOT REACH A PROFILE THAT ALREADY SAVED THE
+    // OLD ONE. rs_swap_overlap_depth shipped at 1.0 for one build -- palms
+    // touching centre to centre, about 2.5cm, a gesture you have to aim
+    // rather than make -- and every profile that ran that build wrote the 1.0
+    // into its ini, where it outranks the 2.0 the cvar now declares. So the
+    // swap stayed broken for exactly the people who had already tried it.
+    //
+    // Corrected once, on the version stamp, and only for a value inside the
+    // range that build could have written: anyone who deliberately set 1.2
+    // because they liked it keeps it.
+    override void OnRegister()
+    {
+        let p = players[consoleplayer];
+        if (!p) return;
+
+        let ver = CVar.GetCVar("rs_hands_cfgver", p);
+        if (!ver || ver.GetInt() >= 1) return;
+        ver.SetInt(1);
+
+        let d = CVar.GetCVar("rs_swap_overlap_depth", p);
+        if (d && d.GetFloat() < 1.5)
+        {
+            d.SetFloat(2.0);
+            Console.Printf("\cj[RSSWAP] hand swap distance was left at the old %.1f -- set to 2.0, the ovals meeting.", 1.0);
+        }
     }
 
     override void WorldTick()
@@ -1151,7 +1178,7 @@ class RS_GrabHandler : EventHandler
                 // both go through RS_Reach.OvalsOverlap, so the grip that
                 // claims the context and the grip that swaps can never
                 // disagree about what "overlapped" means.
-                double depth = RS_Reach.Num("rs_swap_overlap_depth", p, 1.0);
+                double depth = RS_Reach.Num("rs_swap_overlap_depth", p, 2.0);
 
                 // Tuning readout: the two scores in oval radii, printed while
                 // the palms are anywhere near each other, so the depth above

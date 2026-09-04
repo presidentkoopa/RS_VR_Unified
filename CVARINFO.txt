@@ -330,13 +330,22 @@ user bool rs_swap_overlap = true;
 // so had nothing to do with the ovals: at the shipped tuning it fired a full
 // hands width before the two ovals so much as touched.
 //
-//   1.0  the palms meet -- each one inside the other's oval. Deliberate.
-//   2.0  the two ovals just touch at their surfaces.
-//   above that is proximity again.
+//   2.0  THE DEFAULT -- the two ovals meet at their surfaces. This is what
+//        "the ovals have to overlap" means, and it is already far tighter
+//        than the flat 8 units it replaced, which fired a hand's width
+//        before the ovals so much as touched.
+//   1.0  the palms themselves meet, each one on the other's centre. Tried
+//        as the default and it is too much: about 2.5cm across the palms,
+//        which is a gesture you have to aim rather than make.
+//   above 2.0 loosens back toward plain proximity.
 //
 // Turn rs_hand_debug on and bring your palms together: [RSSWAP] prints the
 // live figure, so this can be set from what your hands actually do.
-user float rs_swap_overlap_depth = 1.0;
+user float rs_swap_overlap_depth = 2.0;
+
+// Bumped when a shipped default changes in a way a saved profile would
+// otherwise keep overriding. See RS_GrabHandler.OnRegister.
+user int rs_hands_cfgver = 0;
 
 // THE NOISY ONE -- every mod-side hand diagnostic except the two below.
 // [RSPULL] launches and blocks, [RSGRIP] squeezes, [RSSWAP], [RSHELD],
