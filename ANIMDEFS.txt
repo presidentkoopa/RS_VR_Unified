@@ -43,8 +43,3 @@ canvastexture WRFACE09 140 100 fit 140 100 WorldPanning
 canvastexture WRFACE10 140 100 fit 140 100 WorldPanning
 canvastexture WRFACE11 140 100 fit 140 100 WorldPanning
 
-
-// RS_HandHud -- the two plate skins, painted by zscript/handhud/rs_handhud.zs.
-// Sizes must match RS_HandHUD.CANVAS_W/H.
-canvastexture RSHUDMAIN 256 128 fit 256 128 WorldPanning
-canvastexture RSHUDOFF  256 128 fit 256 128 WorldPanning
