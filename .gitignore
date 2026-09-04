@@ -20,6 +20,9 @@
 
 __pycache__/
 
-# Engine logs, written next to whatever launched the build. Never source.
+# Engine logs and diagnostic captures, written next to whatever launched the
+# build. Never source. Globbed rather than listed because each new one is
+# named after whatever was being chased that day -- log-netcvarflood.txt was
+# the third to turn up untracked.
 doomxr-log.txt
-log-debug.txt
+log-*.txt
