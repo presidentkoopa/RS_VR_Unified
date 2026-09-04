@@ -810,7 +810,8 @@ class RS_HolsterManager : EventHandler
 			// nine bright markers and nine props hovering there all level.
 			if (pawn.HmdPos.Length() == 0)
 			{
-				Console.Printf("RS_HOLSTER: no head pose after %d tics -- holsters stay off this map", spawnTries[i]);
+				if (verboseDiag())
+					Console.Printf("RS_HOLSTER: no head pose after %d tics -- holsters stay off this map", spawnTries[i]);
 				return;
 			}
 			// Never got a plausible reading. Fall back to the pawn's own
@@ -818,7 +819,8 @@ class RS_HolsterManager : EventHandler
 			// nothing forever with no indication why.
 			eyeHeight[i] = pawn.Height * 0.9;
 			calibrated[i] = true;
-			Console.Printf("RS_HOLSTER: calibration timed out, using fallback eye height %.1f", eyeHeight[i]);
+			if (verboseDiag())
+				Console.Printf("RS_HOLSTER: calibration timed out, using fallback eye height %.1f", eyeHeight[i]);
 			return;
 		}
 
@@ -844,7 +846,8 @@ class RS_HolsterManager : EventHandler
 
 		eyeHeight[i] = measured;
 		calibrated[i] = true;
-		Console.Printf("RS_HOLSTER: calibrated standing eye height %.1f map units", measured);
+		if (verboseDiag())
+			Console.Printf("RS_HOLSTER: calibrated standing eye height %.1f map units", measured);
 	}
 
 	// For a bindable recalibrate command (sat down during the auto sample,
@@ -2275,6 +2278,12 @@ class RS_HolsterManager : EventHandler
 	// NAMED _verbose, NOT _debug: KEYCONF binds an ALIAS called
 	// rs_holster_debug, and a cvar sharing that name would collide in the
 	// console namespace. Same trap, same resolution, as _wristdump.
+	// EVERYTHING THIS PACKAGE PRINTS WHILE PLAYING IS BEHIND THIS.
+	// Off, the holsters are silent except for a genuine fault (no head
+	// pose, an eye height outside any sane range) and the things you asked
+	// for by pressing a key -- the table dump, a profile save or load,
+	// edit mode. Calibration used to announce itself on every map; that is
+	// a tuning session's want, not a shipped build's.
 	private bool verboseDiag() const
 	{
 		let cv = CVar.GetCVar("rs_holster_verbose", players[consoleplayer]);
