@@ -293,6 +293,38 @@ class RS_Reach play
         return ScoreAt(pmo, p, hand, world, Centre(pmo, p, hand));
     }
 
+    // DO THE TWO REACH OVALS ACTUALLY OVERLAP?
+    //
+    // Not "are the palms close". The swap gesture used to be a flat
+    // centre-to-centre distance (8 map units) which had nothing to do with the
+    // ovals it was named after: with the shipped tuning the ovals are about
+    // 0.85 x 3.4 x 2.55 units in semi-axes, so they only TOUCH at 6.8 units
+    // even along their longest axis. The gesture fired before the hands met,
+    // in every orientation -- close, never deliberate.
+    //
+    // This asks the ellipsoid instead, and asks it BOTH WAYS: the other palm
+    // inside MY oval, and my palm inside THEIRS. Symmetric, so neither hand's
+    // wrist angle decides it alone, and it tightens and loosens with the
+    // hands' own tuning rather than against a number that meant one thing at
+    // one oval size and something else at the next.
+    //
+    // `depth` is in OVAL RADII, and Score is a squared normalised distance:
+    //   1.0  the palms genuinely meet -- each one on the other's centre.
+    //   2.0  the two surfaces just touch. Anything above that is proximity
+    //        again, which is the thing this replaced.
+    static bool OvalsOverlap(PlayerPawn pmo, PlayerInfo p, int hand, double depth)
+    {
+        if (!pmo || !p) return false;
+        if (depth <= 0.0) depth = 1.0;
+        double lim = depth * depth;
+
+        Vector3 mine  = Centre(pmo, p, hand);
+        Vector3 other = Centre(pmo, p, 1 - hand);
+
+        return Score(pmo, p, hand,     other) <= lim
+            && Score(pmo, p, 1 - hand, mine)  <= lim;
+    }
+
     // THE SAME QUESTION WITH THE CENTRE ALREADY IN HAND.
     //
     // Score's old shape called Centre itself, and Centre walks the thinker list
@@ -595,9 +627,8 @@ class RS_GrabHandler : EventHandler
         if (!src || src.bNoHandSwitch || RS_HandFist.IsFistClass(src.GetClass()))
             return false;
 
-        Vector3 mine  = RS_Reach.Centre(pmo, p, hand);
-        Vector3 other = RS_Reach.Centre(pmo, p, 1 - hand);
-        return (mine - other).Length() <= RS_Reach.Num("rs_swap_overlap_dist", p, 8.0);
+        return RS_Reach.OvalsOverlap(pmo, p, hand,
+            RS_Reach.Num("rs_swap_overlap_depth", p, 1.0));
     }
 
     override void WorldTick()
@@ -1116,11 +1147,28 @@ class RS_GrabHandler : EventHandler
             bool carrying = held && (held.HandIsFull(hand) || held.HandIsFull(1 - hand));
             if (RS_Reach.Flag("rs_swap_overlap", p, true) && !carrying && !nearTarget[hand])
             {
-                Vector3 mine  = RS_Reach.Centre(pmo, p, hand);
-                Vector3 other = RS_Reach.Centre(pmo, p, 1 - hand);
-                double near = RS_Reach.Num("rs_swap_overlap_dist", p, 8.0);
+                // THE SAME TEST THE CLAIM USES. SwapPoised above and this
+                // both go through RS_Reach.OvalsOverlap, so the grip that
+                // claims the context and the grip that swaps can never
+                // disagree about what "overlapped" means.
+                double depth = RS_Reach.Num("rs_swap_overlap_depth", p, 1.0);
 
-                if ((mine - other).Length() <= near)
+                // Tuning readout: the two scores in oval radii, printed while
+                // the palms are anywhere near each other, so the depth above
+                // can be set from what the hands actually do rather than from
+                // a guess. Squared, so 1.0 is the oval's own surface.
+                if (dbg && (level.time % 10) == 0)
+                {
+                    Vector3 mine  = RS_Reach.Centre(pmo, p, hand);
+                    Vector3 other = RS_Reach.Centre(pmo, p, 1 - hand);
+                    double sA = RS_Reach.Score(pmo, p, hand,     other);
+                    double sB = RS_Reach.Score(pmo, p, 1 - hand, mine);
+                    if (sA <= 9.0 && sB <= 9.0)
+                        Console.Printf("[RSSWAP] hand %d overlap %.2f / %.2f  (need <= %.2f)",
+                            hand, sA, sB, depth * depth);
+                }
+
+                if (RS_Reach.OvalsOverlap(pmo, p, hand, depth))
                 {
                     // THERE HAS TO BE SOMETHING WORTH TAKING.
                     //

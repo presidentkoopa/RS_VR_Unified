@@ -324,10 +324,19 @@ user bool rs_grab_voxel = true;
 // can never drift apart.
 user bool rs_swap_overlap = true;
 
-// How close the two palms must be, in map units. 34 is a metre, so 8 is
-// about a hands width -- close enough that it cannot happen while reaching
-// past yourself, loose enough that you do not have to be precise about it.
-user float rs_swap_overlap_dist = 8.0;
+// HOW FAR INTO EACH OTHER THE TWO REACH OVALS MUST BE, in oval radii.
+//
+// Replaces rs_swap_overlap_dist, which was a flat distance between palms and
+// so had nothing to do with the ovals: at the shipped tuning it fired a full
+// hands width before the two ovals so much as touched.
+//
+//   1.0  the palms meet -- each one inside the other's oval. Deliberate.
+//   2.0  the two ovals just touch at their surfaces.
+//   above that is proximity again.
+//
+// Turn rs_hand_debug on and bring your palms together: [RSSWAP] prints the
+// live figure, so this can be set from what your hands actually do.
+user float rs_swap_overlap_depth = 1.0;
 
 // THE NOISY ONE -- every mod-side hand diagnostic except the two below.
 // [RSPULL] launches and blocks, [RSGRIP] squeezes, [RSSWAP], [RSHELD],
