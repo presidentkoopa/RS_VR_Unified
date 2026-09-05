@@ -1936,6 +1936,44 @@ class RS_HolsterManager : EventHandler
 				at.Z - worldOffZ + nUp
 			);
 			p.SetOrigin(placed, true);
+
+			// AND THE SAME SEAT AGAIN, IN THE BODY'S FRAME, FOR THE RENDERER.
+			//
+			// SetOrigin above still runs and still matters: the world position
+			// is what the claim and grab spheres are tested against, and it is
+			// what draws when there is no headset. What it cannot do is look
+			// right. It is written once a tic from a head pose sampled once a
+			// tic, while the headset moves at ninety -- so the whole rig swims
+			// between samples, and a prop far from the anchor sweeps a wide arc
+			// for a small movement of your head, which is why the low ones
+			// looked worst. Interpolation does not help; it smooths between two
+			// stale samples of something that already moved.
+			//
+			// FollowBodyMode hands the drawing to the renderer, which reads the
+			// head pose at DRAW rate through VRMode::GetHmdTransform and seats
+			// the prop at FollowBodyOfs inside it. Same number, resolved on the
+			// display's clock instead of the tic's.
+			//
+			// The offset is `placed` expressed in the body's own frame: forward,
+			// right, up, about HmdPos. Projected onto the SAME basis `placed`
+			// was built from a few lines up, so the two cannot disagree -- and
+			// about HmdYaw rather than bodyYaw because HmdYaw is the heading the
+			// renderer's body frame is built on.
+			//
+			// Falls back on its own: with no headset GetHmdTransform returns
+			// false and the renderer uses the world position SetOrigin just set.
+			{
+				Vector3 rel = placed - pawn.HmdPos;
+				double hy = pawn.HmdYaw;
+				double hFwdX = cos(hy), hFwdY = sin(hy);
+				double hRgtX = sin(hy), hRgtY = -cos(hy);
+				p.FollowBodyOfs = (
+					rel.X * hFwdX + rel.Y * hFwdY,
+					rel.X * hRgtX + rel.Y * hRgtY,
+					rel.Z
+				);
+				p.FollowBodyMode = 1;
+			}
 		}
 	}
 
